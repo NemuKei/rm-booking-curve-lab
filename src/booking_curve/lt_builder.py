@@ -1,31 +1,88 @@
-import numpy as np
-import pandas as pd
-from datetime import datetime, timedelta
+"""LT（Lead Time）データ生成モジュール.
 
-EXCEL_BASE_DATE = datetime(1899, 12, 30)  # Excel シリアルの日付原点
+PMSから取得した宿泊日×取得日の時系列データを、宿泊日×LTの
+ブッキングカーブ形式に整形する。
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta
+from typing import List
+
+import pandas as pd
+
+EXCEL_BASE_DATE = datetime(1899, 12, 30)
+
 
 def _excel_serial_to_datetime(serial: float) -> datetime:
+    """Excelシリアル値をdatetimeに変換する。"""
+
     return EXCEL_BASE_DATE + timedelta(days=float(serial))
 
+
 def build_lt_data(df: pd.DataFrame, max_lt: int = 90) -> pd.DataFrame:
-    """
-    時系列データ（宿泊日 × 取得日）から LT_DATA を構築する。
+    """宿泊日×取得日のデータから宿泊日×LTのテーブルを構築する。"""
 
-    - df: data_loader.load_time_series_excel() で読み込んだ DataFrame
-    - max_lt: 最大リードタイム（日）
+    if df is None or df.empty:
+        return pd.DataFrame(columns=list(range(max_lt, -1, -1)), dtype="Int64")
 
-    戻り値:
-      index: 宿泊日（datetime）
-      columns: LT（0〜max_ltの整数）
-      values: 室数（整数／欠損はNaN）
-    """
+    booking_date_serials = df.iloc[0, 1:]
+    booking_dates: List[datetime] = []
+    for serial in booking_date_serials:
+        if pd.isna(serial):
+            booking_dates.append(pd.NaT)
+            continue
+        booking_dates.append(_excel_serial_to_datetime(serial))
 
-    # TODO:
-    # 1. 行0から「取得日シリアル」を取り出し、datetime に変換する
-    # 2. 行1以降を宿泊日ごとにループし、
-    #    各セルの (宿泊日, 取得日) から LT = (宿泊日 - 取得日).days を計算
-    # 3. 0 <= LT <= max_lt の範囲だけ使って、(stay_date, LT) → 室数 を集計
-    # 4. pivot して宿泊日 × LT の DataFrame に変換
-    # 5. LT 軸方向に線形補完し、四捨五入して整数化する（ただし全NaN行はそのまま）
+    records = []
+    for _, row in df.iloc[1:].iterrows():
+        stay_raw = row.iloc[0]
+        stay_date = pd.to_datetime(stay_raw, errors="coerce")
+        if pd.isna(stay_date):
+            continue
+        stay_date = stay_date.normalize()
 
-    raise NotImplementedError("build_lt_data の実装はこれから作成します。")
+        for idx, rooms in enumerate(row.iloc[1:]):
+            if pd.isna(rooms):
+                continue
+            if idx >= len(booking_dates):
+                break
+
+            booking_date = booking_dates[idx]
+            if pd.isna(booking_date):
+                continue
+
+            lt = (stay_date - booking_date).days
+            if 0 <= lt <= max_lt:
+                records.append({"stay_date": stay_date, "lt": lt, "rooms": rooms})
+
+    if not records:
+        return pd.DataFrame(columns=list(range(max_lt, -1, -1)), dtype="Int64")
+
+    records_df = pd.DataFrame(records)
+    lt_table = (
+        records_df.pivot_table(
+            index="stay_date", columns="lt", values="rooms", aggfunc="last"
+        )
+        .reindex(columns=range(0, max_lt + 1))
+        .sort_index()
+    )
+
+    if lt_table.empty:
+        return pd.DataFrame(columns=list(range(max_lt, -1, -1)), dtype="Int64")
+
+    full_nan_rows = lt_table.isna().all(axis=1)
+
+    lt_interpolated = lt_table.interpolate(axis=1, limit_direction="both")
+    if full_nan_rows.any():
+        lt_interpolated.loc[full_nan_rows, :] = float("nan")
+
+    lt_rounded = lt_interpolated.round().astype("Int64")
+
+    for stay_date in lt_rounded.index[full_nan_rows]:
+        print(f"[lt_builder] Warning: No data for stay_date {stay_date.date()}")
+
+    lt_desc_columns = list(range(max_lt, -1, -1))
+    lt_final = lt_rounded.reindex(columns=lt_desc_columns)
+
+    return lt_final

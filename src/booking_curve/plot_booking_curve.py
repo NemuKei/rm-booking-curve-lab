@@ -102,6 +102,8 @@ def plot_booking_curves_for_weekday(
     weekday: int,
     title: str = "",
     output_path: str | None = None,
+    external_avg: pd.Series | None = None,
+    external_avg_label: str = "3-month avg",
 ) -> None:
     """Plot booking curves for the specified weekday following Excel-like styling."""
 
@@ -139,7 +141,12 @@ def plot_booking_curves_for_weekday(
             label=stay_date_label,
         )
 
-    avg_series = compute_average_curve(df_week)
+    if external_avg is None:
+        avg_series = compute_average_curve(df_week)
+        avg_label = "Average curve"
+    else:
+        avg_series = external_avg
+        avg_label = external_avg_label
     y_avg = [avg_series.get(lt, np.nan) for lt in LEAD_TIME_PITCHES]
     avg_color = "#1F3F75"
     ax.plot(
@@ -148,7 +155,7 @@ def plot_booking_curves_for_weekday(
         color=avg_color,
         linewidth=4.5,
         alpha=0.6,
-        label="Average curve",
+        label=avg_label,
     )
 
     ax.set_xticks(x_positions)

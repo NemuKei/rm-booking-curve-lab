@@ -108,7 +108,7 @@ def forecast_final_from_avg(
     working_df.columns = _ensure_int_columns(working_df.columns)
     as_of_ts = pd.Timestamp(as_of_date)
 
-    future_df = working_df.loc[working_df.index > as_of_ts]
+    future_df = working_df.loc[working_df.index >= as_of_ts]
     forecasts: dict[pd.Timestamp, float] = {}
 
     avg_final = avg_curve.get(-1, np.nan)

@@ -145,9 +145,9 @@ def plot_booking_curves_for_weekday(
     ax.plot(
         x_positions,
         y_avg,
-        linewidth=3.0,
         color=avg_color,
-        alpha=0.85,
+        linewidth=4.5,
+        alpha=0.6,
         label="Average curve",
     )
 

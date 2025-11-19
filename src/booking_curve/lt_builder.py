@@ -21,10 +21,12 @@ def _excel_serial_to_datetime(serial: float) -> datetime:
 
 
 def build_lt_data(df: pd.DataFrame, max_lt: int = 90) -> pd.DataFrame:
-    """宿泊日×取得日のデータから宿泊日×LTのテーブルを構築する。"""
+    """宿泊日×取得日のデータから宿泊日×LT（-1〜max_lt）のテーブルを構築する。"""
+
+    lt_desc_columns = list(range(max_lt, -2, -1))
 
     if df is None or df.empty:
-        return pd.DataFrame(columns=list(range(max_lt, -1, -1)), dtype="Int64")
+        return pd.DataFrame(columns=lt_desc_columns, dtype="Int64")
 
     booking_date_serials = df.iloc[0, 1:]
     booking_dates: List[datetime] = []
@@ -53,23 +55,23 @@ def build_lt_data(df: pd.DataFrame, max_lt: int = 90) -> pd.DataFrame:
                 continue
 
             lt = (stay_date - booking_date).days
-            if 0 <= lt <= max_lt:
+            if -1 <= lt <= max_lt:
                 records.append({"stay_date": stay_date, "lt": lt, "rooms": rooms})
 
     if not records:
-        return pd.DataFrame(columns=list(range(max_lt, -1, -1)), dtype="Int64")
+        return pd.DataFrame(columns=lt_desc_columns, dtype="Int64")
 
     records_df = pd.DataFrame(records)
     lt_table = (
         records_df.pivot_table(
             index="stay_date", columns="lt", values="rooms", aggfunc="last"
         )
-        .reindex(columns=range(0, max_lt + 1))
+        .reindex(columns=range(-1, max_lt + 1))
         .sort_index()
     )
 
     if lt_table.empty:
-        return pd.DataFrame(columns=list(range(max_lt, -1, -1)), dtype="Int64")
+        return pd.DataFrame(columns=lt_desc_columns, dtype="Int64")
 
     full_nan_rows = lt_table.isna().all(axis=1)
 
@@ -82,7 +84,6 @@ def build_lt_data(df: pd.DataFrame, max_lt: int = 90) -> pd.DataFrame:
     for stay_date in lt_rounded.index[full_nan_rows]:
         print(f"[lt_builder] Warning: No data for stay_date {stay_date.date()}")
 
-    lt_desc_columns = list(range(max_lt, -1, -1))
     lt_final = lt_rounded.reindex(columns=lt_desc_columns)
 
     return lt_final

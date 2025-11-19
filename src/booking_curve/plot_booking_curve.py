@@ -1,13 +1,14 @@
-"""Utilities for plotting booking curves grouped by weekday."""
+"""Plot booking curves grouped by weekday using predefined lead time pitches."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
-LEAD_TIME_PITCHES = [
+LEAD_TIME_PITCHES: list[int] = [
     90,
     84,
     78,
@@ -45,84 +46,49 @@ LEAD_TIME_PITCHES = [
 ]
 
 
-def _ensure_datetime_index(df: pd.DataFrame) -> pd.DataFrame:
-    """Return a copy of ``df`` whose index is a DatetimeIndex."""
+def _normalize_datetime_index(lt_df: pd.DataFrame) -> pd.DataFrame:
+    """Return a copy of ``lt_df`` whose index is ``DatetimeIndex``."""
 
-    if isinstance(df.index, pd.DatetimeIndex):
-        return df.copy()
-
-    result = df.copy()
-    result.index = pd.to_datetime(result.index)
-    return result
+    normalized = lt_df.copy()
+    normalized.index = pd.to_datetime(normalized.index)
+    return normalized
 
 
-def _coerce_lt_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Return a copy of ``df`` with integer-sorted lead time columns."""
+def _ensure_integer_columns(lt_df: pd.DataFrame) -> pd.DataFrame:
+    """Return a copy of ``lt_df`` whose columns are integers sorted ascending."""
 
-    columns = pd.Index([int(col) for col in df.columns])
-    result = df.copy()
-    result.columns = columns
-    result = result.sort_index(axis=1)
-    return result
+    coerced = lt_df.copy()
+    coerced.columns = pd.Index([int(col) for col in coerced.columns])
+    coerced = coerced.sort_index(axis=1)
+    return coerced
 
 
 def filter_by_weekday(lt_df: pd.DataFrame, weekday: int) -> pd.DataFrame:
-    """Return only the stays whose weekday matches ``weekday``."""
+    """Filter ``lt_df`` to stays whose weekday matches ``weekday``."""
 
     if weekday < 0 or weekday > 6:
         raise ValueError("weekday must be between 0 (Mon) and 6 (Sun)")
 
-    normalized = _ensure_datetime_index(lt_df)
+    normalized = _normalize_datetime_index(lt_df)
     mask = normalized.index.weekday == weekday
-    filtered = normalized.loc[mask]
-    filtered.index = filtered.index.normalize()
+    filtered = normalized.loc[mask].copy()
     return filtered
 
 
 def compute_average_curve(lt_df: pd.DataFrame) -> pd.Series:
-    """Compute the average curve (mean per lead time) from ``lt_df``."""
+    """Compute the mean number of rooms per lead time."""
 
     if lt_df.empty:
         return pd.Series(dtype=float)
 
-    coerced = _coerce_lt_columns(lt_df)
+    coerced = _ensure_integer_columns(lt_df)
     return coerced.mean(axis=0, skipna=True)
 
 
-@dataclass
-class _DailyCurve:
-    lead_times: Iterable[int]
-    values: pd.Series
+def _extract_y_values(row: pd.Series, lead_times: Iterable[int]) -> list[float]:
+    """Extract y-values for ``lead_times`` using NaN for missing LTs."""
 
-
-def _plot_daily_curves(ax: plt.Axes, daily_curves: list[_DailyCurve]) -> None:
-    """Plot daily booking curves using light-weight lines."""
-
-    label_added = False
-    for curve in daily_curves:
-        label = "Daily curves" if not label_added else "_nolegend_"
-        ax.plot(
-            curve.lead_times,
-            curve.values,
-            color="gray",
-            linewidth=0.8,
-            alpha=0.6,
-            label=label,
-        )
-        label_added = True
-
-
-def _format_xticks(ax: plt.Axes, lead_time_range: tuple[int, int]) -> None:
-    """Configure x-axis ticks using the configured lead-time pitches."""
-
-    min_lt, max_lt = lead_time_range
-    ticks = [lt for lt in LEAD_TIME_PITCHES if min_lt <= lt <= max_lt]
-    if not ticks:
-        ticks = [min_lt, max_lt]
-
-    labels = ["ACT" if lt == -1 else str(lt) for lt in ticks]
-    ax.set_xticks(ticks)
-    ax.set_xticklabels(labels)
+    return [row.get(lt, np.nan) for lt in lead_times]
 
 
 def plot_booking_curves_for_weekday(
@@ -131,46 +97,53 @@ def plot_booking_curves_for_weekday(
     title: str = "",
     output_path: str | None = None,
 ) -> None:
-    """Plot booking curves for a specific weekday and their average."""
+    """Plot booking curves for ``weekday`` stays along with their average curve."""
 
-    normalized = _ensure_datetime_index(lt_df)
-    weekday_df = filter_by_weekday(normalized, weekday)
+    normalized = _normalize_datetime_index(lt_df)
+    df_week = filter_by_weekday(normalized, weekday)
+    df_week = _ensure_integer_columns(df_week)
 
-    if weekday_df.empty:
+    if df_week.empty:
         raise ValueError("No booking data for the specified weekday.")
 
-    weekday_df = _coerce_lt_columns(weekday_df)
+    x_positions = list(range(len(LEAD_TIME_PITCHES)))
+    fig, ax = plt.subplots(figsize=(12, 6))
 
-    lead_times = weekday_df.columns
-    min_lt = int(lead_times.min())
-    max_lt = int(lead_times.max())
+    label_added = False
+    for _, row in df_week.iterrows():
+        y_values = _extract_y_values(row, LEAD_TIME_PITCHES)
+        label = "Daily curves" if not label_added else None
+        ax.plot(
+            x_positions,
+            y_values,
+            color="lightgray",
+            linewidth=1,
+            label=label,
+        )
+        label_added = True
 
-    fig, ax = plt.subplots(figsize=(10, 6))
-
-    daily_curves = [
-        _DailyCurve(lead_times=lead_times, values=row)
-        for _, row in weekday_df.iterrows()
-    ]
-    _plot_daily_curves(ax, daily_curves)
-
-    avg_curve = compute_average_curve(weekday_df)
+    avg_curve = compute_average_curve(df_week)
+    y_values_avg = avg_curve.reindex(LEAD_TIME_PITCHES).to_list()
     ax.plot(
-        avg_curve.index,
-        avg_curve.values,
+        x_positions,
+        y_values_avg,
         color="tab:blue",
         linewidth=2.5,
         label="Average curve",
     )
 
-    _format_xticks(ax, (min_lt, max_lt))
+    labels = ["ACT" if lt == -1 else str(lt) for lt in LEAD_TIME_PITCHES]
+    ax.set_xticks(x_positions)
+    ax.set_xticklabels(labels)
     ax.set_xlabel("Lead Time (days)")
     ax.set_ylabel("Rooms")
-    if title:
-        ax.set_title(title)
+    ax.set_ylim(0, 180)
+    ax.set_yticks(range(0, 181, 20))
+    ax.set_title(title)
     ax.legend()
-    ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.3)
 
     if output_path:
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         plt.savefig(output_path, bbox_inches="tight")
         plt.close(fig)
     else:
@@ -178,10 +151,24 @@ def plot_booking_curves_for_weekday(
 
 
 if __name__ == "__main__":
-    import numpy as np
+    import argparse
 
-    dates = pd.date_range("2024-01-01", periods=30, freq="D")
-    columns = list(range(-1, 31))
-    data = np.random.randint(0, 100, size=(len(dates), len(columns)))
-    sample_df = pd.DataFrame(data, index=dates, columns=columns)
-    plot_booking_curves_for_weekday(sample_df, weekday=0, title="Sample Monday curves")
+    parser = argparse.ArgumentParser(description="Plot weekday booking curves from CSV.")
+    parser.add_argument("csv_path", type=str, help="Path to LT data CSV file")
+    parser.add_argument("weekday", type=int, help="Weekday number (0=Mon, 6=Sun)")
+    parser.add_argument("--title", type=str, default="", help="Title of the plot")
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        help="Optional path to save the figure instead of showing it",
+    )
+    args = parser.parse_args()
+
+    lt_df = pd.read_csv(args.csv_path, index_col=0)
+    plot_booking_curves_for_weekday(
+        lt_df,
+        weekday=args.weekday,
+        title=args.title,
+        output_path=args.output,
+    )

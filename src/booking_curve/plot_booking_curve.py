@@ -1,100 +1,72 @@
-"""Utilities for visualizing booking curves grouped by weekday."""
-from __future__ import annotations
-
-from pathlib import Path
-
+import pandas as pd
+import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
 
+# 日本語フォント & マイナス表示対策（Windows想定）
 matplotlib.rcParams["font.family"] = "Meiryo"
 matplotlib.rcParams["axes.unicode_minus"] = False
 
+# X軸に使う LT ピッチ（カテゴリ）: 左から右へ 90,84,...,0,ACT(-1)
 LEAD_TIME_PITCHES = [
-    90,
-    84,
-    78,
-    72,
-    67,
-    60,
-    53,
-    46,
-    39,
-    32,
-    29,
-    26,
-    23,
-    20,
-    18,
-    17,
-    16,
-    15,
-    14,
-    13,
-    12,
-    11,
-    10,
-    9,
-    8,
-    7,
-    6,
-    5,
-    4,
-    3,
-    2,
-    1,
-    0,
-    -1,
+    90, 84, 78, 72, 67, 60, 53, 46, 39, 32,
+    29, 26, 23, 20, 18, 17, 16, 15, 14, 13,
+    12, 11, 10, 9, 8, 7, 6, 5, 4, 3,
+    2, 1, 0, -1,  # -1 は ACT
 ]
 
 
-def _normalize_datetime_index(lt_df: pd.DataFrame) -> pd.DataFrame:
-    """Return a copy of ``lt_df`` with a DatetimeIndex."""
-
-    normalized = lt_df.copy()
-    normalized.index = pd.to_datetime(normalized.index)
-    return normalized
-
-
-def _coerce_lt_columns(lt_df: pd.DataFrame) -> pd.DataFrame:
-    """Ensure lead-time columns are integers for consistent lookup."""
-
-    coerced = lt_df.copy()
-    coerced.columns = pd.Index([int(col) for col in coerced.columns])
-    return coerced
-
-
 def filter_by_weekday(lt_df: pd.DataFrame, weekday: int) -> pd.DataFrame:
-    """Return rows whose stay-date weekday matches ``weekday``."""
+    """
+    宿泊日インデックスの DataFrame から、指定 weekday の行だけを抽出する。
 
-    if not 0 <= weekday <= 6:
-        raise ValueError("weekday must be between 0 (Mon) and 6 (Sun)")
+    weekday: 0=月, 1=火, 2=水, 3=木, 4=金, 5=土, 6=日
+    """
+    if lt_df.empty:
+        return lt_df
 
-    normalized = _normalize_datetime_index(lt_df)
-    mask = normalized.index.weekday == weekday
-    filtered = normalized.loc[mask]
-    return _coerce_lt_columns(filtered)
+    idx = pd.to_datetime(lt_df.index)
+    mask = idx.weekday == weekday
+    filtered = lt_df.loc[mask].copy()
+    filtered.index = idx[mask]  # index を datetime64 に揃える
+    return filtered
 
 
 def compute_average_curve(lt_df: pd.DataFrame) -> pd.Series:
-    """Return the average room pickup for each lead-time pitch."""
+    """
+    宿泊日 × LT の DataFrame から、LT ごとの平均カーブを計算する。
 
+    戻り値:
+        index = LT (列ラベルを int にしたもの)
+        values = 平均室数 (NaN 無視)
+    """
     if lt_df.empty:
         return pd.Series(dtype=float)
 
-    coerced = _coerce_lt_columns(lt_df)
-    return coerced.mean(axis=0, skipna=True)
+    # 列ラベルを LT(int) として扱う
+    cols = [int(c) for c in lt_df.columns]
+    df = lt_df.copy()
+    df.columns = cols
+
+    avg = df.mean(axis=0, skipna=True)
+    avg.sort_index(inplace=True)
+    return avg
 
 
-def export_weekday_lt_table(lt_df: pd.DataFrame, weekday: int, output_path: str) -> None:
-    """Save the raw LT table filtered by weekday as CSV."""
+def export_weekday_lt_table(
+    lt_df: pd.DataFrame,
+    weekday: int,
+    output_path: str,
+) -> None:
+    """
+    指定曜日の LT_DATA をそのまま CSV に書き出す補助関数。
+    """
+    idx = pd.to_datetime(lt_df.index)
+    lt_df = lt_df.copy()
+    lt_df.index = idx
 
-    normalized = _normalize_datetime_index(lt_df)
-    df_week = filter_by_weekday(normalized, weekday)
-    output_file = Path(output_path)
-    output_file.parent.mkdir(parents=True, exist_ok=True)
-    df_week.to_csv(output_file)
+    df_week = filter_by_weekday(lt_df, weekday=weekday)
+    df_week.to_csv(output_path, index=True)
 
 
 def plot_booking_curves_for_weekday(
@@ -105,21 +77,42 @@ def plot_booking_curves_for_weekday(
     external_avg: pd.Series | None = None,
     external_avg_label: str = "3-month avg",
 ) -> None:
-    """Plot booking curves for the specified weekday following Excel-like styling."""
+    """
+    指定された LT_DATA (宿泊日 × LT) から、
+    特定曜日のブッキングカーブを描画する。
 
-    normalized = _normalize_datetime_index(lt_df)
-    df_week = filter_by_weekday(normalized, weekday)
-
-    if df_week.empty:
-        print("Warning: no booking data for the specified weekday.")
+    - 各宿泊日のカーブ: 細線、日付ごとに色分け
+    - 平均カーブ:
+        external_avg があればそれを使用（3ヶ月平均など）
+        なければ df_week から当月平均を計算して使用
+    - X軸: LEAD_TIME_PITCHES を等間隔カテゴリとして表示
+    - Y軸: 0〜180、20刻み（10刻みの補助目盛＋グリッド）
+    """
+    if lt_df.empty:
+        print("[WARN] lt_df is empty. Nothing to plot.")
         return
 
-    x_positions = np.arange(len(LEAD_TIME_PITCHES))
-    labels = ["ACT" if lt == -1 else str(lt) for lt in LEAD_TIME_PITCHES]
+    # index を datetime に揃える
+    lt_df = lt_df.copy()
+    lt_df.index = pd.to_datetime(lt_df.index)
 
+    # 指定曜日のみ抽出
+    df_week = filter_by_weekday(lt_df, weekday=weekday)
+    if df_week.empty:
+        print(f"[WARN] No data for weekday={weekday}. Nothing to plot.")
+        return
+
+    # 列ラベルを LT(int) にそろえる
+    df_week.columns = [int(c) for c in df_week.columns]
+
+    # X 軸の準備（カテゴリインデックス）
+    x_positions = np.arange(len(LEAD_TIME_PITCHES))
+    x_labels = ["ACT" if lt == -1 else str(lt) for lt in LEAD_TIME_PITCHES]
+
+    # 図と軸
     fig, ax = plt.subplots(figsize=(12, 5))
 
-    stay_dates = sorted(df_week.index)
+    # 日別ライン用のカラーパレット（落ち着いたトーン）
     line_colors = [
         "#4C72B0",  # muted blue
         "#DD8452",  # muted orange
@@ -127,56 +120,72 @@ def plot_booking_curves_for_weekday(
         "#C44E52",  # muted red
         "#8172B2",  # muted purple/pink-ish
     ]
+
+    # 宿泊日を昇順にしてループ
+    stay_dates = sorted(df_week.index)
+
     for i, stay_date in enumerate(stay_dates):
-        row = df_week.loc[stay_date]
-        y_values = [row.get(lt, np.nan) for lt in LEAD_TIME_PITCHES]
-        stay_date_label = stay_date.strftime("%m/%d")
         color = line_colors[i % len(line_colors)]
+        stay_row = df_week.loc[stay_date]
+
+        # LEAD_TIME_PITCHES 順に y を並べる
+        y_values = []
+        for lt in LEAD_TIME_PITCHES:
+            y_values.append(stay_row.get(lt, np.nan))
+
+        # 凡例用ラベル（MM/DD）
+        label = stay_date.strftime("%m/%d")
+
         ax.plot(
             x_positions,
             y_values,
             color=color,
             linewidth=1.8,
             alpha=0.9,
-            label=stay_date_label,
+            label=label,
         )
 
+    # 平均カーブ：外部から渡されていればそれを使用、なければ当月平均
     if external_avg is None:
         avg_series = compute_average_curve(df_week)
         avg_label = "Average curve"
     else:
         avg_series = external_avg
         avg_label = external_avg_label
+
+    # LEAD_TIME_PITCHES に沿って y を並べる
     y_avg = [avg_series.get(lt, np.nan) for lt in LEAD_TIME_PITCHES]
+
     avg_color = "#1F3F75"
     ax.plot(
         x_positions,
         y_avg,
         color=avg_color,
         linewidth=4.5,
-<<<<<<< Updated upstream
-        alpha=0.6,
+        alpha=0.2,  # 太くてかなり透過
         label=avg_label,
-=======
-        alpha=0.2,
-        label="Average curve",
->>>>>>> Stashed changes
     )
 
+    # X軸の設定
     ax.set_xticks(x_positions)
-    ax.set_xticklabels(labels)
+    ax.set_xticklabels(x_labels)
     ax.set_xlabel("Lead Time (days)")
 
+    # Y軸の設定：0〜180、20刻み & 10刻みの補助目盛
     ax.set_ylabel("Rooms")
     ax.set_ylim(0, 180)
-    ax.set_yticks(range(0, 181, 20))
-    ax.set_yticks(range(0, 181, 10), minor=True)
+    ax.set_yticks(range(0, 181, 20))         # 主メモリ
+    ax.set_yticks(range(0, 181, 10), minor=True)  # 補助メモリ
 
+    # グリッド
     ax.grid(axis="y", which="major", linestyle="--", alpha=0.3)
     ax.grid(axis="y", which="minor", linestyle=":", alpha=0.15)
     ax.grid(axis="x", which="major", linestyle=":", alpha=0.15)
 
+    # タイトル
     ax.set_title(title)
+
+    # 凡例：右側外に出す
     ax.legend(
         loc="upper left",
         bbox_to_anchor=(1.02, 1.0),
@@ -185,23 +194,27 @@ def plot_booking_curves_for_weekday(
         fontsize=8,
     )
 
+    fig.tight_layout()
+
+    # 出力 or 表示
     if output_path:
-        output_file = Path(output_path)
-        output_file.parent.mkdir(parents=True, exist_ok=True)
-        plt.savefig(output_file, bbox_inches="tight")
+        plt.savefig(output_path, bbox_inches="tight")
         plt.close(fig)
     else:
         plt.show()
 
 
 if __name__ == "__main__":
-    csv_path = input("Enter path to LT data CSV: ").strip()
-    if not csv_path:
-        raise SystemExit("CSV path is required.")
-
-    df = pd.read_csv(csv_path, index_col=0)
-    plot_booking_curves_for_weekday(
-        df,
-        weekday=4,
-        title="Friday Booking Curves",
-    )
+    # 簡易テスト用：CSVパスと曜日を聞いて1枚描画
+    csv_path = input("LT_DATA CSV のパスを入力してください（空なら終了）: ").strip()
+    if csv_path:
+        try:
+            df = pd.read_csv(csv_path, index_col=0)
+            wd = int(input("曜日を 0=月 ... 6=日 で指定してください: ").strip())
+            plot_booking_curves_for_weekday(
+                lt_df=df,
+                weekday=wd,
+                title=f"Booking Curve (weekday={wd})",
+            )
+        except Exception as e:
+            print(f"[ERROR] {e}")

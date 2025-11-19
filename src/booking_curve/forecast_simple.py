@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Iterable
 
+import numpy as np
 import pandas as pd
 
 
@@ -87,6 +88,54 @@ def moving_average_3months(
     avg_curve = combined.mean(axis=0, skipna=True)
     avg_curve.index = pd.Index(range(lt_min, lt_max + 1), dtype=int)
     return avg_curve
+
+
+def forecast_final_from_avg(
+    lt_df: pd.DataFrame,
+    avg_curve: pd.Series,
+    as_of_date: pd.Timestamp,
+    capacity: float,
+    lt_min: int = 0,
+    lt_max: int = 90,
+) -> pd.Series:
+    """Forecast final rooms per stay date using an average curve and a cap."""
+
+    if lt_min > lt_max:
+        raise ValueError("lt_min must be less than or equal to lt_max")
+
+    working_df = lt_df.copy()
+    working_df.index = pd.to_datetime(working_df.index)
+    working_df.columns = _ensure_int_columns(working_df.columns)
+    as_of_ts = pd.Timestamp(as_of_date)
+
+    future_df = working_df.loc[working_df.index > as_of_ts]
+    forecasts: dict[pd.Timestamp, float] = {}
+
+    avg_final = avg_curve.get(-1, np.nan)
+
+    for stay_date, row in future_df.iterrows():
+        lt_now = (stay_date - as_of_ts).days
+
+        if lt_now < lt_min or lt_now > lt_max:
+            forecasts[stay_date] = np.nan
+            continue
+
+        current_oh = row.get(lt_now, np.nan)
+        avg_now = avg_curve.get(lt_now, np.nan)
+
+        if any(pd.isna(val) for val in (current_oh, avg_now, avg_final)):
+            forecasts[stay_date] = np.nan
+            continue
+
+        delta = avg_final - avg_now
+        forecast = current_oh + delta
+
+        if not pd.isna(forecast):
+            forecast = min(forecast, capacity)
+
+        forecasts[stay_date] = forecast
+
+    return pd.Series(forecasts, dtype=float)
 
 
 if __name__ == "__main__":  # pragma: no cover - optional dev test

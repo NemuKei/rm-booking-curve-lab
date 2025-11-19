@@ -75,6 +75,9 @@ def main() -> None:
 
     out_df = result.to_frame(name="forecast_rooms")
     out_df.index.name = "stay_date"
+    out_df["forecast_rooms_int"] = (
+        out_df["forecast_rooms"].round().astype("Int64")
+    )
 
     asof_tag = AS_OF_DATE.replace("-", "")
     out_name = f"forecast_{TARGET_MONTH}_{HOTEL_TAG}_asof_{asof_tag}.csv"

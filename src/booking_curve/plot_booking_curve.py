@@ -117,15 +117,18 @@ def plot_booking_curves_for_weekday(
 
     fig, ax = plt.subplots(figsize=(12, 5))
 
-    for stay_date in sorted(df_week.index):
+    stay_dates = sorted(df_week.index)
+    cmap = plt.cm.get_cmap("tab10", len(stay_dates))
+    for i, stay_date in enumerate(stay_dates):
         row = df_week.loc[stay_date]
         y_values = [row.get(lt, np.nan) for lt in LEAD_TIME_PITCHES]
         stay_date_label = stay_date.strftime("%m/%d")
         ax.plot(
             x_positions,
             y_values,
-            color="lightgray",
-            linewidth=1.0,
+            color=cmap(i),
+            linewidth=1.1,
+            alpha=0.8,
             label=stay_date_label,
         )
 
@@ -153,7 +156,13 @@ def plot_booking_curves_for_weekday(
     ax.grid(axis="x", which="major", linestyle=":", alpha=0.15)
 
     ax.set_title(title)
-    ax.legend(loc="upper left")
+    ax.legend(
+        loc="upper left",
+        bbox_to_anchor=(1.02, 1.0),
+        borderaxespad=0.0,
+        frameon=True,
+        fontsize=8,
+    )
 
     if output_path:
         output_file = Path(output_path)

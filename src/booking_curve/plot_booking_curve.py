@@ -118,27 +118,36 @@ def plot_booking_curves_for_weekday(
     fig, ax = plt.subplots(figsize=(12, 5))
 
     stay_dates = sorted(df_week.index)
-    cmap = plt.cm.get_cmap("tab10", len(stay_dates))
+    line_colors = [
+        "#4C72B0",  # muted blue
+        "#DD8452",  # muted orange
+        "#55A868",  # muted green
+        "#C44E52",  # muted red
+        "#8172B2",  # muted purple/pink-ish
+    ]
     for i, stay_date in enumerate(stay_dates):
         row = df_week.loc[stay_date]
         y_values = [row.get(lt, np.nan) for lt in LEAD_TIME_PITCHES]
         stay_date_label = stay_date.strftime("%m/%d")
+        color = line_colors[i % len(line_colors)]
         ax.plot(
             x_positions,
             y_values,
-            color=cmap(i),
-            linewidth=1.1,
-            alpha=0.8,
+            color=color,
+            linewidth=1.8,
+            alpha=0.9,
             label=stay_date_label,
         )
 
     avg_series = compute_average_curve(df_week)
     y_avg = [avg_series.get(lt, np.nan) for lt in LEAD_TIME_PITCHES]
+    avg_color = "#1F3F75"
     ax.plot(
         x_positions,
         y_avg,
-        linewidth=2.5,
-        color="tab:blue",
+        linewidth=3.0,
+        color=avg_color,
+        alpha=0.85,
         label="Average curve",
     )
 

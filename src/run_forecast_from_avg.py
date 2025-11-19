@@ -17,7 +17,7 @@ from booking_curve.forecast_simple import (
 HOTEL_TAG = "daikokucho"
 TARGET_MONTH = "202506"
 HISTORY_MONTHS = ["202503", "202504", "202505"]
-AS_OF_DATE = "2025-05-31"
+AS_OF_DATE = "2025-06-10"
 CAPACITY = 168.0
 
 

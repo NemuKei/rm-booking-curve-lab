@@ -154,8 +154,13 @@ def plot_booking_curves_for_weekday(
         y_avg,
         color=avg_color,
         linewidth=4.5,
+<<<<<<< Updated upstream
         alpha=0.6,
         label=avg_label,
+=======
+        alpha=0.2,
+        label="Average curve",
+>>>>>>> Stashed changes
     )
 
     ax.set_xticks(x_positions)

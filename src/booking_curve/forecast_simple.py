@@ -138,6 +138,54 @@ def forecast_final_from_avg(
     return pd.Series(forecasts, dtype=float)
 
 
+def moving_average_recent_90days(
+    lt_df: pd.DataFrame,
+    as_of_date: pd.Timestamp,
+    lt_min: int = -1,
+    lt_max: int = 90,
+) -> pd.Series:
+    """Compute LT-wise averages using a moving 90-day stay-date window."""
+
+    if lt_min > lt_max:
+        raise ValueError("lt_min must be less than or equal to lt_max")
+
+    df = lt_df.copy()
+    df.index = pd.to_datetime(df.index)
+
+    lt_col_map: dict[int, str] = {}
+    for col in df.columns:
+        try:
+            lt_value = int(col)
+        except (TypeError, ValueError) as exc:  # pragma: no cover - defensive
+            raise ValueError("LT columns must be castable to int") from exc
+        lt_col_map[lt_value] = col
+
+    as_of_ts = pd.to_datetime(as_of_date)
+
+    result: dict[int, float] = {}
+    for lt in range(lt_min, lt_max + 1):
+        if lt not in lt_col_map:
+            result[lt] = np.nan
+            continue
+
+        offset_days = 90 - lt
+        start = as_of_ts - pd.Timedelta(days=offset_days)
+        end = as_of_ts + pd.Timedelta(days=offset_days)
+
+        mask = (df.index >= start) & (df.index <= end)
+        values = df.loc[mask, lt_col_map[lt]]
+
+        if values.empty:
+            result[lt] = np.nan
+        else:
+            result[lt] = values.mean(skipna=True)
+
+    result_series = pd.Series(result, dtype=float)
+    result_series.index.name = "LT"
+    result_series.sort_index(inplace=True)
+    return result_series
+
+
 if __name__ == "__main__":  # pragma: no cover - optional dev test
     # Simple self-check using mock data for three months.
     date_index = pd.date_range("2025-04-01", periods=2, freq="D")

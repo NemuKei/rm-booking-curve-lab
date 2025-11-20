@@ -34,6 +34,8 @@ CAPACITY = 168.0
 
 # HISTORY_MONTHS は既存スクリプトに合わせて個別に定義
 AVG_HISTORY_MONTHS = [
+    "202411",
+    "202412",
     "202501",
     "202502",
     "202503",
@@ -45,6 +47,8 @@ AVG_HISTORY_MONTHS = [
 ]
 
 RECENT90_HISTORY_MONTHS = [
+    "202411",
+    "202412",
     "202501",
     "202502",
     "202503",

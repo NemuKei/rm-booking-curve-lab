@@ -11,8 +11,8 @@ from booking_curve.config import OUTPUT_DIR
 HOTEL_TAG = "daikokucho"
 TARGET_MONTH = "202502"  # 例: 2025年2月のブッキングカーブを見たい場合
 
-# 集計対象の LT 範囲
-LT_MIN = 0
+# 集計対象の LT 範囲（ACT=-1 も含める）
+LT_MIN = -1
 LT_MAX = 120
 
 # 集計方法: "mean" または "sum"
@@ -135,13 +135,9 @@ def compute_monthly_curve(
     curve = curve.astype(float)
     curve.index.name = "LT"
 
-    # ピッチに合わせて並び替え＆間引き（存在する LT のみ）
-    ordered_lts = [lt for lt in LEAD_TIME_PITCHES if lt in curve.index and lt_min <= lt <= lt_max]
-    if not ordered_lts:
-        # ピッチに合致する LT が無ければ、単純にソートして返す
-        curve = curve.sort_index()
-    else:
-        curve = curve.reindex(ordered_lts)
+    # 指定LT範囲でフィルタして昇順ソート
+    curve = curve[(curve.index >= lt_min) & (curve.index <= lt_max)]
+    curve = curve.sort_index()
 
     return curve
 
@@ -172,8 +168,14 @@ def plot_monthly_curve(curve: pd.Series, title: str | None = None, output_path: 
     ax.grid(True, linestyle="--", alpha=0.3)
     ax.invert_xaxis()  # LT が大きい方（120日）が左、小さい方（ACT）が右
 
-    # 見やすいように x 軸の目盛りを整数 LT に限定
-    ax.set_xticks(curve.index.values)
+    # x軸の目盛りとラベル設定: LT=-1 は "ACT" と表示
+    xticks = list(curve.index.values)
+    xticklabels = [str(lt) for lt in xticks]
+    if -1 in curve.index:
+        idx = xticks.index(-1)
+        xticklabels[idx] = "ACT"
+    ax.set_xticks(xticks)
+    ax.set_xticklabels(xticklabels)
 
     plt.tight_layout()
     if output_path is not None:

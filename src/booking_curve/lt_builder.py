@@ -20,7 +20,7 @@ def _excel_serial_to_datetime(serial: float) -> datetime:
     return EXCEL_BASE_DATE + timedelta(days=float(serial))
 
 
-def build_lt_data(df: pd.DataFrame, max_lt: int = 90) -> pd.DataFrame:
+def build_lt_data(df: pd.DataFrame, max_lt: int = 120) -> pd.DataFrame:
     """宿泊日×取得日のデータから宿泊日×LT（-1〜max_lt）のテーブルを構築する。"""
 
     lt_desc_columns = list(range(max_lt, -2, -1))

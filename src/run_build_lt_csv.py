@@ -37,7 +37,7 @@ TARGET_MONTHS = [
 HOTEL_TAG = "daikokucho"
 
 # 最大リードタイム
-MAX_LT = 90
+MAX_LT = 120
 
 # ===== 設定ここまで =====
 

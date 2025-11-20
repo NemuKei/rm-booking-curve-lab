@@ -15,11 +15,19 @@ TARGET_MONTH = "202502"  # 例: 2025年2月のブッキングカーブを見た�
 LT_MIN = -1
 LT_MAX = 120
 
+# 図の保存/表示の制御
+SAVE_FIG = True  # True のとき output_path が指定されていれば PNG 保存
+SHOW_FIG = True  # True のとき plt.show() でウィンドウ表示
+
 # 集計方法: "mean" または "sum"
 AGG_METHOD = "mean"
 
 # 曜日フィルタ: None の場合は全日、0〜6 で月〜日のみを対象とする
 WEEKDAY_FILTER = None  # 例: 4 (金曜だけ) にすると金曜だけで月次カーブを作れる
+
+# 月次合計モード（AGG_METHOD=="sum"）のときのY軸設定
+Y_MAX_SUM = 5000  # このホテルの想定上限（必要に応じて手動変更）
+Y_TICK_STEP_SUM = 500  # 目盛り間隔
 # ===== 設定ここまで =====
 
 # リードタイムのピッチ（既存Excelと同じ）
@@ -153,13 +161,19 @@ def plot_monthly_curve(curve: pd.Series, title: str | None = None, output_path: 
     # x軸は LT、Excelと同じく「右側がACT(-1)」になるように反転する
     x = curve.index.values
     y = curve.values
-    ax.plot(x, y, marker="o", linewidth=2)
+    ax.plot(x, y, linewidth=2)
 
     ax.set_xlabel("リードタイム（日）")
     if AGG_METHOD == "sum":
         ax.set_ylabel("室数（合計）")
     else:
         ax.set_ylabel("室数（平均）")
+
+    if AGG_METHOD == "sum":
+        # 0〜Y_MAX_SUM の範囲で固定し、目盛りを Y_TICK_STEP_SUM ごとに打つ
+        ax.set_ylim(0, Y_MAX_SUM)
+        ax.set_yticks(list(range(0, Y_MAX_SUM + 1, Y_TICK_STEP_SUM)))
+    # AGG_METHOD=="mean" のときは特に設定せず、Matplotlib の自動スケールに任せる
 
     if title:
         ax.set_title(title)
@@ -178,11 +192,13 @@ def plot_monthly_curve(curve: pd.Series, title: str | None = None, output_path: 
     ax.set_xticklabels(xticklabels)
 
     plt.tight_layout()
-    if output_path is not None:
+    if SAVE_FIG and output_path is not None:
         plt.savefig(output_path, bbox_inches="tight")
-        plt.close(fig)
-    else:
+
+    if SHOW_FIG:
         plt.show()
+    else:
+        plt.close(fig)
 
 
 def main() -> None:

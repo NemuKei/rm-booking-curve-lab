@@ -17,7 +17,7 @@ HOTEL_TAG = "daikokucho"
 
 # カレンダーを作りたい日付範囲
 # ※必要に応じてユーザーが変更できるようにハードコードでOK。
-START_DATE = date(2024, 11, 1)
+START_DATE = date(2023, 11, 1)
 END_DATE = date(2025, 10, 31)
 # ===== 設定ここまで =====
 

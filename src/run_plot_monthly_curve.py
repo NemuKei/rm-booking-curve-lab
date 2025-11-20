@@ -189,7 +189,7 @@ def plot_monthly_curve(curve: pd.Series, title: str | None = None, output_path: 
         idx = xticks.index(-1)
         xticklabels[idx] = "ACT"
     ax.set_xticks(xticks)
-    ax.set_xticklabels(xticklabels)
+    ax.set_xticklabels(xticklabels, rotation=90, fontsize=8)
 
     plt.tight_layout()
     if SAVE_FIG and output_path is not None:

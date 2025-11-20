@@ -20,7 +20,7 @@ SAVE_FIG = True  # True のとき output_path が指定されていれば PNG �
 SHOW_FIG = True  # True のとき plt.show() でウィンドウ表示
 
 # 集計方法: "mean" または "sum"
-AGG_METHOD = "mean"
+AGG_METHOD = "sum"
 
 # 曜日フィルタ: None の場合は全日、0〜6 で月〜日のみを対象とする
 WEEKDAY_FILTER = None  # 例: 4 (金曜だけ) にすると金曜だけで月次カーブを作れる

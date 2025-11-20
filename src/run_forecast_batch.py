@@ -11,6 +11,7 @@ from booking_curve.forecast_simple import (
     moving_average_3months,
     moving_average_recent_90days,
     forecast_final_from_avg,
+    forecast_month_from_recent90,
 )
 
 # ===== 設定ここから =====
@@ -293,7 +294,12 @@ def run_recent90_forecast(target_month: str, as_of_date: str) -> None:
         print("No forecasts were generated. Check settings or data.")
         return
 
-    out_df = _prepare_output(df_target, all_forecasts, as_of_ts)
+    out_df = forecast_month_from_recent90(
+        df_target=df_target,
+        forecasts=all_forecasts,
+        as_of_ts=as_of_ts,
+        hotel_tag=HOTEL_TAG,
+    )
 
     asof_tag = as_of_date.replace("-", "")
     out_name = f"forecast_recent90_{target_month}_{HOTEL_TAG}_asof_{asof_tag}.csv"

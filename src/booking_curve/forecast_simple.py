@@ -168,9 +168,8 @@ def moving_average_recent_90days(
             result[lt] = np.nan
             continue
 
-        offset_days = 90 - lt
-        start = as_of_ts - pd.Timedelta(days=offset_days)
-        end = as_of_ts + pd.Timedelta(days=offset_days)
+        start = as_of_ts - pd.Timedelta(days=90 - lt)
+        end = as_of_ts + pd.Timedelta(days=lt)
 
         mask = (df.index >= start) & (df.index <= end)
         values = df.loc[mask, lt_col_map[lt]]

@@ -86,18 +86,19 @@ def find_forecast_files() -> list[tuple[str, str, str, Path]]:
     return results
 
 
-def build_daily_from_file(
-    target_month: str, model_name: str, as_of_str: str, path: Path
-) -> pd.DataFrame:
-    """
-    単一の forecast CSV を読み込み、日別誤差テーブルに変換して返す。
-    """
-    df = pd.read_csv(path, index_col=0)
+def _append_errors_for_model(
+    df_forecast: pd.DataFrame,
+    target_month: str,
+    model_name: str,
+    as_of_str: str,
+    records: list[pd.DataFrame],
+) -> None:
+    if "actual_rooms" not in df_forecast.columns:
+        raise ValueError("actual_rooms 列がありません。")
+    if "projected_rooms" not in df_forecast.columns:
+        raise ValueError("projected_rooms 列がありません。")
 
-    if "actual_rooms" not in df.columns:
-        raise ValueError(f"{path} に actual_rooms 列がありません。")
-    if "projected_rooms" not in df.columns:
-        raise ValueError(f"{path} に projected_rooms 列がありません。")
+    df = df_forecast.copy()
 
     # インデックスが泊日 (YYYY-MM-DD) 前提
     df.index = pd.to_datetime(df.index)
@@ -115,7 +116,44 @@ def build_daily_from_file(
     # actual_total=0 の日があった場合にゼロ除算を避ける
     out["error_pct"] = out["error"] / out["actual_rooms"].replace(0, pd.NA) * 100.0
 
-    return out
+    records.append(out)
+
+
+def build_daily_from_file(
+    target_month: str, model_name: str, as_of_str: str, path: Path
+) -> pd.DataFrame:
+    """
+    単一の forecast CSV を読み込み、日別誤差テーブルに変換して返す。
+    """
+    df = pd.read_csv(path, index_col=0)
+
+    if "actual_rooms" not in df.columns:
+        raise ValueError(f"{path} に actual_rooms 列がありません。")
+    if "projected_rooms" not in df.columns:
+        raise ValueError(f"{path} に projected_rooms 列がありません。")
+
+    records: list[pd.DataFrame] = []
+
+    _append_errors_for_model(
+        df_forecast=df,
+        target_month=target_month,
+        model_name=model_name,
+        as_of_str=as_of_str,
+        records=records,
+    )
+
+    if "adjusted_projected_rooms" in df.columns:
+        _append_errors_for_model(
+            df_forecast=df.rename(
+                columns={"adjusted_projected_rooms": "projected_rooms"}
+            ),
+            target_month=target_month,
+            model_name=f"{model_name}_adj",
+            as_of_str=as_of_str,
+            records=records,
+        )
+
+    return pd.concat(records, axis=0)
 
 
 def main() -> None:

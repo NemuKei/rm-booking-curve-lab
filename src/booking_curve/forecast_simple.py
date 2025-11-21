@@ -59,6 +59,19 @@ def normalize_lt_columns(
     return normalized
 
 
+def _recent90_weight(age_days: int) -> float:
+    """Weight helper for recent90 observations based on age in days."""
+
+    if 0 <= age_days <= 14:
+        return 3.0
+    elif 15 <= age_days <= 30:
+        return 2.0
+    elif 31 <= age_days <= 90:
+        return 1.0
+    else:
+        return 0.0
+
+
 def moving_average_3months(
     lt_df_list: list[pd.DataFrame],
     lt_min: int = -1,
@@ -182,6 +195,67 @@ def moving_average_recent_90days(
             result[lt] = np.nan
         else:
             result[lt] = values.mean(skipna=True)
+
+    result_series = pd.Series(result, dtype=float)
+    result_series.index.name = "LT"
+    result_series.sort_index(inplace=True)
+    return result_series
+
+
+def moving_average_recent_90days_weighted(
+    lt_df: pd.DataFrame,
+    as_of_date: pd.Timestamp,
+    lt_min: int = -1,
+    lt_max: int = 90,
+) -> pd.Series:
+    """Compute LT-wise weighted averages using a moving 90-day stay-date window.
+
+    Observations are weighted by their age in days relative to ``as_of_date``
+    with the following scheme: 0–14 days = 3.0, 15–30 days = 2.0, 31–90 days =
+    1.0. Observations outside that range are ignored.
+    """
+
+    if lt_min > lt_max:
+        raise ValueError("lt_min must be less than or equal to lt_max")
+
+    df = lt_df.copy()
+    df.index = pd.to_datetime(df.index)
+
+    lt_col_map: dict[int, str] = {}
+    for col in df.columns:
+        try:
+            lt_value = int(col)
+        except (TypeError, ValueError) as exc:  # pragma: no cover - defensive
+            raise ValueError("LT columns must be castable to int") from exc
+        lt_col_map[lt_value] = col
+
+    as_of_ts = pd.to_datetime(as_of_date)
+
+    result: dict[int, float] = {}
+    for lt in range(lt_min, lt_max + 1):
+        if lt not in lt_col_map:
+            result[lt] = np.nan
+            continue
+
+        start = as_of_ts - pd.Timedelta(days=90 - lt)
+        end = as_of_ts + pd.Timedelta(days=lt)
+
+        mask = (df.index >= start) & (df.index <= end)
+        values = df.loc[mask, lt_col_map[lt]]
+
+        weighted_sum = 0.0
+        weight_sum = 0.0
+        for obs_date, value in values.items():
+            weight = _recent90_weight((as_of_ts - obs_date).days)
+            if weight == 0.0 or pd.isna(value):
+                continue
+            weighted_sum += value * weight
+            weight_sum += weight
+
+        if weight_sum == 0.0:
+            result[lt] = np.nan
+        else:
+            result[lt] = weighted_sum / weight_sum
 
     result_series = pd.Series(result, dtype=float)
     result_series.index.name = "LT"

@@ -10,9 +10,13 @@ from booking_curve.config import OUTPUT_DIR
 HOTEL_TAG = "daikokucho"
 
 # 評価対象モデルとファイル名プレフィックス
+# model 列の値は "avg" / "recent90" / "recent90w"
+# 対応するファイル名プレフィックスは
+#   forecast_{month}_... / forecast_recent90_{month}_... / forecast_recent90w_{month}_...
 MODEL_DEFS = {
     "avg": "forecast",
     "recent90": "forecast_recent90",
+    "recent90w": "forecast_recent90w",
 }
 
 # 対象とする宿泊月 (YYYYMM)。既存の run_evaluate_forecasts.py と揃えて良い。

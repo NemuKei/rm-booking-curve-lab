@@ -36,9 +36,11 @@ TARGET_MONTHS = [
 ]  # 評価したい宿泊月 (YYYYMM)
 
 # 評価対象モデルとファイル名プレフィックス
+# model 名は daily_errors 等と揃えて "avg" / "recent90" / "recent90w"
 MODEL_DEFS = {
-    "recent90": "forecast_recent90",
     "avg": "forecast",
+    "recent90": "forecast_recent90",
+    "recent90w": "forecast_recent90w",
     # 将来SARIMAなどを追加するならここに増やす
 }
 # ===== 設定ここまで =====

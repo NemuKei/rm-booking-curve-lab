@@ -78,32 +78,6 @@ def find_forecast_files() -> list[tuple[str, str, str, Path]]:
     return results
 
 
-def evaluate_forecast_file(path: Path) -> tuple[float, float, float, float]:
-    """
-    単一の forecast CSV について、
-    (actual_total, forecast_total, error, error_pct) を計算して返す。
-
-    - actual_total : actual_rooms の合計（NaN は無視）
-    - forecast_total : projected_rooms の合計（NaN は無視）
-    """
-    df = pd.read_csv(path, index_col=0)
-
-    if "actual_rooms" not in df.columns:
-        raise ValueError(f"{path} に actual_rooms 列がありません。")
-    if "projected_rooms" not in df.columns:
-        raise ValueError(f"{path} に projected_rooms 列がありません。")
-
-    actual_total = float(df["actual_rooms"].sum(skipna=True))
-    forecast_total = float(df["projected_rooms"].sum(skipna=True))
-    error = forecast_total - actual_total
-    if actual_total == 0:
-        error_pct = float("nan")
-    else:
-        error_pct = error / actual_total * 100.0
-
-    return actual_total, forecast_total, error, error_pct
-
-
 def main() -> None:
     records: list[dict] = []
 
@@ -113,12 +87,24 @@ def main() -> None:
         return
 
     for target_month, model_name, asof_str, path in files:
-        actual_total, forecast_total, error, error_pct = evaluate_forecast_file(path)
+        df = pd.read_csv(path, index_col=0)
+        if "actual_rooms" not in df.columns:
+            raise ValueError(f"{path} に actual_rooms 列がありません。")
 
-        records.append(
-            {
+        actual_total = float(df["actual_rooms"].sum(skipna=True))
+
+        def _calc_one(model_label: str, col_name: str) -> dict | None:
+            if col_name not in df.columns:
+                return None
+            forecast_total = float(df[col_name].sum(skipna=True))
+            error = forecast_total - actual_total
+            if actual_total == 0:
+                error_pct = float("nan")
+            else:
+                error_pct = error / actual_total * 100.0
+            return {
                 "target_month": target_month,
-                "model": model_name,
+                "model": model_label,
                 "as_of": asof_str,
                 "file": path.name,
                 "actual_total": actual_total,
@@ -127,7 +113,15 @@ def main() -> None:
                 "error_pct": error_pct,
                 "abs_error_pct": abs(error_pct) if error_pct == error_pct else float("nan"),
             }
-        )
+
+        rec_base = _calc_one(model_name, "projected_rooms")
+        if rec_base is not None:
+            records.append(rec_base)
+
+        if model_name == "recent90":
+            rec_adj = _calc_one("recent90_adj", "adjusted_projected_rooms")
+            if rec_adj is not None:
+                records.append(rec_adj)
 
     # DataFrame にしてソート
     df_result = pd.DataFrame(records)

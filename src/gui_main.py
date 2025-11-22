@@ -392,17 +392,20 @@ class BookingCurveApp(tk.Tk):
                 label=stay_date.strftime("%m/%d"),
             )
 
+            # ------- ここから破線 (モデルベースの延長) -------
             if avg_series is None or avg_series.empty:
                 continue
 
             y_array = np.array(y_values, dtype=float)
 
+            # 右端から見て「最後に実績がある LT」のインデックスを探す
             last_idx = None
             for idx in range(len(LEAD_TIME_PITCHES) - 1, -1, -1):
                 if not np.isnan(y_array[idx]):
                     last_idx = idx
                     break
 
+            # 実績が1つも無い場合 or すでに ACT まで埋まっている場合は延長不要
             if last_idx is None or last_idx == len(LEAD_TIME_PITCHES) - 1:
                 continue
 
@@ -414,12 +417,21 @@ class BookingCurveApp(tk.Tk):
                 continue
 
             y_dash = [np.nan] * len(LEAD_TIME_PITCHES)
-            for j in range(last_idx + 1, len(LEAD_TIME_PITCHES)):
+            last_model_val = base_model
+
+            # 基準LTを含めて ACT まで破線を描く
+            for j in range(last_idx, len(LEAD_TIME_PITCHES)):
                 lt = LEAD_TIME_PITCHES[j]
-                model_val = avg_series.get(lt, np.nan)
-                if np.isnan(model_val):
-                    continue
-                y_dash[j] = float(base_actual) + float(model_val - base_model)
+                if j == last_idx:
+                    # 基準LTでは実績点と同じ位置から破線をスタートさせる
+                    y_dash[j] = float(base_actual)
+                else:
+                    model_val = avg_series.get(lt, np.nan)
+                    if np.isnan(model_val):
+                        # モデル値が欠損している場合は直前のモデル値を使ってフラットに延長
+                        model_val = last_model_val
+                    last_model_val = model_val
+                    y_dash[j] = float(base_actual) + float(model_val - base_model)
 
             self.bc_ax.plot(
                 x_positions,

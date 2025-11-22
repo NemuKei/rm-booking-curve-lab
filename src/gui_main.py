@@ -364,7 +364,7 @@ class BookingCurveApp(tk.Tk):
             color="#1F3F75",
             linewidth=4.5,
             alpha=0.2,
-            label="3-month avg",
+            label="model avg",
         )
 
         self.bc_ax.set_xticks(x_positions)

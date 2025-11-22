@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import itertools
-
 import pandas as pd
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -19,6 +17,7 @@ from booking_curve.gui_backend import (
     get_monthly_curve_data,
     HOTEL_CONFIG,
 )
+from booking_curve.plot_booking_curve import LEAD_TIME_PITCHES
 
 # デフォルトホテル (現状は大国町のみ想定)
 DEFAULT_HOTEL = next(iter(HOTEL_CONFIG.keys()), "daikokucho")
@@ -320,65 +319,88 @@ class BookingCurveApp(tk.Tk):
         curves = data.get("curves", {})
         avg_curve = data.get("avg_curve")
         forecast_curve = data.get("forecast_curve")
-        lt_ticks = data.get("lt_ticks", [])
-
-        if avg_curve is None or not lt_ticks:
+        if not curves and avg_curve is None and forecast_curve is None:
             messagebox.showerror("Error", "データが不足しています")
             return
 
-        lt_sorted = sorted(lt_ticks, reverse=True)
-        x_labels = ["ACT" if lt == -1 else str(lt) for lt in lt_sorted]
+        x_positions = np.arange(len(LEAD_TIME_PITCHES))
+        x_labels = ["ACT" if lt == -1 else str(lt) for lt in LEAD_TIME_PITCHES]
 
         self.bc_ax.clear()
 
-        color_cycle = itertools.cycle(plt.rcParams["axes.prop_cycle"].by_key()["color"])
+        line_colors = [
+            "#4C72B0",
+            "#DD8452",
+            "#55A868",
+            "#C44E52",
+            "#8172B2",
+        ]
 
-        for stay_date, series in curves.items():
-            color = next(color_cycle)
-            s = series.reindex(lt_sorted)
+        for i, (stay_date, series) in enumerate(sorted(curves.items())):
+            color = line_colors[i % len(line_colors)]
+            y_values = [series.get(lt, np.nan) for lt in LEAD_TIME_PITCHES]
             self.bc_ax.plot(
-                lt_sorted,
-                s.values,
+                x_positions,
+                y_values,
                 color=color,
-                alpha=0.4,
-                linewidth=1.2,
+                linewidth=1.8,
+                alpha=0.9,
                 label=stay_date.strftime("%m/%d"),
             )
 
-        avg = avg_curve.reindex(lt_sorted)
+        df_week = pd.DataFrame(curves).T if curves else pd.DataFrame()
+        if not df_week.empty:
+            df_week.columns = [int(c) for c in df_week.columns]
+            df_week = df_week.reindex(columns=LEAD_TIME_PITCHES)
+
+        if avg_curve is not None:
+            avg_series = pd.Series(avg_curve)
+        else:
+            avg_series = df_week.mean(axis=0, skipna=True) if not df_week.empty else pd.Series(dtype=float)
+
+        y_avg = [avg_series.get(lt, np.nan) for lt in LEAD_TIME_PITCHES]
         self.bc_ax.plot(
-            lt_sorted,
-            avg.values,
-            color="black",
-            linewidth=2.5,
-            alpha=0.7,
+            x_positions,
+            y_avg,
+            color="#1F3F75",
+            linewidth=4.5,
+            alpha=0.2,
             label="3-month avg",
         )
 
         if forecast_curve is not None:
-            fc = forecast_curve.reindex(lt_sorted)
+            forecast_series = pd.Series(forecast_curve)
+            y_forecast = [forecast_series.get(lt, np.nan) for lt in LEAD_TIME_PITCHES]
             self.bc_ax.plot(
-                lt_sorted,
-                fc.values,
+                x_positions,
+                y_forecast,
+                color="tab:blue",
                 linestyle="--",
                 linewidth=2.0,
                 alpha=0.8,
                 label=f"forecast ({model})",
             )
 
+        self.bc_ax.set_xticks(x_positions)
+        self.bc_ax.set_xticklabels(x_labels)
         self.bc_ax.set_xlabel("Lead Time (days)")
+
         self.bc_ax.set_ylabel("Rooms")
+        self.bc_ax.set_ylim(0, 180)
+        self.bc_ax.set_yticks(range(0, 181, 20))
+        self.bc_ax.set_yticks(range(0, 181, 10), minor=True)
+
         if len(target_month) == 6 and target_month.isdigit():
             title_month = f"{target_month[:4]}-{target_month[4:]}"
         else:
             title_month = target_month
         self.bc_ax.set_title(f"{title_month} Booking Curve")
 
-        self.bc_ax.set_xticks(range(len(lt_sorted)))
-        self.bc_ax.set_xticklabels(x_labels, rotation=0)
+        self.bc_ax.grid(axis="y", which="major", linestyle="--", alpha=0.3)
+        self.bc_ax.grid(axis="y", which="minor", linestyle=":", alpha=0.15)
+        self.bc_ax.grid(axis="x", which="major", linestyle=":", alpha=0.15)
 
-        self.bc_ax.grid(True, linestyle=":", linewidth=0.5)
-        self.bc_ax.legend(loc="best")
+        self.bc_ax.legend(bbox_to_anchor=(1.02, 1.0), loc="upper left")
 
         self.bc_canvas.draw()
 

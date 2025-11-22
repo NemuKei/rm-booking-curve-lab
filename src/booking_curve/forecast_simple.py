@@ -60,13 +60,14 @@ def normalize_lt_columns(
 
 
 def _recent90_weight(age_days: int) -> float:
-    """Weight helper for recent90 observations based on age in days."""
+    """Weight helper for recent90 observations based on absolute age in days."""
 
-    if 0 <= age_days <= 14:
+    d = abs(age_days)
+    if 0 <= d <= 14:
         return 3.0
-    elif 15 <= age_days <= 30:
+    elif 15 <= d <= 30:
         return 2.0
-    elif 31 <= age_days <= 90:
+    elif 31 <= d <= 90:
         return 1.0
     else:
         return 0.0
@@ -210,9 +211,9 @@ def moving_average_recent_90days_weighted(
 ) -> pd.Series:
     """Compute LT-wise weighted averages using a moving 90-day stay-date window.
 
-    Observations are weighted by their age in days relative to ``as_of_date``
-    with the following scheme: 0–14 days = 3.0, 15–30 days = 2.0, 31–90 days =
-    1.0. Observations outside that range are ignored.
+    Observations are weighted by their absolute age in days relative to
+    ``as_of_date`` with the following scheme: 0–14 days = 3.0, 15–30 days =
+    2.0, 31–90 days = 1.0. Observations outside that range are ignored.
     """
 
     if lt_min > lt_max:
@@ -246,7 +247,8 @@ def moving_average_recent_90days_weighted(
         weighted_sum = 0.0
         weight_sum = 0.0
         for obs_date, value in values.items():
-            weight = _recent90_weight((as_of_ts - obs_date).days)
+            diff_days = (obs_date - as_of_ts).days
+            weight = _recent90_weight(diff_days)
             if weight == 0.0 or pd.isna(value):
                 continue
             weighted_sum += value * weight

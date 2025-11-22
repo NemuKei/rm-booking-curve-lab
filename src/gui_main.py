@@ -4,6 +4,11 @@ import pandas as pd
 import tkinter as tk
 from tkinter import ttk, messagebox
 
+try:
+    from tkcalendar import DateEntry
+except ImportError:  # tkcalendar が無い環境向けフォールバック
+    DateEntry = None
+
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -75,9 +80,20 @@ class BookingCurveApp(tk.Tk):
         # as_of
         ttk.Label(form, text="AS OF (YYYY-MM-DD):").grid(row=0, column=4, sticky="w")
         self.df_asof_var = tk.StringVar(value="2025-06-20")
-        ttk.Entry(form, textvariable=self.df_asof_var, width=12).grid(
-            row=0, column=5, padx=4, pady=2
-        )
+        if DateEntry is not None:
+            self.df_asof_entry = DateEntry(
+                form,
+                textvariable=self.df_asof_var,
+                date_pattern="yyyy-mm-dd",
+                width=12,
+            )
+        else:
+            self.df_asof_entry = ttk.Entry(
+                form,
+                textvariable=self.df_asof_var,
+                width=12,
+            )
+        self.df_asof_entry.grid(row=0, column=5, padx=4, pady=2)
 
         # モデル
         ttk.Label(form, text="モデル:").grid(row=1, column=0, sticky="w", pady=(4, 2))
@@ -267,9 +283,20 @@ class BookingCurveApp(tk.Tk):
 
         ttk.Label(form, text="AS OF (YYYY-MM-DD):").grid(row=1, column=0, sticky="w", pady=(4, 2))
         self.bc_asof_var = tk.StringVar(value="2025-06-20")
-        ttk.Entry(form, textvariable=self.bc_asof_var, width=12).grid(
-            row=1, column=1, padx=4, pady=(4, 2)
-        )
+        if DateEntry is not None:
+            self.bc_asof_entry = DateEntry(
+                form,
+                textvariable=self.bc_asof_var,
+                date_pattern="yyyy-mm-dd",
+                width=12,
+            )
+        else:
+            self.bc_asof_entry = ttk.Entry(
+                form,
+                textvariable=self.bc_asof_var,
+                width=12,
+            )
+        self.bc_asof_entry.grid(row=1, column=1, padx=4, pady=(4, 2))
 
         ttk.Label(form, text="モデル:").grid(row=1, column=2, sticky="w", pady=(4, 2))
         self.bc_model_var = tk.StringVar(value="recent90")

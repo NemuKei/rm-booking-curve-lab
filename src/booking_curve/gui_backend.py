@@ -97,23 +97,29 @@ def get_booking_curve_data(
     for stay_date, row in df_week_plot.iterrows():
         curves[stay_date] = row.reindex(lt_ticks)
 
-    # 平均カーブ
-    avg_curve = df_week_plot.reindex(columns=lt_ticks).mean(axis=0, skipna=True)
-
-    # 未来部分の予測線（モデルに応じて計算）
-    forecast_curve = None
     lt_min, lt_max = (lt_ticks[0], lt_ticks[-1]) if lt_ticks else (-1, 90)
 
+    avg_curve = None
+    forecast_curve = None
+
     if model == "recent90":
-        forecast_curve = moving_average_recent_90days(
-            lt_df=df_week, as_of_date=asof_ts, lt_min=lt_min, lt_max=lt_max
+        avg_curve = moving_average_recent_90days(
+            lt_df=df_week,
+            as_of_date=asof_ts,
+            lt_min=lt_min,
+            lt_max=lt_max,
         )
     elif model == "recent90w":
-        forecast_curve = moving_average_recent_90days_weighted(
-            lt_df=df_week, as_of_date=asof_ts, lt_min=lt_min, lt_max=lt_max
+        avg_curve = moving_average_recent_90days_weighted(
+            lt_df=df_week,
+            as_of_date=asof_ts,
+            lt_min=lt_min,
+            lt_max=lt_max,
         )
     elif model == "avg":
-        forecast_curve = avg_curve
+        avg_curve = df_week.reindex(columns=lt_ticks).mean(axis=0, skipna=True)
+    else:
+        avg_curve = df_week.reindex(columns=lt_ticks).mean(axis=0, skipna=True)
 
     dates: List[pd.Timestamp] = list(df_week.index)
 

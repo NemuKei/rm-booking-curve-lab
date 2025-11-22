@@ -318,8 +318,7 @@ class BookingCurveApp(tk.Tk):
 
         curves = data.get("curves", {})
         avg_curve = data.get("avg_curve")
-        forecast_curve = data.get("forecast_curve")
-        if not curves and avg_curve is None and forecast_curve is None:
+        if not curves and avg_curve is None:
             messagebox.showerror("Error", "データが不足しています")
             return
 
@@ -367,19 +366,6 @@ class BookingCurveApp(tk.Tk):
             alpha=0.2,
             label="3-month avg",
         )
-
-        if forecast_curve is not None:
-            forecast_series = pd.Series(forecast_curve)
-            y_forecast = [forecast_series.get(lt, np.nan) for lt in LEAD_TIME_PITCHES]
-            self.bc_ax.plot(
-                x_positions,
-                y_forecast,
-                color="tab:blue",
-                linestyle="--",
-                linewidth=2.0,
-                alpha=0.8,
-                label=f"forecast ({model})",
-            )
 
         self.bc_ax.set_xticks(x_positions)
         self.bc_ax.set_xticklabels(x_labels)

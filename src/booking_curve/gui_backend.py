@@ -72,26 +72,37 @@ def get_booking_curve_data(
 ) -> dict:
     """曜日別ブッキングカーブ画面向けのデータセットを返す。"""
 
+    asof_ts = pd.to_datetime(as_of_date).normalize()
     lt_df = _load_lt_data(hotel_tag=hotel_tag, target_month=target_month)
 
     # 曜日でフィルタ（0=Mon..6=Sun）
     df_week = lt_df[lt_df.index.weekday == weekday].copy()
     df_week.sort_index(inplace=True)
 
-    lt_ticks = sorted(df_week.columns) if not df_week.empty else sorted(lt_df.columns)
+    df_week_plot = df_week.copy()
+
+    for stay_date in df_week_plot.index:
+        delta_days = (stay_date.normalize() - asof_ts).days
+        if delta_days > 0:
+            for lt in df_week_plot.columns:
+                if lt < delta_days:
+                    df_week_plot.at[stay_date, lt] = pd.NA
+
+    lt_ticks = (
+        sorted(df_week_plot.columns) if not df_week_plot.empty else sorted(lt_df.columns)
+    )
 
     # stay_date ごとのカーブ
     curves = {}
-    for stay_date, row in df_week.iterrows():
+    for stay_date, row in df_week_plot.iterrows():
         curves[stay_date] = row.reindex(lt_ticks)
 
     # 平均カーブ
-    avg_curve = df_week.reindex(columns=lt_ticks).mean(axis=0, skipna=True)
+    avg_curve = df_week_plot.reindex(columns=lt_ticks).mean(axis=0, skipna=True)
 
     # 未来部分の予測線（モデルに応じて計算）
     forecast_curve = None
     lt_min, lt_max = (lt_ticks[0], lt_ticks[-1]) if lt_ticks else (-1, 90)
-    asof_ts = pd.to_datetime(as_of_date)
 
     if model == "recent90":
         forecast_curve = moving_average_recent_90days(

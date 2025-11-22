@@ -322,6 +322,22 @@ class BookingCurveApp(tk.Tk):
             messagebox.showerror("Error", "データが不足しています")
             return
 
+        df_week = pd.DataFrame(curves).T if curves else pd.DataFrame()
+        if not df_week.empty:
+            df_week.columns = [int(c) for c in df_week.columns]
+            df_week = df_week.reindex(columns=LEAD_TIME_PITCHES)
+
+        if avg_curve is not None:
+            avg_series = pd.Series(avg_curve)
+        else:
+            avg_series = (
+                df_week.mean(axis=0, skipna=True) if not df_week.empty else pd.Series(dtype=float)
+            )
+
+        if not avg_series.empty:
+            avg_series.index = [int(i) for i in avg_series.index]
+            avg_series = avg_series.reindex(LEAD_TIME_PITCHES)
+
         x_positions = np.arange(len(LEAD_TIME_PITCHES))
         x_labels = ["ACT" if lt == -1 else str(lt) for lt in LEAD_TIME_PITCHES]
 
@@ -337,6 +353,8 @@ class BookingCurveApp(tk.Tk):
 
         for i, (stay_date, series) in enumerate(sorted(curves.items())):
             color = line_colors[i % len(line_colors)]
+
+            series = series.reindex(LEAD_TIME_PITCHES)
             y_values = [series.get(lt, np.nan) for lt in LEAD_TIME_PITCHES]
             self.bc_ax.plot(
                 x_positions,
@@ -347,15 +365,43 @@ class BookingCurveApp(tk.Tk):
                 label=stay_date.strftime("%m/%d"),
             )
 
-        df_week = pd.DataFrame(curves).T if curves else pd.DataFrame()
-        if not df_week.empty:
-            df_week.columns = [int(c) for c in df_week.columns]
-            df_week = df_week.reindex(columns=LEAD_TIME_PITCHES)
+            if avg_series is None or avg_series.empty:
+                continue
 
-        if avg_curve is not None:
-            avg_series = pd.Series(avg_curve)
-        else:
-            avg_series = df_week.mean(axis=0, skipna=True) if not df_week.empty else pd.Series(dtype=float)
+            y_array = np.array(y_values, dtype=float)
+
+            last_idx = None
+            for idx in range(len(LEAD_TIME_PITCHES) - 1, -1, -1):
+                if not np.isnan(y_array[idx]):
+                    last_idx = idx
+                    break
+
+            if last_idx is None or last_idx == len(LEAD_TIME_PITCHES) - 1:
+                continue
+
+            base_lt = LEAD_TIME_PITCHES[last_idx]
+            base_actual = y_array[last_idx]
+            base_model = avg_series.get(base_lt, np.nan)
+
+            if np.isnan(base_actual) or np.isnan(base_model):
+                continue
+
+            y_dash = [np.nan] * len(LEAD_TIME_PITCHES)
+            for j in range(last_idx + 1, len(LEAD_TIME_PITCHES)):
+                lt = LEAD_TIME_PITCHES[j]
+                model_val = avg_series.get(lt, np.nan)
+                if np.isnan(model_val):
+                    continue
+                y_dash[j] = float(base_actual) + float(model_val - base_model)
+
+            self.bc_ax.plot(
+                x_positions,
+                y_dash,
+                color=color,
+                linestyle="--",
+                linewidth=1.4,
+                alpha=0.8,
+            )
 
         y_avg = [avg_series.get(lt, np.nan) for lt in LEAD_TIME_PITCHES]
         self.bc_ax.plot(

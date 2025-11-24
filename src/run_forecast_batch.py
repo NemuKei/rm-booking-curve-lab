@@ -119,6 +119,24 @@ RECENT90_HISTORY_MONTHS = [
 ]
 
 
+def get_history_months_around_asof(
+    as_of_ts: pd.Timestamp,
+    months_back: int = 4,
+    months_forward: int = 4,
+) -> list[str]:
+    """
+    ASOF 日付を中心に、前後の月を YYYYMM 文字列リストで返す。
+    例: as_of=2025-09-30, months_back=4, months_forward=4
+      -> ["202505", "202506", ..., "202601"] （9ヶ月分）
+    """
+    center = as_of_ts.to_period("M")
+    months: list[str] = []
+    for offset in range(-months_back, months_forward + 1):
+        p = center + offset
+        months.append(f"{p.year}{p.month:02d}")
+    return months
+
+
 def get_asof_dates_for_month(target_month: str) -> list[str]:
     """
     対象月 YYYYMM に対して、
@@ -248,12 +266,30 @@ def run_recent90_forecast(target_month: str, as_of_date: str) -> None:
     recent90モデル(観測日から遡る90日平均)で target_month を as_of_date 時点で予測し、
     run_forecast_from_recent90.py と同じ形式の CSV を OUTPUT_DIR に出力する。
     """
+    as_of_ts = pd.to_datetime(as_of_date)
+    history_months = get_history_months_around_asof(
+        as_of_ts=as_of_ts,
+        months_back=4,
+        months_forward=4,
+    )
+
+    history_raw: dict[str, pd.DataFrame] = {}
+    for ym in history_months:
+        try:
+            df_m = load_lt_csv(ym)
+        except FileNotFoundError:
+            continue
+        if df_m.empty:
+            continue
+        history_raw[ym] = df_m
+
+    if not history_raw:
+        print(f"[recent90] No history LT_DATA for as_of={as_of_date}")
+        return
+
     df_target = load_lt_csv(target_month)
-    history_raw = {m: load_lt_csv(m) for m in RECENT90_HISTORY_MONTHS}
 
     all_forecasts: dict[pd.Timestamp, float] = {}
-
-    as_of_ts = pd.to_datetime(as_of_date)
 
     for weekday in range(7):
         history_dfs = []
@@ -318,10 +354,29 @@ def run_recent90_weighted_forecast(target_month: str, as_of: str) -> None:
     出力ファイル名:
       forecast_recent90w_{target_month}_{HOTEL_TAG}_asof_{as_of}.csv
     """
-    df_target = load_lt_csv(target_month)
-    history_raw = {m: load_lt_csv(m) for m in RECENT90_HISTORY_MONTHS}
-
     as_of_ts = pd.to_datetime(as_of, format="%Y%m%d")
+
+    history_months = get_history_months_around_asof(
+        as_of_ts=as_of_ts,
+        months_back=4,
+        months_forward=4,
+    )
+
+    history_raw: dict[str, pd.DataFrame] = {}
+    for ym in history_months:
+        try:
+            df_m = load_lt_csv(ym)
+        except FileNotFoundError:
+            continue
+        if df_m.empty:
+            continue
+        history_raw[ym] = df_m
+
+    if not history_raw:
+        print(f"[recent90_weighted] No history LT_DATA for as_of={as_of}")
+        return
+
+    df_target = load_lt_csv(target_month)
 
     all_forecasts: dict[pd.Timestamp, float] = {}
 

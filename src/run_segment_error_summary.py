@@ -10,6 +10,8 @@ from booking_curve.config import OUTPUT_DIR
 # ===== 設定ここから =====
 HOTEL_TAG = "daikokucho"
 DAILY_ERRORS_FILE = f"daily_errors_{HOTEL_TAG}.csv"
+# 出力時のモデルの並び順
+MODEL_ORDER = ["avg", "recent90", "recent90_adj", "recent90w", "recent90w_adj"]
 # ===== 設定ここまで =====
 
 
@@ -57,6 +59,13 @@ def summarize_by_weekday(df: pd.DataFrame) -> pd.DataFrame:
     cols = ["model", "weekday"]
     result = summarize_group(df, cols)
 
+    # 出力をモデルの順序で並べ替える
+    result["model"] = pd.Categorical(
+        result["model"],
+        categories=MODEL_ORDER + [m for m in result["model"].unique() if m not in MODEL_ORDER],
+        ordered=True,
+    )
+
     # 見やすさのため weekday 昇順でソート
     result = result.sort_values(by=["model", "weekday"]).reset_index(drop=True)
     return result
@@ -74,6 +83,12 @@ def summarize_by_holiday_position(df: pd.DataFrame) -> pd.DataFrame:
     df_long = df[(df["holiday_block_len"] >= 3) & (df["holiday_position"] != "none")].copy()
     cols = ["model", "holiday_position"]
     result = summarize_group(df_long, cols)
+
+    result["model"] = pd.Categorical(
+        result["model"],
+        categories=MODEL_ORDER + [m for m in result["model"].unique() if m not in MODEL_ORDER],
+        ordered=True,
+    )
 
     # 位置の順序をある程度並べ替える（存在するものだけ）
     pos_order = ["first", "middle", "last", "single", "none"]
@@ -112,6 +127,12 @@ def summarize_by_before_holiday(df: pd.DataFrame) -> pd.DataFrame:
     df_cat = categorize_before_holiday(df)
     cols = ["model", "day_type"]
     result = summarize_group(df_cat, cols)
+
+    result["model"] = pd.Categorical(
+        result["model"],
+        categories=MODEL_ORDER + [m for m in result["model"].unique() if m not in MODEL_ORDER],
+        ordered=True,
+    )
 
     # day_type の並び順をある程度整える
     type_order = ["normal_weekday", "weekday_before_holiday", "holiday_or_weekend", "other"]

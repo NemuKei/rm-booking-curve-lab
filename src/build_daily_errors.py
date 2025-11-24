@@ -146,16 +146,21 @@ def build_daily_from_file(
         records=records,
     )
 
-    if "adjusted_projected_rooms" in df.columns:
+    if "adjusted_projected_rooms" in df.columns and model_name in {"recent90", "recent90w"}:
         df_adj = df.copy()
         # 調整版では projected_rooms を adjusted_projected_rooms で置き換える
         df_adj["projected_rooms"] = df_adj["adjusted_projected_rooms"]
         # （adjusted_projected_rooms 列はあっても邪魔ではないが、
         #    気になる場合は drop してもよい）
+        adj_model_name = {
+            "recent90": "recent90_adj",
+            "recent90w": "recent90w_adj",
+        }[model_name]
+
         _append_errors_for_model(
             df_forecast=df_adj,
             target_month=target_month,
-            model_name=f"{model_name}_adj",
+            model_name=adj_model_name,
             as_of_str=as_of_str,
             records=records,
         )

@@ -120,7 +120,7 @@ class BookingCurveApp(tk.Tk):
 
         # モデル
         ttk.Label(form, text="モデル:").grid(row=1, column=0, sticky="w", pady=(4, 2))
-        self.df_model_var = tk.StringVar(value="recent90_adj")
+        self.df_model_var = tk.StringVar(value="recent90w")
         model_combo = ttk.Combobox(
             form,
             textvariable=self.df_model_var,
@@ -324,7 +324,7 @@ class BookingCurveApp(tk.Tk):
         self.bc_asof_entry.grid(row=1, column=1, padx=4, pady=(4, 2))
 
         ttk.Label(form, text="モデル:").grid(row=1, column=2, sticky="w", pady=(4, 2))
-        self.bc_model_var = tk.StringVar(value="recent90")
+        self.bc_model_var = tk.StringVar(value="recent90w")
         model_combo = ttk.Combobox(form, textvariable=self.bc_model_var, state="readonly", width=12)
         model_combo["values"] = ["avg", "recent90", "recent90w"]
         model_combo.grid(row=1, column=3, padx=4, pady=(4, 2))
@@ -435,6 +435,8 @@ class BookingCurveApp(tk.Tk):
 
         curves = data.get("curves", {})
         avg_curve = data.get("avg_curve")
+        forecast_curve = data.get("forecast_curve")
+
         if not curves and avg_curve is None:
             messagebox.showerror("Error", "データが不足しています")
             return
@@ -451,9 +453,18 @@ class BookingCurveApp(tk.Tk):
                 df_week.mean(axis=0, skipna=True) if not df_week.empty else pd.Series(dtype=float)
             )
 
+        if forecast_curve is not None:
+            forecast_series = pd.Series(forecast_curve)
+        else:
+            forecast_series = avg_series.copy()
+
         if not avg_series.empty:
             avg_series.index = [int(i) for i in avg_series.index]
             avg_series = avg_series.reindex(LEAD_TIME_PITCHES)
+
+        if not forecast_series.empty:
+            forecast_series.index = [int(i) for i in forecast_series.index]
+            forecast_series = forecast_series.reindex(LEAD_TIME_PITCHES)
 
         x_positions = np.arange(len(LEAD_TIME_PITCHES))
         x_labels = ["ACT" if lt == -1 else str(lt) for lt in LEAD_TIME_PITCHES]
@@ -483,7 +494,7 @@ class BookingCurveApp(tk.Tk):
             )
 
             # ------- ここから破線 (モデルベースの延長) -------
-            if avg_series is None or avg_series.empty:
+            if forecast_series is None or forecast_series.empty:
                 continue
 
             y_array = np.array(y_values, dtype=float)
@@ -501,7 +512,7 @@ class BookingCurveApp(tk.Tk):
 
             base_lt = LEAD_TIME_PITCHES[last_idx]
             base_actual = y_array[last_idx]
-            base_model = avg_series.get(base_lt, np.nan)
+            base_model = forecast_series.get(base_lt, np.nan)
 
             if np.isnan(base_actual) or np.isnan(base_model):
                 continue
@@ -516,7 +527,7 @@ class BookingCurveApp(tk.Tk):
                     # 基準LTでは実績点と同じ位置から破線をスタートさせる
                     y_dash[j] = float(base_actual)
                 else:
-                    model_val = avg_series.get(lt, np.nan)
+                    model_val = forecast_series.get(lt, np.nan)
                     if np.isnan(model_val):
                         # モデル値が欠損している場合は直前のモデル値を使ってフラットに延長
                         model_val = last_model_val

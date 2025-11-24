@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 import pandas as pd
 
 from booking_curve.forecast_simple import (
+    moving_average_3months,
     moving_average_recent_90days,
     moving_average_recent_90days_weighted,
 )
@@ -88,38 +89,54 @@ def get_booking_curve_data(
                 if lt < delta_days:
                     df_week_plot.at[stay_date, lt] = pd.NA
 
-    lt_ticks = (
-        sorted(df_week_plot.columns) if not df_week_plot.empty else sorted(lt_df.columns)
-    )
+    lt_ticks = sorted(df_week.columns) if not df_week.empty else sorted(lt_df.columns)
+    lt_min, lt_max = (lt_ticks[0], lt_ticks[-1]) if lt_ticks else (-1, 90)
 
     # stay_date ごとのカーブ
     curves = {}
     for stay_date, row in df_week_plot.iterrows():
         curves[stay_date] = row.reindex(lt_ticks)
 
-    lt_min, lt_max = (lt_ticks[0], lt_ticks[-1]) if lt_ticks else (-1, 90)
+    # --- 3ヶ月平均カーブの計算 ---
+    target_period = pd.Period(target_month, freq="M")
+    history_dfs: list[pd.DataFrame] = []
+    for offset in (1, 2, 3):
+        prev_period = target_period - offset
+        prev_month = prev_period.strftime("%Y%m")
+        try:
+            prev_df = _load_lt_data(hotel_tag=hotel_tag, target_month=prev_month)
+        except FileNotFoundError:
+            continue
+        prev_week = prev_df[prev_df.index.weekday == weekday]
+        if not prev_week.empty:
+            history_dfs.append(prev_week)
 
-    avg_curve = None
+    if history_dfs:
+        avg_curve = moving_average_3months(
+            lt_df_list=history_dfs,
+            lt_min=lt_min,
+            lt_max=lt_max,
+        )
+    else:
+        avg_curve = df_week.reindex(columns=lt_ticks).mean(axis=0, skipna=True)
+
     forecast_curve = None
-
     if model == "recent90":
-        avg_curve = moving_average_recent_90days(
+        forecast_curve = moving_average_recent_90days(
             lt_df=df_week,
             as_of_date=asof_ts,
             lt_min=lt_min,
             lt_max=lt_max,
         )
     elif model == "recent90w":
-        avg_curve = moving_average_recent_90days_weighted(
+        forecast_curve = moving_average_recent_90days_weighted(
             lt_df=df_week,
             as_of_date=asof_ts,
             lt_min=lt_min,
             lt_max=lt_max,
         )
     elif model == "avg":
-        avg_curve = df_week.reindex(columns=lt_ticks).mean(axis=0, skipna=True)
-    else:
-        avg_curve = df_week.reindex(columns=lt_ticks).mean(axis=0, skipna=True)
+        forecast_curve = avg_curve
 
     dates: List[pd.Timestamp] = list(df_week.index)
 

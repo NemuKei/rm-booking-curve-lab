@@ -6,9 +6,9 @@ from typing import Dict, List, Optional
 import pandas as pd
 
 from booking_curve.forecast_simple import (
-    moving_average_3months,
     moving_average_recent_90days,
     moving_average_recent_90days_weighted,
+    moving_average_3months,
 )
 
 # プロジェクトルートから見た output ディレクトリ
@@ -73,24 +73,24 @@ def get_booking_curve_data(
 ) -> dict:
     """曜日別ブッキングカーブ画面向けのデータセットを返す。"""
 
-    asof_ts = pd.to_datetime(as_of_date).normalize()
     lt_df = _load_lt_data(hotel_tag=hotel_tag, target_month=target_month)
 
     # 曜日でフィルタ（0=Mon..6=Sun）
     df_week = lt_df[lt_df.index.weekday == weekday].copy()
     df_week.sort_index(inplace=True)
 
+    lt_ticks = sorted(df_week.columns) if not df_week.empty else sorted(lt_df.columns)
+    lt_min, lt_max = (lt_ticks[0], lt_ticks[-1]) if lt_ticks else (-1, 90)
+
     df_week_plot = df_week.copy()
 
+    asof_ts = pd.to_datetime(as_of_date)
     for stay_date in df_week_plot.index:
         delta_days = (stay_date.normalize() - asof_ts).days
         if delta_days > 0:
             for lt in df_week_plot.columns:
                 if lt < delta_days:
                     df_week_plot.at[stay_date, lt] = pd.NA
-
-    lt_ticks = sorted(df_week.columns) if not df_week.empty else sorted(lt_df.columns)
-    lt_min, lt_max = (lt_ticks[0], lt_ticks[-1]) if lt_ticks else (-1, 90)
 
     # stay_date ごとのカーブ
     curves = {}
@@ -100,16 +100,18 @@ def get_booking_curve_data(
     # --- 3ヶ月平均カーブの計算 ---
     target_period = pd.Period(target_month, freq="M")
     history_dfs: list[pd.DataFrame] = []
+
     for offset in (1, 2, 3):
-        prev_period = target_period - offset
-        prev_month = prev_period.strftime("%Y%m")
+        past_period = target_period - offset
+        past_month_str = f"{past_period.year}{past_period.month:02d}"
         try:
-            prev_df = _load_lt_data(hotel_tag=hotel_tag, target_month=prev_month)
+            past_lt = _load_lt_data(hotel_tag=hotel_tag, target_month=past_month_str)
         except FileNotFoundError:
             continue
-        prev_week = prev_df[prev_df.index.weekday == weekday]
-        if not prev_week.empty:
-            history_dfs.append(prev_week)
+
+        past_week = past_lt[past_lt.index.weekday == weekday].copy()
+        if not past_week.empty:
+            history_dfs.append(past_week)
 
     if history_dfs:
         avg_curve = moving_average_3months(
@@ -118,9 +120,13 @@ def get_booking_curve_data(
             lt_max=lt_max,
         )
     else:
-        avg_curve = df_week.reindex(columns=lt_ticks).mean(axis=0, skipna=True)
+        if not df_week.empty:
+            avg_curve = df_week.reindex(columns=lt_ticks).mean(axis=0, skipna=True)
+        else:
+            avg_curve = None
 
     forecast_curve = None
+
     if model == "recent90":
         forecast_curve = moving_average_recent_90days(
             lt_df=df_week,

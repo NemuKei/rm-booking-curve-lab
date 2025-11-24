@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date
+
 import pandas as pd
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -20,6 +22,7 @@ from booking_curve.gui_backend import (
     get_daily_forecast_table,
     get_model_evaluation_table,
     get_monthly_curve_data,
+    OUTPUT_DIR,
     HOTEL_CONFIG,
 )
 from booking_curve.plot_booking_curve import LEAD_TIME_PITCHES
@@ -52,6 +55,26 @@ class BookingCurveApp(tk.Tk):
         self._init_model_eval_tab()
         self._init_booking_curve_tab()
         self._init_monthly_curve_tab()
+
+    def _shift_month_var(self, var: tk.StringVar, delta_months: int) -> None:
+        """
+        var で参照されている "YYYYMM" 形式の文字列を delta_months だけ
+        前後にシフトする。パースに失敗した場合はエラーダイアログ表示。
+        """
+        ym = var.get().strip()
+        try:
+            if len(ym) != 6:
+                raise ValueError
+            year = int(ym[:4])
+            month = int(ym[4:6])
+        except Exception:
+            messagebox.showerror("Error", f"対象月の形式が不正です: {ym}")
+            return
+
+        # pandas Period を使って月シフトする
+        p = pd.Period(f"{year:04d}-{month:02d}", freq="M")
+        p_new = p + delta_months
+        var.set(p_new.strftime("%Y%m"))
 
     # =========================
     # 3) 日別フォーキャスト一覧タブ
@@ -264,7 +287,8 @@ class BookingCurveApp(tk.Tk):
         hotel_combo.grid(row=0, column=1, padx=4, pady=2)
 
         ttk.Label(form, text="対象月 (YYYYMM):").grid(row=0, column=2, sticky="w")
-        self.bc_month_var = tk.StringVar(value="202506")
+        current_month = date.today().strftime("%Y%m")
+        self.bc_month_var = tk.StringVar(value=current_month)
         ttk.Entry(form, textvariable=self.bc_month_var, width=8).grid(row=0, column=3, padx=4, pady=2)
 
         ttk.Label(form, text="曜日:").grid(row=0, column=4, sticky="w")
@@ -282,7 +306,8 @@ class BookingCurveApp(tk.Tk):
         weekday_combo.grid(row=0, column=5, padx=4, pady=2)
 
         ttk.Label(form, text="AS OF (YYYY-MM-DD):").grid(row=1, column=0, sticky="w", pady=(4, 2))
-        self.bc_asof_var = tk.StringVar(value="2025-06-20")
+        today_str = date.today().strftime("%Y-%m-%d")
+        self.bc_asof_var = tk.StringVar(value=today_str)
         if DateEntry is not None:
             self.bc_asof_entry = DateEntry(
                 form,
@@ -304,8 +329,36 @@ class BookingCurveApp(tk.Tk):
         model_combo["values"] = ["avg", "recent90", "recent90w"]
         model_combo.grid(row=1, column=3, padx=4, pady=(4, 2))
 
+        save_btn = ttk.Button(form, text="PNG保存", command=self._on_save_booking_curve_png)
+        save_btn.grid(row=1, column=4, padx=4, pady=(4, 2))
+
         draw_btn = ttk.Button(form, text="描画", command=self._on_draw_booking_curve)
         draw_btn.grid(row=1, column=5, padx=4, pady=(4, 2))
+
+        nav_frame = ttk.Frame(form)
+        nav_frame.grid(row=2, column=2, columnspan=4, sticky="w", pady=(4, 0))
+
+        ttk.Label(nav_frame, text="月移動:").pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(
+            nav_frame,
+            text="-1Y",
+            command=lambda: self._shift_month_var(self.bc_month_var, -12),
+        ).pack(side=tk.LEFT, padx=2)
+        ttk.Button(
+            nav_frame,
+            text="-1M",
+            command=lambda: self._shift_month_var(self.bc_month_var, -1),
+        ).pack(side=tk.LEFT, padx=2)
+        ttk.Button(
+            nav_frame,
+            text="+1M",
+            command=lambda: self._shift_month_var(self.bc_month_var, +1),
+        ).pack(side=tk.LEFT, padx=2)
+        ttk.Button(
+            nav_frame,
+            text="+1Y",
+            command=lambda: self._shift_month_var(self.bc_month_var, +12),
+        ).pack(side=tk.LEFT, padx=2)
 
         plot_frame = ttk.Frame(frame)
         plot_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=8)
@@ -317,6 +370,43 @@ class BookingCurveApp(tk.Tk):
         self.bc_canvas = FigureCanvasTkAgg(self.bc_fig, master=plot_frame)
         self.bc_canvas.draw()
         self.bc_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+    def _on_save_booking_curve_png(self) -> None:
+        hotel_tag = self.bc_hotel_var.get().strip()
+        target_month = self.bc_month_var.get().strip()
+        weekday_label = self.bc_weekday_var.get().strip()
+        as_of_date = self.bc_asof_var.get().strip()
+        model = self.bc_model_var.get().strip()
+
+        try:
+            weekday_int = int(weekday_label.split(":")[0])
+        except Exception:
+            messagebox.showerror("Error", f"曜日の値が不正です: {weekday_label}")
+            return
+
+        if not target_month or len(target_month) != 6:
+            messagebox.showerror("Error", f"対象月の形式が不正です: {target_month}")
+            return
+
+        asof_tag = as_of_date.replace("-", "")
+        if len(asof_tag) != 8 or not asof_tag.isdigit():
+            messagebox.showerror("Error", f"AS OF の形式が不正です: {as_of_date}")
+            return
+
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        filename = (
+            f"booking_curve_{hotel_tag}_{target_month}_"
+            f"wd{weekday_int}_{model}_asof_{asof_tag}.png"
+        )
+        out_path = OUTPUT_DIR / filename
+
+        try:
+            self.bc_fig.savefig(out_path, dpi=150, bbox_inches="tight")
+        except Exception as e:
+            messagebox.showerror("Error", f"PNG保存に失敗しました:\n{e}")
+            return
+
+        messagebox.showinfo("保存完了", f"PNG を保存しました:\n{out_path}")
 
     def _on_draw_booking_curve(self) -> None:
         hotel_tag = self.bc_hotel_var.get()

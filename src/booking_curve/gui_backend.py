@@ -64,6 +64,23 @@ def _load_lt_data(hotel_tag: str, target_month: str) -> pd.DataFrame:
     return lt_df
 
 
+def _get_history_months_around_asof(
+    as_of_ts: pd.Timestamp,
+    months_back: int = 4,
+    months_forward: int = 4,
+) -> list[str]:
+    """
+    ASOF 日付を中心に、前後の月を YYYYMM 文字列リストで返す。
+    例: as_of=2025-09-30 -> ["202505", ..., "202601"]
+    """
+    center = as_of_ts.to_period("M")
+    months: list[str] = []
+    for offset in range(-months_back, months_forward + 1):
+        p = center + offset
+        months.append(f"{p.year}{p.month:02d}")
+    return months
+
+
 def get_booking_curve_data(
     hotel_tag: str,
     target_month: str,
@@ -85,6 +102,31 @@ def get_booking_curve_data(
     df_week_plot = df_week.copy()
 
     asof_ts = pd.to_datetime(as_of_date)
+
+    # ASOF を中心に前後4ヶ月の LT_DATA を読み込み、同曜日だけを連結
+    history_months = _get_history_months_around_asof(
+        as_of_ts=asof_ts,
+        months_back=4,
+        months_forward=4,
+    )
+
+    history_dfs: list[pd.DataFrame] = []
+    for ym in history_months:
+        try:
+            df_m = _load_lt_data(hotel_tag=hotel_tag, target_month=ym)
+        except FileNotFoundError:
+            continue
+        df_m_wd = df_m[df_m.index.weekday == weekday].copy()
+        if not df_m_wd.empty:
+            history_dfs.append(df_m_wd)
+
+    if history_dfs:
+        history_all = pd.concat(history_dfs, axis=0)
+        history_all.sort_index(inplace=True)
+    else:
+        # 履歴が取れない場合はフォールバックとして target_month の曜日データを使う
+        history_all = df_week.copy()
+
     for stay_date in df_week_plot.index:
         delta_days = (stay_date.normalize() - asof_ts).days
         if delta_days > 0:
@@ -128,19 +170,21 @@ def get_booking_curve_data(
     forecast_curve = None
 
     if model == "recent90":
-        forecast_curve = moving_average_recent_90days(
-            lt_df=df_week,
-            as_of_date=asof_ts,
-            lt_min=lt_min,
-            lt_max=lt_max,
-        )
+        if not history_all.empty:
+            forecast_curve = moving_average_recent_90days(
+                lt_df=history_all,
+                as_of_date=asof_ts,
+                lt_min=lt_min,
+                lt_max=lt_max,
+            )
     elif model == "recent90w":
-        forecast_curve = moving_average_recent_90days_weighted(
-            lt_df=df_week,
-            as_of_date=asof_ts,
-            lt_min=lt_min,
-            lt_max=lt_max,
-        )
+        if not history_all.empty:
+            forecast_curve = moving_average_recent_90days_weighted(
+                lt_df=history_all,
+                as_of_date=asof_ts,
+                lt_min=lt_min,
+                lt_max=lt_max,
+            )
     elif model == "avg":
         forecast_curve = avg_curve
 

@@ -124,6 +124,10 @@ def main() -> None:
             rec_adj = _calc_one("recent90_adj", "adjusted_projected_rooms")
             if rec_adj is not None:
                 records.append(rec_adj)
+        elif model_name == "recent90w":
+            rec_adj = _calc_one("recent90w_adj", "adjusted_projected_rooms")
+            if rec_adj is not None:
+                records.append(rec_adj)
 
     # DataFrame にしてソート
     df_result = pd.DataFrame(records)

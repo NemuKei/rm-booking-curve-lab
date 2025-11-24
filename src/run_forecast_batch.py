@@ -368,10 +368,11 @@ def run_recent90_weighted_forecast(target_month: str, as_of: str) -> None:
         print(f"[recent90_weighted] No forecasts for {target_month} as_of={as_of}")
         return
 
-    out_df = _prepare_output(
+    out_df = forecast_month_from_recent90(
         df_target=df_target,
-        forecast=all_forecasts,
+        forecasts=all_forecasts,
         as_of_ts=as_of_ts,
+        hotel_tag=HOTEL_TAG,
     )
 
     out_name = f"forecast_recent90w_{target_month}_{HOTEL_TAG}_asof_{as_of}.csv"

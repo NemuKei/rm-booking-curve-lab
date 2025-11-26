@@ -250,8 +250,29 @@ class BookingCurveApp(tk.Tk):
         ]
         self.df_tree = ttk.Treeview(frame, columns=columns, show="headings", height=25)
         for col in columns:
-            self.df_tree.heading(col, text=col)
-            self.df_tree.column(col, width=120, anchor="e")
+            header = col
+            if col == "stay_date":
+                width = 100
+                anchor = "center"
+                header = "stay_date"
+            elif col == "weekday":
+                width = 70
+                anchor = "center"
+                header = "weekday"
+            elif col in ("actual_rooms", "forecast_rooms", "diff_rooms"):
+                width = 90
+                anchor = "e"
+            elif col in ("diff_pct", "occ_actual_pct", "occ_forecast_pct"):
+                width = 90
+                anchor = "e"
+            else:
+                width = 90
+                anchor = "e"
+
+            self.df_tree.heading(col, text=header)
+            self.df_tree.column(col, width=width, anchor=anchor)
+
+        self.df_tree.tag_configure("oddrow", background="#F7F7F7")
 
         self.df_tree.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=8)
 
@@ -293,7 +314,7 @@ class BookingCurveApp(tk.Tk):
             self.df_tree.delete(row_id)
 
         # DataFrame を Treeview に流し込む
-        for _, row in df.iterrows():
+        for idx, (_, row) in enumerate(df.iterrows()):
             # TOTAL 行は stay_date が NaT なので、表示用に "TOTAL" とする
             stay_date = row["stay_date"]
             if pd.isna(stay_date):
@@ -318,7 +339,11 @@ class BookingCurveApp(tk.Tk):
                 _fmt_pct(row.get("occ_actual_pct")),
                 _fmt_pct(row.get("occ_forecast_pct")),
             ]
-            self.df_tree.insert("", tk.END, values=values)
+            tags: tuple[str, ...] = ()
+            if idx % 2 == 1:
+                tags = ("oddrow",)
+
+            self.df_tree.insert("", tk.END, values=values, tags=tags)
 
         self.df_table_df = df
 

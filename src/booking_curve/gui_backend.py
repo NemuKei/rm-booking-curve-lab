@@ -200,20 +200,46 @@ def get_booking_curve_data(
 
 
 def get_monthly_curve_data(hotel_tag: str, target_month: str) -> pd.DataFrame:
-    """月次ブッキングカーブ画面向けに CSV から DataFrame を返す。"""
+    """月次ブッキングカーブ画面向けに LT_DATA から集計した DataFrame を返す。"""
 
-    csv_path = OUTPUT_DIR / f"monthly_curve_{target_month}_{hotel_tag}_all.csv"
-    if not csv_path.exists():
-        raise FileNotFoundError(f"monthly curve csv not found: {csv_path}")
+    lt_path = OUTPUT_DIR / f"lt_data_{target_month}_{hotel_tag}.csv"
+    if not lt_path.exists():
+        raise FileNotFoundError(f"lt_data csv not found: {lt_path}")
 
-    df = pd.read_csv(csv_path, index_col=0)
+    df_raw = pd.read_csv(lt_path, index_col=0)
+    df_raw.index = pd.to_datetime(df_raw.index, errors="coerce")
+    df_raw = df_raw.dropna()
+    df_raw = df_raw[~df_raw.index.isna()]
 
-    try:
-        df.index = pd.Index([int(i) for i in df.index], dtype=int)
-    except Exception:
-        pass
+    lt_cols: list[str] = []
+    for col in df_raw.columns:
+        try:
+            int(col)
+        except Exception:
+            continue
+        lt_cols.append(col)
 
-    return df
+    if not lt_cols:
+        raise ValueError("LT 列が見つかりませんでした。")
+
+    df_lt = df_raw[lt_cols].copy()
+    df_lt.columns = [int(c) for c in lt_cols]
+
+    year = int(target_month[:4])
+    month = int(target_month[4:])
+    df_lt = df_lt[(df_lt.index.year == year) & (df_lt.index.month == month)]
+
+    if df_lt.empty:
+        raise ValueError("指定月の宿泊日がありません。")
+
+    df_lt = df_lt.reindex(sorted(df_lt.columns), axis=1)
+
+    curve = df_lt.sum(axis=0, skipna=True)
+
+    result = pd.DataFrame({"rooms_total": curve})
+    result.index = result.index.astype(int)
+
+    return result
 
 
 def get_daily_forecast_table(

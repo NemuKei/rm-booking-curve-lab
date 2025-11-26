@@ -95,7 +95,8 @@ class BookingCurveApp(tk.Tk):
 
         # 対象月
         ttk.Label(form, text="対象月 (YYYYMM):").grid(row=0, column=2, sticky="w")
-        self.df_month_var = tk.StringVar(value="202506")
+        current_month = date.today().strftime("%Y%m")
+        self.df_month_var = tk.StringVar(value=current_month)
         ttk.Entry(form, textvariable=self.df_month_var, width=8).grid(
             row=0, column=3, padx=4, pady=2
         )
@@ -144,7 +145,34 @@ class BookingCurveApp(tk.Tk):
             row=1, column=3, padx=4, pady=2
         )
 
+        nav_frame = ttk.Frame(form)
+        nav_frame.grid(row=2, column=2, columnspan=4, sticky="w", pady=(4, 0))
+
+        ttk.Label(nav_frame, text="月移動:").pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(
+            nav_frame,
+            text="-1Y",
+            command=lambda: self._shift_month_var(self.df_month_var, -12),
+        ).pack(side=tk.LEFT, padx=2)
+        ttk.Button(
+            nav_frame,
+            text="-1M",
+            command=lambda: self._shift_month_var(self.df_month_var, -1),
+        ).pack(side=tk.LEFT, padx=2)
+        ttk.Button(
+            nav_frame,
+            text="+1M",
+            command=lambda: self._shift_month_var(self.df_month_var, +1),
+        ).pack(side=tk.LEFT, padx=2)
+        ttk.Button(
+            nav_frame,
+            text="+1Y",
+            command=lambda: self._shift_month_var(self.df_month_var, +12),
+        ).pack(side=tk.LEFT, padx=2)
+
         # 実行ボタン
+        export_btn = ttk.Button(form, text="CSV出力", command=self._on_export_daily_forecast_csv)
+        export_btn.grid(row=1, column=4, padx=4, pady=2, sticky="e")
         run_btn = ttk.Button(form, text="読み込み", command=self._on_load_daily_forecast)
         run_btn.grid(row=1, column=5, padx=4, pady=2, sticky="e")
 
@@ -187,6 +215,7 @@ class BookingCurveApp(tk.Tk):
                 capacity=capacity,
             )
         except Exception as e:
+            self.df_table_df = None
             messagebox.showerror("エラー", f"日別フォーキャスト読み込みに失敗しました:\n{e}")
             return
 
@@ -221,6 +250,44 @@ class BookingCurveApp(tk.Tk):
                 _fmt_pct(row.get("occ_forecast_pct")),
             ]
             self.df_tree.insert("", tk.END, values=values)
+
+        self.df_table_df = df
+
+    def _on_export_daily_forecast_csv(self) -> None:
+        df = getattr(self, "df_table_df", None)
+        if df is None or df.empty:
+            messagebox.showerror("エラー", "日別フォーキャストが読み込まれていません。")
+            return
+
+        df_export = df.copy()
+        if "stay_date" in df_export.columns:
+            def _fmt_date(v: object) -> str:
+                if pd.isna(v):
+                    return "TOTAL"
+                try:
+                    return pd.to_datetime(v).strftime("%Y-%m-%d")
+                except Exception:
+                    return str(v)
+
+            df_export["stay_date"] = df_export["stay_date"].map(_fmt_date)
+
+        hotel = self.df_hotel_var.get().strip()
+        month = self.df_month_var.get().strip()
+        asof = self.df_asof_var.get().strip()
+        model = self.df_model_var.get().strip()
+        asof_tag = asof.replace("-", "")
+
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        filename = f"daily_forecast_{hotel}_{month}_{model}_asof_{asof_tag}.csv"
+        out_path = OUTPUT_DIR / filename
+
+        try:
+            df_export.to_csv(out_path, index=False, encoding="utf-8-sig")
+        except Exception as e:
+            messagebox.showerror("エラー", f"CSV出力に失敗しました:\n{e}")
+            return
+
+        messagebox.showinfo("保存完了", f"CSV を保存しました:\n{out_path}")
 
     # =========================
     # 4) モデル評価タブ

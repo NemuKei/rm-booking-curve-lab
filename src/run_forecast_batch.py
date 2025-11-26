@@ -52,73 +52,6 @@ LT_MAX = 90
 CAPACITY = 168.0
 # ===== 設定ここまで =====
 
-# HISTORY_MONTHS は既存スクリプトに合わせて個別に定義
-AVG_HISTORY_MONTHS = [
-    "202308",
-    "202309",
-    "202310",
-    "202311",
-    "202312",
-    "202401",
-    "202402",
-    "202403",
-    "202404",
-    "202405",
-    "202406",
-    "202407",
-    "202408",
-    "202409",
-    "202410",
-    "202411",
-    "202412",
-    "202501",
-    "202502",
-    "202503",
-    "202504",
-    "202505",
-    "202506",
-    "202507",
-    "202508",
-    "202509",
-    "202510",
-    "202511",
-]
-
-RECENT90_HISTORY_MONTHS = [
-    "202308",
-    "202309",
-    "202310",
-    "202311",
-    "202312",
-    "202401",
-    "202402",
-    "202403",
-    "202404",
-    "202405",
-    "202406",
-    "202407",
-    "202408",
-    "202409",
-    "202410",
-    "202411",
-    "202412",
-    "202501",
-    "202502",
-    "202503",
-    "202504",
-    "202505",
-    "202506",
-    "202507",
-    "202508",
-    "202509",
-    "202510",
-    "202511",
-    "202512",
-    "202601",
-    "202602",
-]
-
-
 def get_history_months_around_asof(
     as_of_ts: pd.Timestamp,
     months_back: int = 4,
@@ -133,6 +66,21 @@ def get_history_months_around_asof(
     months: list[str] = []
     for offset in range(-months_back, months_forward + 1):
         p = center + offset
+        months.append(f"{p.year}{p.month:02d}")
+    return months
+
+
+def get_avg_history_months(target_month: str, months_back: int = 3) -> list[str]:
+    """
+    avgモデル用の履歴月リストを返す。
+    target_month (YYYYMM) を基準に、前 months_back ヶ月分 (M-1〜M-months_back) を
+    YYYYMM 文字列のリストとして返す。
+    例: target_month="202510", months_back=3 -> ["202509", "202508", "202507"]
+    """
+    period = pd.Period(target_month, freq="M")
+    months: list[str] = []
+    for offset in range(1, months_back + 1):
+        p = period - offset
         months.append(f"{p.year}{p.month:02d}")
     return months
 
@@ -217,7 +165,23 @@ def run_avg_forecast(target_month: str, as_of_date: str) -> None:
     run_forecast_from_avg.py と同じ形式の CSV を OUTPUT_DIR に出力する。
     """
     df_target = load_lt_csv(target_month)
-    history_raw = {month: load_lt_csv(month) for month in AVG_HISTORY_MONTHS}
+
+    # avgモデル用の履歴: target_month から見た直近3ヶ月 (M-1〜M-3)
+    history_months = get_avg_history_months(target_month=target_month, months_back=3)
+
+    history_raw: dict[str, pd.DataFrame] = {}
+    for ym in history_months:
+        try:
+            df_m = load_lt_csv(ym)
+        except FileNotFoundError:
+            continue
+        if df_m.empty:
+            continue
+        history_raw[ym] = df_m
+
+    if not history_raw:
+        print(f"[avg] No history LT_DATA for target_month={target_month}")
+        return
 
     all_forecasts: dict[pd.Timestamp, float] = {}
     as_of_ts = pd.to_datetime(as_of_date)

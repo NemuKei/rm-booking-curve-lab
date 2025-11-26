@@ -818,8 +818,8 @@ class BookingCurveApp(tk.Tk):
         """月次ブッキングカーブタブの描画処理。
 
         ・対象月を含めた直近4ヶ月分（対象月, -1M, -2M, -3M）を一括で描画
-        ・「前年同月を重ねる」チェックONの場合は、前年同月を
-          対象月と同色の破線で追加描画
+        ・「前年同月を重ねる」チェックONの場合は、各月の前年同月を
+          同色の破線で追加描画
         ・リードタイム軸は「最大LT → … → 0 → ACT」の順で右に向かって小さくなる
           （ピッチは 1 日単位）
         """
@@ -840,9 +840,6 @@ class BookingCurveApp(tk.Tk):
         # 対象月を含めた直近4ヶ月（対象月, -1M, -2M, -3M）
         main_periods = [base_period - i for i in range(4)]
         main_months = [p.strftime("%Y%m") for p in main_periods]
-
-        # 前年同月
-        prev_year_month = (base_period - 12).strftime("%Y%m")
 
         # 日次ブッキングカーブと同系統のカラーパレット
         line_colors = [
@@ -894,22 +891,26 @@ class BookingCurveApp(tk.Tk):
             linewidth = 2.0 if month_str == ym else 1.6
             curves.append((month_str, df_m, color, "-", linewidth))
 
-        # 前年同月（対象月と同色の破線）
+        # 前年同月（各月と同色の破線）
         if show_prev_year:
-            try:
-                df_prev = load_month_df(prev_year_month)
-            except FileNotFoundError:
-                df_prev = None  # 無ければ黙って無視
-            except Exception as e:
-                messagebox.showerror(
-                    "Error",
-                    f"前年同月の取得に失敗しました: {prev_year_month}\n{e}",
-                )
-                return
+            for idx, period in enumerate(main_periods):
+                prev_period = period - 12
+                prev_month_str = prev_period.strftime("%Y%m")
 
-            if df_prev is not None:
-                color = line_colors[0]  # 対象月と同じ色
-                curves.append((prev_year_month, df_prev, color, "--", 1.6))
+                try:
+                    df_prev = load_month_df(prev_month_str)
+                except FileNotFoundError:
+                    continue
+                except Exception as e:
+                    messagebox.showerror(
+                        "Error",
+                        f"前年同月の取得に失敗しました: {prev_month_str}\n{e}",
+                    )
+                    return
+
+                if df_prev is not None and not df_prev.empty:
+                    color = line_colors[min(idx, len(line_colors) - 1)]
+                    curves.append((f"{prev_month_str} (prev)", df_prev, color, "--", 1.6))
 
         if not curves:
             self.mc_ax.clear()

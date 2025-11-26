@@ -379,6 +379,9 @@ class BookingCurveApp(tk.Tk):
         self.bc_tree = ttk.Treeview(table_frame, columns=(), show="headings", height=8)
         self.bc_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
+        # forecast行の背景色（破線部分の値を示す行）
+        self.bc_tree.tag_configure("forecast", background="#EEF7FF")
+
         # 縦スクロールバー
         bc_vsb = ttk.Scrollbar(table_frame, orient="vertical", command=self.bc_tree.yview)
         bc_vsb.pack(side=tk.RIGHT, fill=tk.Y)
@@ -608,39 +611,47 @@ class BookingCurveApp(tk.Tk):
         """
 
         curves = data.get("curves", {})
-        lt_ticks = data.get("lt_ticks", [])
+        forecast_curve = data.get("forecast_curve")
 
         if not hasattr(self, "bc_tree"):
             return
 
-        # まず既存行をクリア
+        # 既存行クリア
         for row_id in self.bc_tree.get_children():
             self.bc_tree.delete(row_id)
 
         if not curves:
-            # データが無ければ列ヘッダも空にして終了
             self.bc_tree["columns"] = ()
             return
 
-        # curves dict から DataFrame を構築 (index=stay_date, columns=LT)
+        # ---- 実績 DataFrame 作成 ----
         df = pd.DataFrame(curves).T
         df.index = pd.to_datetime(df.index)
         df.sort_index(inplace=True)
 
-        # 列順は lt_ticks (get_booking_curve_data で決めた順) に揃える
-        if lt_ticks:
-            df = df.reindex(columns=lt_ticks)
-        else:
-            df = df.reindex(columns=sorted(df.columns))
+        # 列は常に LEAD_TIME_PITCHES に揃える
+        lt_list = list(LEAD_TIME_PITCHES)
+        # データ側の列は int にそろえておく
+        df.columns = [int(c) for c in df.columns]
+        df = df.reindex(columns=lt_list)
 
-        lt_list = list(df.columns)
+        # ---- forecast 用 Series 作成 ----
+        if forecast_curve is not None:
+            forecast_series = pd.Series(forecast_curve)
+            # index を int (LT) にそろえて reindex
+            forecast_series.index = [int(i) for i in forecast_series.index]
+            forecast_series = forecast_series.reindex(lt_list)
+        else:
+            forecast_series = None
+
+        # ---- Treeview のカラム定義 ----
         columns = ["stay_date"] + [str(lt) for lt in lt_list]
         self.bc_tree["columns"] = columns
 
         for col in columns:
             if col == "stay_date":
                 self.bc_tree.heading(col, text="stay_date")
-                self.bc_tree.column(col, width=90, anchor="center")
+                self.bc_tree.column(col, width=110, anchor="center")
             else:
                 try:
                     lt_val = int(col)
@@ -648,23 +659,75 @@ class BookingCurveApp(tk.Tk):
                 except Exception:
                     header = col
                 self.bc_tree.heading(col, text=header)
-                self.bc_tree.column(col, width=55, anchor="e")
+                self.bc_tree.column(col, width=45, anchor="e")
 
+        # ---- 実績行＋forecast行を投入 ----
         for stay_date, row in df.iterrows():
+            # stay_date 文字列
             if pd.isna(stay_date):
                 stay_str = ""
             else:
                 stay_str = pd.to_datetime(stay_date).strftime("%Y-%m-%d")
 
-            values = [stay_str]
+            # 実績行
+            actual_values = [stay_str]
             for lt in lt_list:
                 v = row.get(lt)
                 if pd.isna(v):
-                    values.append("")
+                    actual_values.append("")
                 else:
-                    values.append(_fmt_num(v))
+                    actual_values.append(_fmt_num(v))
 
-            self.bc_tree.insert("", tk.END, values=values)
+            self.bc_tree.insert("", tk.END, values=actual_values)
+
+            # forecast_curve が無い場合はここで終了
+            if forecast_series is None or forecast_series.isna().all():
+                continue
+
+            # ---- 破線延長部分の値を計算 ----
+            y_values = np.array([row.get(lt) for lt in lt_list], dtype=float)
+
+            # 右端から見て最後に実績がある LT のインデックス
+            last_idx = None
+            for idx in range(len(lt_list) - 1, -1, -1):
+                if not np.isnan(y_values[idx]):
+                    last_idx = idx
+                    break
+
+            # 実績が1つも無い or すでに ACT まで埋まっている場合は破線なし
+            if last_idx is None or last_idx == len(lt_list) - 1:
+                continue
+
+            base_lt = lt_list[last_idx]
+            base_actual = y_values[last_idx]
+            base_model = forecast_series.get(base_lt, np.nan)
+
+            if np.isnan(base_actual) or np.isnan(base_model):
+                continue
+
+            forecast_row = [f"{stay_str} (forecast)"]
+
+            last_model_val = base_model
+            for j, lt in enumerate(lt_list):
+                if j < last_idx:
+                    # 破線開始前は空欄
+                    forecast_row.append("")
+                    continue
+
+                if j == last_idx:
+                    y_dash = float(base_actual)
+                else:
+                    model_val = forecast_series.get(lt, np.nan)
+                    if np.isnan(model_val):
+                        # モデル値が欠損している場合は直前の値でフラット延長
+                        model_val = last_model_val
+                    last_model_val = model_val
+                    y_dash = float(base_actual) + float(model_val - base_model)
+
+                forecast_row.append(_fmt_num(y_dash))
+
+            # forecast行をタグ付きで挿入（背景色変更）
+            self.bc_tree.insert("", tk.END, values=forecast_row, tags=("forecast",))
 
     # =========================
     # 2) 月次カーブタブ

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+import json
 
 import pandas as pd
 import tkinter as tk
@@ -29,6 +30,7 @@ from booking_curve.plot_booking_curve import LEAD_TIME_PITCHES
 
 # デフォルトホテル (現状は大国町のみ想定)
 DEFAULT_HOTEL = next(iter(HOTEL_CONFIG.keys()), "daikokucho")
+SETTINGS_FILE = OUTPUT_DIR / "gui_settings.json"
 
 
 class BookingCurveApp(tk.Tk):
@@ -51,10 +53,61 @@ class BookingCurveApp(tk.Tk):
         notebook.add(self.tab_daily_forecast, text="日別フォーキャスト")
         notebook.add(self.tab_model_eval, text="モデル評価")
 
+        self._settings = self._load_settings()
+
         self._init_daily_forecast_tab()
         self._init_model_eval_tab()
         self._init_booking_curve_tab()
         self._init_monthly_curve_tab()
+
+    def _load_settings(self) -> dict:
+        try:
+            if SETTINGS_FILE.exists():
+                with SETTINGS_FILE.open("r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        return data
+        except Exception:
+            pass
+        return {}
+
+    def _save_settings(self) -> None:
+        try:
+            OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            with SETTINGS_FILE.open("w", encoding="utf-8") as f:
+                json.dump(self._settings, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def _get_daily_caps_for_hotel(self, hotel_tag: str) -> tuple[float, float]:
+        """
+        Returns (forecast_cap, occ_capacity).
+        """
+
+        base_cap = float(HOTEL_CONFIG.get(hotel_tag, {}).get("capacity", 168.0))
+        daily = self._settings.get("daily_forecast", {})
+        fc_map = daily.get("forecast_cap", {})
+        occ_map = daily.get("occ_capacity", {})
+        try:
+            fc = float(fc_map.get(hotel_tag, base_cap))
+        except Exception:
+            fc = base_cap
+        try:
+            occ = float(occ_map.get(hotel_tag, base_cap))
+        except Exception:
+            occ = base_cap
+        return fc, occ
+
+    def _set_daily_caps_for_hotel(self, hotel_tag: str, forecast_cap: float, occ_capacity: float) -> None:
+        daily = self._settings.setdefault("daily_forecast", {})
+        fc_map = daily.setdefault("forecast_cap", {})
+        occ_map = daily.setdefault("occ_capacity", {})
+        try:
+            fc_map[hotel_tag] = float(forecast_cap)
+            occ_map[hotel_tag] = float(occ_capacity)
+        except Exception:
+            return
+        self._save_settings()
 
     def _shift_month_var(self, var: tk.StringVar, delta_months: int) -> None:
         """
@@ -92,6 +145,7 @@ class BookingCurveApp(tk.Tk):
         hotel_combo = ttk.Combobox(form, textvariable=self.df_hotel_var, state="readonly")
         hotel_combo["values"] = list(HOTEL_CONFIG.keys())
         hotel_combo.grid(row=0, column=1, padx=4, pady=2)
+        hotel_combo.bind("<<ComboboxSelected>>", self._on_df_hotel_changed)
 
         # 対象月
         ttk.Label(form, text="対象月 (YYYYMM):").grid(row=0, column=2, sticky="w")
@@ -137,16 +191,23 @@ class BookingCurveApp(tk.Tk):
         ]
         model_combo.grid(row=1, column=1, padx=4, pady=(4, 2))
 
-        # キャパシティ
-        ttk.Label(form, text="キャパシティ:").grid(row=1, column=2, sticky="w")
-        default_cap = HOTEL_CONFIG.get(DEFAULT_HOTEL, {}).get("capacity", 168.0)
-        self.df_capacity_var = tk.StringVar(value=str(default_cap))
-        ttk.Entry(form, textvariable=self.df_capacity_var, width=6).grid(
+        # 予測キャップ / 稼働率キャパ
+        fc_cap, occ_cap = self._get_daily_caps_for_hotel(DEFAULT_HOTEL)
+
+        ttk.Label(form, text="予測キャップ:").grid(row=1, column=2, sticky="w")
+        self.df_forecast_cap_var = tk.StringVar(value=str(fc_cap))
+        ttk.Entry(form, textvariable=self.df_forecast_cap_var, width=6).grid(
             row=1, column=3, padx=4, pady=2
         )
 
+        ttk.Label(form, text="稼働率キャパ:").grid(row=1, column=4, sticky="w")
+        self.df_occ_cap_var = tk.StringVar(value=str(occ_cap))
+        ttk.Entry(form, textvariable=self.df_occ_cap_var, width=6).grid(
+            row=1, column=5, padx=4, pady=2
+        )
+
         nav_frame = ttk.Frame(form)
-        nav_frame.grid(row=2, column=2, columnspan=4, sticky="w", pady=(4, 0))
+        nav_frame.grid(row=2, column=2, columnspan=6, sticky="w", pady=(4, 0))
 
         ttk.Label(nav_frame, text="月移動:").pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(
@@ -172,9 +233,9 @@ class BookingCurveApp(tk.Tk):
 
         # 実行ボタン
         export_btn = ttk.Button(form, text="CSV出力", command=self._on_export_daily_forecast_csv)
-        export_btn.grid(row=1, column=4, padx=4, pady=2, sticky="e")
+        export_btn.grid(row=1, column=6, padx=4, pady=2, sticky="e")
         run_btn = ttk.Button(form, text="読み込み", command=self._on_load_daily_forecast)
-        run_btn.grid(row=1, column=5, padx=4, pady=2, sticky="e")
+        run_btn.grid(row=1, column=7, padx=4, pady=2, sticky="e")
 
         # Treeview (テーブル)
         columns = [
@@ -205,15 +266,23 @@ class BookingCurveApp(tk.Tk):
             month = self.df_month_var.get()
             asof = self.df_asof_var.get()
             model = self.df_model_var.get()
-            capacity = float(self.df_capacity_var.get())
+            fc_cap_str = self.df_forecast_cap_var.get().strip()
+            occ_cap_str = self.df_occ_cap_var.get().strip()
+            if not fc_cap_str or not occ_cap_str:
+                messagebox.showerror("エラー", "予測キャップと稼働率キャパを入力してください。")
+                return
+            forecast_cap = float(fc_cap_str)
+            occ_capacity = float(occ_cap_str)
 
             df = get_daily_forecast_table(
                 hotel_tag=hotel,
                 target_month=month,
                 as_of_date=asof,
                 gui_model=model,
-                capacity=capacity,
+                capacity=occ_capacity,
             )
+
+            self._set_daily_caps_for_hotel(hotel, forecast_cap, occ_capacity)
         except Exception as e:
             self.df_table_df = None
             messagebox.showerror("エラー", f"日別フォーキャスト読み込みに失敗しました:\n{e}")
@@ -252,6 +321,12 @@ class BookingCurveApp(tk.Tk):
             self.df_tree.insert("", tk.END, values=values)
 
         self.df_table_df = df
+
+    def _on_df_hotel_changed(self, event=None) -> None:
+        hotel = self.df_hotel_var.get().strip()
+        fc_cap, occ_cap = self._get_daily_caps_for_hotel(hotel)
+        self.df_forecast_cap_var.set(str(fc_cap))
+        self.df_occ_cap_var.set(str(occ_cap))
 
     def _on_export_daily_forecast_csv(self) -> None:
         df = getattr(self, "df_table_df", None)

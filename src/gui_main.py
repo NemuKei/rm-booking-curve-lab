@@ -578,10 +578,25 @@ class BookingCurveApp(tk.Tk):
         self.bc_ax.set_xticklabels(x_labels)
         self.bc_ax.set_xlabel("Lead Time (days)")
 
+        def _choose_axis_params(raw_max: float) -> tuple[int, int]:
+            steps = [10, 20, 25, 50, 100, 200, 500]
+            for step in steps:
+                if raw_max / step <= 10:
+                    ymax = int(np.ceil(raw_max / step) * step)
+                    return ymax, int(step)
+            ymax = int(np.ceil(raw_max / 500) * 500)
+            return ymax, 500
+
+        hotel_tag = self.bc_hotel_var.get()
+        capacity = HOTEL_CONFIG.get(hotel_tag, {}).get("capacity", 180.0)
+        raw_max = capacity * 1.10
+        ymax, major_step = _choose_axis_params(raw_max)
+        minor_step = max(int(major_step / 2), 1)
+
         self.bc_ax.set_ylabel("Rooms")
-        self.bc_ax.set_ylim(0, 180)
-        self.bc_ax.set_yticks(range(0, 181, 20))
-        self.bc_ax.set_yticks(range(0, 181, 10), minor=True)
+        self.bc_ax.set_ylim(0, ymax)
+        self.bc_ax.set_yticks(np.arange(0, ymax + 1, major_step))
+        self.bc_ax.set_yticks(np.arange(0, ymax + 1, minor_step), minor=True)
 
         if len(target_month) == 6 and target_month.isdigit():
             title_month = f"{target_month[:4]}-{target_month[4:]}"

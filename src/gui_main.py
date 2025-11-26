@@ -743,7 +743,8 @@ class BookingCurveApp(tk.Tk):
         mc_combo.grid(row=0, column=1, padx=4, pady=2)
 
         ttk.Label(form, text="対象月 (YYYYMM):").grid(row=0, column=2, sticky="w")
-        self.mc_month_var = tk.StringVar(value="202502")
+        current_month = date.today().strftime("%Y%m")
+        self.mc_month_var = tk.StringVar(value=current_month)
         ttk.Entry(form, textvariable=self.mc_month_var, width=8).grid(row=0, column=3, padx=4, pady=2)
 
         self.mc_show_prev_var = tk.BooleanVar(value=True)
@@ -751,8 +752,36 @@ class BookingCurveApp(tk.Tk):
             row=0, column=4, padx=8, pady=2, sticky="w"
         )
 
+        save_btn = ttk.Button(form, text="PNG保存", command=self._on_save_monthly_curve_png)
+        save_btn.grid(row=0, column=5, padx=4, pady=2)
+
         draw_btn = ttk.Button(form, text="描画", command=self._on_draw_monthly_curve)
-        draw_btn.grid(row=0, column=5, padx=4, pady=2)
+        draw_btn.grid(row=0, column=6, padx=4, pady=2)
+
+        nav_frame = ttk.Frame(form)
+        nav_frame.grid(row=1, column=2, columnspan=5, sticky="w", pady=(4, 0))
+
+        ttk.Label(nav_frame, text="月移動:").pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(
+            nav_frame,
+            text="-1Y",
+            command=lambda: self._shift_month_var(self.mc_month_var, -12),
+        ).pack(side=tk.LEFT, padx=2)
+        ttk.Button(
+            nav_frame,
+            text="-1M",
+            command=lambda: self._shift_month_var(self.mc_month_var, -1),
+        ).pack(side=tk.LEFT, padx=2)
+        ttk.Button(
+            nav_frame,
+            text="+1M",
+            command=lambda: self._shift_month_var(self.mc_month_var, +1),
+        ).pack(side=tk.LEFT, padx=2)
+        ttk.Button(
+            nav_frame,
+            text="+1Y",
+            command=lambda: self._shift_month_var(self.mc_month_var, +12),
+        ).pack(side=tk.LEFT, padx=2)
 
         plot_frame = ttk.Frame(frame)
         plot_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=8)
@@ -764,6 +793,26 @@ class BookingCurveApp(tk.Tk):
         self.mc_canvas = FigureCanvasTkAgg(self.mc_fig, master=plot_frame)
         self.mc_canvas.draw()
         self.mc_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+    def _on_save_monthly_curve_png(self) -> None:
+        hotel_tag = self.mc_hotel_var.get().strip()
+        target_month = self.mc_month_var.get().strip()
+
+        if len(target_month) != 6 or not target_month.isdigit():
+            messagebox.showerror("Error", f"対象月の形式が不正です: {target_month}")
+            return
+
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        filename = f"monthly_curve_{hotel_tag}_{target_month}_all.png"
+        out_path = OUTPUT_DIR / filename
+
+        try:
+            self.mc_fig.savefig(out_path, dpi=150, bbox_inches="tight")
+        except Exception as e:
+            messagebox.showerror("Error", f"PNG保存に失敗しました:\n{e}")
+            return
+
+        messagebox.showinfo("保存完了", f"PNG を保存しました:\n{out_path}")
 
     def _on_draw_monthly_curve(self) -> None:
         hotel_tag = self.mc_hotel_var.get()

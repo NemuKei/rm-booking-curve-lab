@@ -820,7 +820,8 @@ class BookingCurveApp(tk.Tk):
         ・対象月を含めた直近4ヶ月分（対象月, -1M, -2M, -3M）を一括で描画
         ・「前年同月を重ねる」チェックONの場合は、前年同月を
           対象月と同色の破線で追加描画
-        ・リードタイム軸は 0〜max(LT) と ACT（-1）を右端に配置
+        ・リードタイム軸は「最大LT → … → 0 → ACT」の順で右に向かって小さくなる
+          （ピッチは 1 日単位）
         """
 
         hotel_tag = self.mc_hotel_var.get()
@@ -843,7 +844,7 @@ class BookingCurveApp(tk.Tk):
         # 前年同月
         prev_year_month = (base_period - 12).strftime("%Y%m")
 
-        # 日次ブッキングカーブと同じカラーパレット
+        # 日次ブッキングカーブと同系統のカラーパレット
         line_colors = [
             "#4C72B0",  # 対象月
             "#DD8452",  # -1M
@@ -852,9 +853,8 @@ class BookingCurveApp(tk.Tk):
             "#8172B2",  # 予備
         ]
 
-        # (label, df, color, linestyle, linewidth) のリスト
         curves: list[tuple[str, pd.DataFrame, str, str, float]] = []
-        max_lt = 0
+        max_lt = -1
         has_act = False
 
         def load_month_df(month_str: str) -> pd.DataFrame:
@@ -924,13 +924,20 @@ class BookingCurveApp(tk.Tk):
             self.mc_canvas.draw()
             return
 
-        # 描画
+        # ---- ここから描画ロジック ----
         self.mc_ax.clear()
         global_max_y = 0.0
 
-        # ACT を右端にするための X 軸変換
-        def lt_to_x(lt_values: list[int]) -> list[int]:
-            return [lt if lt >= 0 else max_lt + 1 for lt in lt_values]
+        # X 軸上の LT 並びを定義：
+        #   max_lt, max_lt-1, ..., 0, ACT(-1) の順に右へ進む
+        if max_lt < 0:
+            lt_order = [-1] if has_act else []
+        else:
+            lt_order = list(range(max_lt, -1, -1))  # max_lt → ... → 0
+            if has_act and -1 not in lt_order:
+                lt_order.append(-1)  # 最後に ACT
+
+        x_positions = np.arange(len(lt_order))
 
         for label, df_m, color, linestyle, linewidth in curves:
             # rooms_total 列があればそれを、無ければ先頭列を使う
@@ -939,17 +946,11 @@ class BookingCurveApp(tk.Tk):
             else:
                 y = df_m.iloc[:, 0]
 
-            # LT 昇順＋ ACT(-1) を末尾に並べ替え
-            idx_vals = list(df_m.index.astype(int))
-            nonneg = sorted([v for v in idx_vals if v >= 0])
-            act_present = -1 in idx_vals
-            ordered = nonneg + ([-1] if act_present else [])
-
-            y_ordered = y.reindex(ordered)
-            x_vals = lt_to_x(ordered)
+            # 定義した lt_order に合わせて並び替え
+            y_ordered = y.reindex(lt_order)
 
             self.mc_ax.plot(
-                x_vals,
+                x_positions,
                 y_ordered.values,
                 color=color,
                 linestyle=linestyle,
@@ -958,18 +959,13 @@ class BookingCurveApp(tk.Tk):
             )
 
             if len(y_ordered) > 0:
-                y_max = float(y_ordered.max())
+                y_max = float(np.nanmax(y_ordered.values))
                 if y_max > global_max_y:
                     global_max_y = y_max
 
-        # X 軸の目盛り設定（0〜max_lt と ACT）
-        xticks = list(range(0, max_lt + 1, 5))
-        xlabels = [str(v) for v in xticks]
-        if has_act:
-            xticks.append(max_lt + 1)
-            xlabels.append("ACT")
-
-        self.mc_ax.set_xticks(xticks)
+        # X 軸の目盛り（1日ピッチ、左が最大LT・右端がACT）
+        xlabels = ["ACT" if lt == -1 else str(lt) for lt in lt_order]
+        self.mc_ax.set_xticks(x_positions)
         self.mc_ax.set_xticklabels(xlabels, rotation=90)
 
         # Y 軸は少し余白を持たせる

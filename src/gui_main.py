@@ -969,9 +969,15 @@ class BookingCurveApp(tk.Tk):
         self.mc_ax.set_xticks(x_positions)
         self.mc_ax.set_xticklabels(xlabels, rotation=90)
 
-        # Y 軸は少し余白を持たせる
+        # Y 軸は 0 スタート + 500単位の目盛りに統一
         if global_max_y > 0:
-            self.mc_ax.set_ylim(0, global_max_y * 1.05)
+            # 5%の余白を持たせた値を 500 の倍数に切り上げ
+            raw_max = float(global_max_y) * 1.05
+            ymax = int(np.ceil(raw_max / 500.0) * 500)
+            if ymax <= 0:
+                ymax = 500
+            self.mc_ax.set_ylim(0, ymax)
+            self.mc_ax.set_yticks(np.arange(0, ymax + 1, 500))
 
         self.mc_ax.set_xlabel("Lead Time (days)")
         self.mc_ax.set_ylabel("Rooms (monthly cumulative)")

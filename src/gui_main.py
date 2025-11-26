@@ -709,21 +709,19 @@ class BookingCurveApp(tk.Tk):
 
             last_model_val = base_model
             for j, lt in enumerate(lt_list):
-                if j < last_idx:
-                    # 破線開始前は空欄
+                # last_idx まではOHのみ表示。forecast行は空欄にしておく。
+                if j <= last_idx:
                     forecast_row.append("")
                     continue
 
-                if j == last_idx:
-                    y_dash = float(base_actual)
-                else:
-                    model_val = forecast_series.get(lt, np.nan)
-                    if np.isnan(model_val):
-                        # モデル値が欠損している場合は直前の値でフラット延長
-                        model_val = last_model_val
-                    last_model_val = model_val
-                    y_dash = float(base_actual) + float(model_val - base_model)
+                # last_idx+1 以降だけ forecast 値を表示する
+                model_val = forecast_series.get(lt, np.nan)
+                if np.isnan(model_val):
+                    # モデル値が欠損している場合は直前の値でフラット延長
+                    model_val = last_model_val
+                last_model_val = model_val
 
+                y_dash = float(base_actual) + float(model_val - base_model)
                 forecast_row.append(_fmt_num(y_dash))
 
             # forecast行をタグ付きで挿入（背景色変更）

@@ -371,6 +371,24 @@ class BookingCurveApp(tk.Tk):
         self.bc_canvas.draw()
         self.bc_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
+        # --- ブッキングカーブ用テーブル (stay_date × LT) ---
+        table_frame = ttk.Frame(frame)
+        table_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=False, padx=8, pady=(0, 8))
+
+        # 初期状態では列は空。データ取得時に動的に columns を設定する。
+        self.bc_tree = ttk.Treeview(table_frame, columns=(), show="headings", height=8)
+        self.bc_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # 縦スクロールバー
+        bc_vsb = ttk.Scrollbar(table_frame, orient="vertical", command=self.bc_tree.yview)
+        bc_vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.bc_tree.configure(yscrollcommand=bc_vsb.set)
+
+        # 横スクロールバー
+        bc_hsb = ttk.Scrollbar(frame, orient="horizontal", command=self.bc_tree.xview)
+        bc_hsb.pack(side=tk.BOTTOM, fill=tk.X)
+        self.bc_tree.configure(xscrollcommand=bc_hsb.set)
+
     def _on_save_booking_curve_png(self) -> None:
         hotel_tag = self.bc_hotel_var.get().strip()
         target_month = self.bc_month_var.get().strip()
@@ -575,6 +593,78 @@ class BookingCurveApp(tk.Tk):
         self.bc_ax.legend(bbox_to_anchor=(1.02, 1.0), loc="upper left")
 
         self.bc_canvas.draw()
+
+        # データテーブルを更新
+        try:
+            self._update_booking_curve_table(data)
+        except Exception as e:
+            # テーブル更新でエラーが出てもグラフ描画は維持したいので、ここではダイアログだけ表示
+            messagebox.showerror("Error", f"テーブル更新に失敗しました: {e}")
+
+    def _update_booking_curve_table(self, data: dict) -> None:
+        """
+        ブッキングカーブタブのテーブルを更新する。
+        data は get_booking_curve_data(...) の戻り値。
+        """
+
+        curves = data.get("curves", {})
+        lt_ticks = data.get("lt_ticks", [])
+
+        if not hasattr(self, "bc_tree"):
+            return
+
+        # まず既存行をクリア
+        for row_id in self.bc_tree.get_children():
+            self.bc_tree.delete(row_id)
+
+        if not curves:
+            # データが無ければ列ヘッダも空にして終了
+            self.bc_tree["columns"] = ()
+            return
+
+        # curves dict から DataFrame を構築 (index=stay_date, columns=LT)
+        df = pd.DataFrame(curves).T
+        df.index = pd.to_datetime(df.index)
+        df.sort_index(inplace=True)
+
+        # 列順は lt_ticks (get_booking_curve_data で決めた順) に揃える
+        if lt_ticks:
+            df = df.reindex(columns=lt_ticks)
+        else:
+            df = df.reindex(columns=sorted(df.columns))
+
+        lt_list = list(df.columns)
+        columns = ["stay_date"] + [str(lt) for lt in lt_list]
+        self.bc_tree["columns"] = columns
+
+        for col in columns:
+            if col == "stay_date":
+                self.bc_tree.heading(col, text="stay_date")
+                self.bc_tree.column(col, width=90, anchor="center")
+            else:
+                try:
+                    lt_val = int(col)
+                    header = "ACT" if lt_val == -1 else str(lt_val)
+                except Exception:
+                    header = col
+                self.bc_tree.heading(col, text=header)
+                self.bc_tree.column(col, width=55, anchor="e")
+
+        for stay_date, row in df.iterrows():
+            if pd.isna(stay_date):
+                stay_str = ""
+            else:
+                stay_str = pd.to_datetime(stay_date).strftime("%Y-%m-%d")
+
+            values = [stay_str]
+            for lt in lt_list:
+                v = row.get(lt)
+                if pd.isna(v):
+                    values.append("")
+                else:
+                    values.append(_fmt_num(v))
+
+            self.bc_tree.insert("", tk.END, values=values)
 
     # =========================
     # 2) 月次カーブタブ

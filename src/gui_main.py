@@ -287,17 +287,6 @@ class BookingCurveApp(tk.Tk):
         table_container.rowconfigure(0, weight=1)
         table_container.columnconfigure(0, weight=1)
 
-        # セル選択用の Canvas（Treeview の上に重ねる）
-        self.df_tree_canvas = tk.Canvas(
-            table_container,
-            highlightthickness=0,
-            bd=0,
-            background="",
-        )
-        self.df_tree_canvas.grid(row=0, column=0, sticky="nsew")
-        self.df_tree_canvas.lower(self.df_tree)
-        self.df_tree_canvas.configure(background="")
-
         # セル選択状態
         self._df_cell_anchor = None
         self._df_cell_end = None
@@ -306,9 +295,6 @@ class BookingCurveApp(tk.Tk):
         self.df_tree.bind("<Button-1>", self._on_df_tree_click, add="+")
         self.df_tree.bind("<Shift-Button-1>", self._on_df_tree_shift_click, add="+")
         self.df_tree.bind("<Control-c>", self._on_df_tree_copy, add="+")
-
-        # サイズ変更時などに選択枠を再描画
-        self.df_tree.bind("<Configure>", self._redraw_df_selection, add="+")
 
     def _on_load_daily_forecast(self) -> None:
         try:
@@ -450,58 +436,16 @@ class BookingCurveApp(tk.Tk):
         self._draw_df_selection_rect()
 
     def _clear_df_selection_rect(self) -> None:
-        if hasattr(self, "df_tree_canvas"):
-            self.df_tree_canvas.delete("selection")
+        """セル選択の描画をクリアする（Canvasなし版: 何もしない）。"""
+        return
 
     def _draw_df_selection_rect(self) -> None:
-        """現在のセル選択状態からCanvas上に矩形群を描画する。"""
-        if (
-            not hasattr(self, "df_tree_canvas")
-            or self._df_cell_anchor is None
-            or self._df_cell_end is None
-        ):
-            return
-
-        self.df_tree_canvas.delete("selection")
-
-        rows = list(self.df_tree.get_children(""))
-        if not rows:
-            return
-
-        a_r, a_c = self._df_get_row_col_index(*self._df_cell_anchor)
-        e_r, e_c = self._df_get_row_col_index(*self._df_cell_end)
-        if a_r < 0 or e_r < 0 or a_c < 0 or e_c < 0:
-            return
-
-        r_lo, r_hi = sorted((a_r, e_r))
-        c_lo, c_hi = sorted((a_c, e_c))
-
-        columns = list(self.df_tree["columns"])
-
-        self.df_tree_canvas.lift(self.df_tree)
-
-        for r_idx in range(r_lo, r_hi + 1):
-            row_id = rows[r_idx]
-            for c_idx in range(c_lo, c_hi + 1):
-                if not (0 <= c_idx < len(columns)):
-                    continue
-                col_id = f"#{c_idx+1}"
-                bbox = self.df_tree.bbox(row_id, col_id)
-                if not bbox:
-                    continue
-                x, y, w, h = bbox
-                self.df_tree_canvas.create_rectangle(
-                    x,
-                    y,
-                    x + w,
-                    y + h,
-                    outline="#0078D7",
-                    width=1.5,
-                    tags="selection",
-                )
+        """セル選択の描画を行う（Canvasなし版: 何もしない）。"""
+        return
 
     def _redraw_df_selection(self, event=None) -> None:
-        self._draw_df_selection_rect()
+        """リサイズ時の再描画フック（Canvasなし版: 何もしない）。"""
+        return
 
     def _on_df_tree_copy(self, event=None) -> None:
         """選択セル範囲をTSV形式でクリップボードにコピーする。"""

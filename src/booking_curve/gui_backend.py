@@ -33,6 +33,32 @@ def _get_capacity(hotel_tag: str, capacity: Optional[float]) -> float:
     return float(HOTEL_CONFIG.get(hotel_tag, {}).get("capacity", 1.0))
 
 
+def get_latest_asof_for_hotel(hotel_tag: str) -> Optional[str]:
+    """ホテル別の最新 ASOF 日付を asof_dates_<hotel_tag>.csv から取得する。"""
+
+    csv_path = OUTPUT_DIR / f"asof_dates_{hotel_tag}.csv"
+    if not csv_path.exists():
+        return None
+
+    try:
+        df = pd.read_csv(csv_path, parse_dates=["as_of_date"])
+    except Exception:
+        return None
+
+    if "as_of_date" not in df.columns:
+        return None
+
+    asof_series = df["as_of_date"]
+    if asof_series.empty:
+        return None
+
+    latest_asof = asof_series.max()
+    if pd.isna(latest_asof):
+        return None
+
+    return pd.to_datetime(latest_asof).normalize().strftime("%Y-%m-%d")
+
+
 def _load_lt_data(hotel_tag: str, target_month: str) -> pd.DataFrame:
     """LT_DATA CSV を読み込み、stay_date を DatetimeIndex に揃える。"""
 
@@ -114,21 +140,9 @@ def get_latest_asof_for_month(hotel_tag: str, target_month: str) -> Optional[str
     1. output/asof_dates_{hotel_tag}.csv の as_of_date 最大値
     2. asof_dates が無い場合は、LT_DATA からのフォールバック推定
     """
-    # まず asof_dates_{hotel_tag}.csv を見る
-    asof_csv = OUTPUT_DIR / f"asof_dates_{hotel_tag}.csv"
-    if asof_csv.exists():
-        try:
-            df = pd.read_csv(asof_csv, parse_dates=["as_of_date"])
-        except Exception:
-            # 壊れていればフォールバックへ
-            return _get_latest_asof_from_lt(hotel_tag, target_month)
-
-        if not df.empty and "as_of_date" in df.columns:
-            latest = df["as_of_date"].max()
-            if pd.isna(latest):
-                return None
-            return pd.to_datetime(latest).normalize().strftime("%Y-%m-%d")
-        return None
+    latest_asof = get_latest_asof_for_hotel(hotel_tag)
+    if latest_asof is not None:
+        return latest_asof
 
     # asof_dates が無い場合は、LT_DATA から推定
     return _get_latest_asof_from_lt(hotel_tag, target_month)

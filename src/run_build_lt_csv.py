@@ -9,8 +9,10 @@
 
 from pathlib import Path
 
+import pandas as pd
+
 from booking_curve.data_loader import load_time_series_excel
-from booking_curve.lt_builder import build_lt_data
+from booking_curve.lt_builder import build_lt_data, extract_asof_dates_from_timeseries
 from booking_curve.config import OUTPUT_DIR
 
 
@@ -40,8 +42,8 @@ MAX_LT = 120
 # ===== 設定ここまで =====
 
 
-def build_lt_for_month(sheet_name: str) -> None:
-    """指定月シートの LT_DATA を作成して CSV 出力する。"""
+def build_lt_for_month(sheet_name: str) -> list[pd.Timestamp]:
+    """指定月シートの LT_DATA を作成して CSV 出力し、その月の ASOF 日付一覧も返す。"""
     # data_loader は data/ 配下を前提にしているので、
     # ホテルフォルダ＋ファイル名で相対パス指定する
     relative_path = f"{HOTEL_SUBDIR}/{TIME_SERIES_FILE}"
@@ -53,6 +55,9 @@ def build_lt_for_month(sheet_name: str) -> None:
         sheet_name=sheet_name,
     )
 
+    # 取得日(ASOF)一覧を抽出
+    asof_dates = extract_asof_dates_from_timeseries(df_ts)
+
     lt_df = build_lt_data(df_ts, max_lt=MAX_LT)
 
     out_name = f"lt_data_{sheet_name}_{HOTEL_TAG}.csv"
@@ -61,6 +66,9 @@ def build_lt_for_month(sheet_name: str) -> None:
     lt_df.to_csv(out_path, index=True)
     print(f"[OK] 出力: {out_path}")
 
+    # datetime → pandas.Timestamp に揃えて返す
+    return [pd.Timestamp(d) for d in asof_dates]
+
 
 def main():
     print("=== LT_DATA CSV 一括生成 ===")
@@ -68,8 +76,22 @@ def main():
     print(f"対象月シート: {', '.join(TARGET_MONTHS)}")
     print("")
 
+    all_asof_dates: set[pd.Timestamp] = set()
+
     for sheet in TARGET_MONTHS:
-        build_lt_for_month(sheet)
+        month_asofs = build_lt_for_month(sheet)
+        for d in month_asofs:
+            all_asof_dates.add(d.normalize())
+
+    # 取得日一覧 CSV を出力
+    if all_asof_dates:
+        asof_list = sorted(all_asof_dates)
+        df_asof = pd.DataFrame({"as_of_date": asof_list})
+        asof_path = OUTPUT_DIR / f"asof_dates_{HOTEL_TAG}.csv"
+        df_asof.to_csv(asof_path, index=False)
+        print(f"[OK] 取得日一覧: {asof_path}")
+    else:
+        print("[WARN] 取得日が1件も検出されませんでした (asof_dates CSV は出力されません)。")
 
     print("\n=== 完了しました ===")
 

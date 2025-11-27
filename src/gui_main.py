@@ -276,6 +276,11 @@ class BookingCurveApp(tk.Tk):
 
         self.df_tree.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=8)
 
+        # セルクリックとコピー用のイベントバインド
+        self._df_tree_current_cell = None
+        self.df_tree.bind("<Button-1>", self._on_df_tree_click)
+        self.df_tree.bind("<Control-c>", self._on_df_tree_copy)
+
         # スクロールバー
         vsb = ttk.Scrollbar(frame, orient="vertical", command=self.df_tree.yview)
         self.df_tree.configure(yscrollcommand=vsb.set)
@@ -346,6 +351,56 @@ class BookingCurveApp(tk.Tk):
             self.df_tree.insert("", tk.END, values=values, tags=tags)
 
         self.df_table_df = df
+
+    def _on_df_tree_click(self, event) -> None:
+        """日別フォーキャスト表でクリックされたセルを記録する。"""
+        if not hasattr(self, "df_tree"):
+            return
+
+        region = self.df_tree.identify("region", event.x, event.y)
+        if region != "cell":
+            self._df_tree_current_cell = None
+            return
+
+        row_id = self.df_tree.identify_row(event.y)
+        col_id = self.df_tree.identify_column(event.x)  # "#1", "#2", ...
+        if not row_id or not col_id:
+            self._df_tree_current_cell = None
+            return
+
+        # 行選択も従来通り行う
+        self.df_tree.focus(row_id)
+        self.df_tree.selection_set(row_id)
+
+        self._df_tree_current_cell = (row_id, col_id)
+
+    def _on_df_tree_copy(self, event=None) -> None:
+        """現在セルの値をクリップボードにコピーする。"""
+        cell = getattr(self, "_df_tree_current_cell", None)
+        if not cell:
+            return
+
+        row_id, col_id = cell
+        try:
+            col_index = int(col_id.replace("#", "")) - 1
+        except Exception:
+            return
+
+        columns = self.df_tree["columns"]
+        if not (0 <= col_index < len(columns)):
+            return
+
+        col_name = columns[col_index]
+        value = self.df_tree.set(row_id, col_name)
+        if value is None:
+            value = ""
+
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(str(value))
+        except Exception:
+            # クリップボード操作でエラーが出ても GUI を落とさない
+            pass
 
     def _on_df_hotel_changed(self, event=None) -> None:
         hotel = self.df_hotel_var.get().strip()

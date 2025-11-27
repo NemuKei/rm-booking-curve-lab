@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import pandas as pd
+import run_forecast_batch
 
 from booking_curve.forecast_simple import (
     moving_average_recent_90days,
@@ -240,6 +241,38 @@ def get_monthly_curve_data(hotel_tag: str, target_month: str) -> pd.DataFrame:
     result.index = result.index.astype(int)
 
     return result
+
+
+def run_forecast_for_gui(
+    hotel_tag: str,
+    target_months: list[str],
+    as_of_date: str,
+    gui_model: str,
+) -> None:
+    """
+    日別フォーキャストタブから Forecast を実行するための薄いラッパー。
+
+    - target_months: 対象宿泊月の YYYYMM リスト。
+      （現時点では GUI からは 1要素リストを渡す想定だが、
+       将来的に「当月＋先3ヶ月」などの複数月対応も見越す）
+    - as_of_date: "YYYY-MM-DD" 形式。run_forecast_batch 側では
+      pd.to_datetime で解釈される前提。
+    - gui_model: GUI のコンボボックス値
+      ("avg", "recent90", "recent90_adj", "recent90w", "recent90w_adj")
+    """
+    # _adj 付きは、元 CSV の adjusted_projected_rooms 列を使うだけなので
+    # 計算としては base モデルと同じでよい。
+    base_model = gui_model.replace("_adj", "")
+
+    for ym in target_months:
+        if base_model == "avg":
+            run_forecast_batch.run_avg_forecast(ym, as_of_date)
+        elif base_model == "recent90":
+            run_forecast_batch.run_recent90_forecast(ym, as_of_date)
+        elif base_model == "recent90w":
+            run_forecast_batch.run_recent90_weighted_forecast(ym, as_of_date)
+        else:
+            raise ValueError(f"Unsupported gui_model: {gui_model}")
 
 
 def get_daily_forecast_table(

@@ -20,6 +20,48 @@ def _excel_serial_to_datetime(serial: float) -> datetime:
     return EXCEL_BASE_DATE + timedelta(days=float(serial))
 
 
+def extract_asof_dates_from_timeseries(df: pd.DataFrame) -> List[datetime]:
+    """
+    PMSの「宿泊日×取得日」時系列データから、実際に使われている取得日(ASOF)一覧を抽出する。
+
+    - df.iloc[0, 1:] に Excel シリアル形式の取得日が格納されている前提。
+    - 2行目以降で、完全に NaN の列は「未使用の取得日」とみなして除外する。
+
+    Returns
+    -------
+    List[datetime]
+        正規化(00:00)された datetime オブジェクトのリスト（重複なし、昇順）。
+    """
+
+    if df is None or df.empty:
+        return []
+
+    booking_date_serials = df.iloc[0, 1:]
+    used_dates: List[datetime] = []
+
+    for idx, serial in enumerate(booking_date_serials):
+        # Excelシリアルが欠損ならスキップ
+        if pd.isna(serial):
+            continue
+
+        col_idx = idx + 1
+        # 2行目以降で1つも値が入っていない列は「未使用」とみなして除外
+        col_values = df.iloc[1:, col_idx]
+        if col_values.isna().all():
+            continue
+
+        dt = _excel_serial_to_datetime(serial)
+        normalized = pd.to_datetime(dt).normalize().to_pydatetime()
+        used_dates.append(normalized)
+
+    if not used_dates:
+        return []
+
+    # 重複を除き、昇順にソートして返す
+    unique_sorted = sorted(set(used_dates))
+    return unique_sorted
+
+
 def build_lt_data(df: pd.DataFrame, max_lt: int = 120) -> pd.DataFrame:
     """宿泊日×取得日のデータから宿泊日×LT（-1〜max_lt）のテーブルを構築する。"""
 

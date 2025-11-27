@@ -65,6 +65,42 @@ def _load_lt_data(hotel_tag: str, target_month: str) -> pd.DataFrame:
     return lt_df
 
 
+def get_latest_asof_for_month(hotel_tag: str, target_month: str) -> Optional[str]:
+    """
+    指定ホテル・指定宿泊月の LT_DATA から、利用可能な最新 ASOF 日付を返す。
+
+    戻り値:
+        "YYYY-MM-DD" 形式の文字列、または取得できない場合は None。
+    """
+    lt_df = _load_lt_data(hotel_tag=hotel_tag, target_month=target_month)
+    if lt_df.empty:
+        return None
+
+    # LT >= 0 の列だけを対象にする（-1 は ACT 用の疑似 LT とみなして除外）
+    lt_cols = [c for c in lt_df.columns if isinstance(c, (int, float)) and c >= 0]
+    if not lt_cols:
+        return None
+
+    latest_asof: Optional[pd.Timestamp] = None
+
+    for stay_date, row in lt_df[lt_cols].iteritems() if False else lt_df[lt_cols].iterrows():
+        # row: index=LT(int), value=rooms となる Series
+        for lt, val in row.items():
+            if pd.isna(val):
+                continue
+            try:
+                lt_int = int(lt)
+            except Exception:
+                continue
+            asof = stay_date - pd.Timedelta(days=lt_int)
+            if (latest_asof is None) or (asof > latest_asof):
+                latest_asof = asof
+
+    if latest_asof is None:
+        return None
+    return latest_asof.normalize().strftime("%Y-%m-%d")
+
+
 def _get_history_months_around_asof(
     as_of_ts: pd.Timestamp,
     months_back: int = 4,

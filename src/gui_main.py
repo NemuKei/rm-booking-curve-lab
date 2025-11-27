@@ -25,6 +25,7 @@ from booking_curve.gui_backend import (
     get_monthly_curve_data,
     OUTPUT_DIR,
     HOTEL_CONFIG,
+    run_forecast_for_gui,
 )
 from booking_curve.plot_booking_curve import LEAD_TIME_PITCHES
 
@@ -200,12 +201,6 @@ class BookingCurveApp(tk.Tk):
             row=1, column=3, padx=4, pady=2
         )
 
-        ttk.Label(form, text="稼働率キャパ:").grid(row=1, column=4, sticky="w")
-        self.df_occ_cap_var = tk.StringVar(value=str(occ_cap))
-        ttk.Entry(form, textvariable=self.df_occ_cap_var, width=6).grid(
-            row=1, column=5, padx=4, pady=2
-        )
-
         nav_frame = ttk.Frame(form)
         nav_frame.grid(row=2, column=2, columnspan=6, sticky="w", pady=(4, 0))
 
@@ -233,9 +228,20 @@ class BookingCurveApp(tk.Tk):
 
         # 実行ボタン
         export_btn = ttk.Button(form, text="CSV出力", command=self._on_export_daily_forecast_csv)
-        export_btn.grid(row=1, column=6, padx=4, pady=2, sticky="e")
+        export_btn.grid(row=1, column=8, padx=4, pady=2, sticky="e")
+        forecast_btn = ttk.Button(
+            form,
+            text="Forecast実行",
+            command=self._on_run_daily_forecast,
+        )
+        forecast_btn.grid(row=1, column=4, padx=4, pady=2, sticky="e")
         run_btn = ttk.Button(form, text="読み込み", command=self._on_load_daily_forecast)
-        run_btn.grid(row=1, column=7, padx=4, pady=2, sticky="e")
+        run_btn.grid(row=1, column=5, padx=4, pady=2, sticky="e")
+        ttk.Label(form, text="稼働率キャパ:").grid(row=1, column=6, sticky="w")
+        self.df_occ_cap_var = tk.StringVar(value=str(occ_cap))
+        ttk.Entry(form, textvariable=self.df_occ_cap_var, width=6).grid(
+            row=1, column=7, padx=4, pady=2
+        )
 
         # テーブル用コンテナ
         table_container = ttk.Frame(frame)
@@ -295,6 +301,46 @@ class BookingCurveApp(tk.Tk):
         self.df_tree.bind("<Button-1>", self._on_df_tree_click, add="+")
         self.df_tree.bind("<Shift-Button-1>", self._on_df_tree_shift_click, add="+")
         self.df_tree.bind("<Control-c>", self._on_df_tree_copy, add="+")
+
+    def _on_run_daily_forecast(self) -> None:
+        """現在の設定で Forecast を実行し、テーブルを再読み込みする。"""
+
+        hotel = self.df_hotel_var.get()
+        month = self.df_month_var.get()
+        asof = self.df_asof_var.get()
+        model = self.df_model_var.get()
+
+        if not month:
+            messagebox.showerror("エラー", "対象月(YYYYMM)を入力してください。")
+            return
+
+        # ASOF 日付の簡易検証
+        try:
+            pd.to_datetime(asof)
+        except Exception:
+            messagebox.showerror("エラー", f"AS OF 日付の形式が不正です: {asof}")
+            return
+
+        # 現時点では「1ヶ月のみ」実行。将来的に複数月対応する場合は
+        # ここで month 周辺のリストを組み立てて渡す。
+        target_months = [month]
+
+        try:
+            run_forecast_for_gui(
+                hotel_tag=hotel,
+                target_months=target_months,
+                as_of_date=asof,
+                gui_model=model,
+            )
+        except FileNotFoundError as e:
+            messagebox.showerror("エラー", f"Forecast実行に必要な LT_DATA が見つかりません:\n{e}")
+            return
+        except Exception as e:
+            messagebox.showerror("エラー", f"Forecast実行に失敗しました:\n{e}")
+            return
+
+        # 実行が成功したら、最新の CSV を読み込んでテーブル更新
+        self._on_load_daily_forecast()
 
     def _on_load_daily_forecast(self) -> None:
         try:

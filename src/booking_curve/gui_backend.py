@@ -260,17 +260,22 @@ def run_forecast_for_gui(
     - gui_model: GUI のコンボボックス値
       ("avg", "recent90", "recent90_adj", "recent90w", "recent90w_adj")
     """
+    # GUI からは "YYYY-MM-DD" が渡されるので、
+    # run_forecast_batch 側の想定に合わせて "YYYYMMDD" に変換する。
+    asof_ts = pd.to_datetime(as_of_date)
+    asof_tag = asof_ts.strftime("%Y%m%d")
+
     # _adj 付きは、元 CSV の adjusted_projected_rooms 列を使うだけなので
     # 計算としては base モデルと同じでよい。
     base_model = gui_model.replace("_adj", "")
 
     for ym in target_months:
         if base_model == "avg":
-            run_forecast_batch.run_avg_forecast(ym, as_of_date)
+            run_forecast_batch.run_avg_forecast(ym, asof_tag)
         elif base_model == "recent90":
-            run_forecast_batch.run_recent90_forecast(ym, as_of_date)
+            run_forecast_batch.run_recent90_forecast(ym, asof_tag)
         elif base_model == "recent90w":
-            run_forecast_batch.run_recent90_weighted_forecast(ym, as_of_date)
+            run_forecast_batch.run_recent90_weighted_forecast(ym, asof_tag)
         else:
             raise ValueError(f"Unsupported gui_model: {gui_model}")
 

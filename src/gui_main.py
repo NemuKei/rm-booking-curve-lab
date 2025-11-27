@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import Optional
 import json
 
 import pandas as pd
@@ -21,6 +22,7 @@ from matplotlib.figure import Figure
 from booking_curve.gui_backend import (
     get_booking_curve_data,
     get_daily_forecast_table,
+    get_latest_asof_for_month,
     get_model_evaluation_table,
     get_monthly_curve_data,
     OUTPUT_DIR,
@@ -130,6 +132,13 @@ class BookingCurveApp(tk.Tk):
         p_new = p + delta_months
         var.set(p_new.strftime("%Y%m"))
 
+        # 日別フォーキャストタブの対象月を動かした場合は、最新ASOFラベルも更新する
+        if hasattr(self, "df_month_var") and var is self.df_month_var:
+            try:
+                self._update_df_latest_asof_label()
+            except Exception:
+                pass
+
     # =========================
     # 3) 日別フォーキャスト一覧タブ
     # =========================
@@ -173,6 +182,15 @@ class BookingCurveApp(tk.Tk):
                 width=12,
             )
         self.df_asof_entry.grid(row=0, column=5, padx=4, pady=2)
+
+        # 最新ASOF表示用
+        self.df_latest_asof_value: Optional[str] = None
+        self.df_latest_asof_var = tk.StringVar(value="最新ASOF: -")
+        self.df_latest_asof_label = ttk.Label(
+            form,
+            textvariable=self.df_latest_asof_var,
+        )
+        self.df_latest_asof_label.grid(row=0, column=6, padx=4, pady=2, sticky="w")
 
         # モデル
         ttk.Label(form, text="モデル:").grid(row=1, column=0, sticky="w", pady=(4, 2))
@@ -302,6 +320,36 @@ class BookingCurveApp(tk.Tk):
         self.df_tree.bind("<Shift-Button-1>", self._on_df_tree_shift_click, add="+")
         self.df_tree.bind("<Control-c>", self._on_df_tree_copy, add="+")
 
+        self._update_df_latest_asof_label()
+
+    def _update_df_latest_asof_label(self) -> None:
+        """日別フォーキャストタブの『最新ASOF』ラベルを更新する。"""
+        hotel = self.df_hotel_var.get().strip()
+        month = self.df_month_var.get().strip()
+
+        if not month:
+            self.df_latest_asof_value = None
+            self.df_latest_asof_var.set("最新ASOF: -")
+            return
+
+        try:
+            latest = get_latest_asof_for_month(hotel_tag=hotel, target_month=month)
+        except FileNotFoundError:
+            self.df_latest_asof_value = None
+            self.df_latest_asof_var.set("最新ASOF: LT_DATAなし")
+            return
+        except Exception:
+            self.df_latest_asof_value = None
+            self.df_latest_asof_var.set("最新ASOF: 取得エラー")
+            return
+
+        if latest is None:
+            self.df_latest_asof_value = None
+            self.df_latest_asof_var.set("最新ASOF: -")
+        else:
+            self.df_latest_asof_value = latest
+            self.df_latest_asof_var.set(f"最新ASOF: {latest}")
+
     def _on_run_daily_forecast(self) -> None:
         """現在の設定で Forecast を実行し、テーブルを再読み込みする。"""
 
@@ -316,10 +364,37 @@ class BookingCurveApp(tk.Tk):
 
         # ASOF 日付の簡易検証
         try:
-            pd.to_datetime(asof)
+            asof_ts = pd.to_datetime(asof)
         except Exception:
             messagebox.showerror("エラー", f"AS OF 日付の形式が不正です: {asof}")
             return
+
+        latest = getattr(self, "df_latest_asof_value", None)
+        if latest:
+            try:
+                latest_ts = pd.to_datetime(latest)
+            except Exception:
+                latest_ts = None
+
+            if latest_ts is not None:
+                if asof_ts > latest_ts:
+                    messagebox.showerror(
+                        "エラー",
+                        f"AS OF が最新データ ({latest}) を超えています。\n"
+                        f"{latest} 以前の日付を指定してください。",
+                    )
+                    return
+                elif asof_ts < latest_ts:
+                    use_latest = messagebox.askyesno(
+                        "確認",
+                        f"最新ASOF は {latest} です。\n"
+                        f"選択中の ASOF ({asof}) で Forecast を実行しますか？\n\n"
+                        f"最新ASOFで実行する場合は『はい』を選択してください。",
+                    )
+                    if use_latest:
+                        asof_ts = latest_ts
+                        asof = latest_ts.strftime("%Y-%m-%d")
+                        self.df_asof_var.set(asof)
 
         # 現時点では「1ヶ月のみ」実行。将来的に複数月対応する場合は
         # ここで month 周辺のリストを組み立てて渡す。
@@ -535,6 +610,8 @@ class BookingCurveApp(tk.Tk):
         fc_cap, occ_cap = self._get_daily_caps_for_hotel(hotel)
         self.df_forecast_cap_var.set(str(fc_cap))
         self.df_occ_cap_var.set(str(occ_cap))
+
+        self._update_df_latest_asof_label()
 
     def _on_export_daily_forecast_csv(self) -> None:
         df = getattr(self, "df_table_df", None)

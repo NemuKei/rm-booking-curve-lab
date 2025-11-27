@@ -65,26 +65,28 @@ def _load_lt_data(hotel_tag: str, target_month: str) -> pd.DataFrame:
     return lt_df
 
 
-def get_latest_asof_for_month(hotel_tag: str, target_month: str) -> Optional[str]:
+def _get_latest_asof_from_lt(hotel_tag: str, target_month: str) -> Optional[str]:
     """
-    指定ホテル・指定宿泊月の LT_DATA から、利用可能な最新 ASOF 日付を返す。
+    asof_dates_xxx.csv が無い場合用のフォールバック。
+    LT_DATA から「今日以前に存在する ASOF 日付」の最大値を推定して返す。
+    """
+    try:
+        lt_df = _load_lt_data(hotel_tag=hotel_tag, target_month=target_month)
+    except FileNotFoundError:
+        return None
 
-    戻り値:
-        "YYYY-MM-DD" 形式の文字列、または取得できない場合は None。
-    """
-    lt_df = _load_lt_data(hotel_tag=hotel_tag, target_month=target_month)
     if lt_df.empty:
         return None
 
-    # LT >= 0 の列だけを対象にする（-1 は ACT 用の疑似 LT とみなして除外）
+    # LT >= 0 の列だけを対象にする
     lt_cols = [c for c in lt_df.columns if isinstance(c, (int, float)) and c >= 0]
     if not lt_cols:
         return None
 
+    today = pd.Timestamp.today().normalize()
     latest_asof: Optional[pd.Timestamp] = None
 
-    for stay_date, row in lt_df[lt_cols].iteritems() if False else lt_df[lt_cols].iterrows():
-        # row: index=LT(int), value=rooms となる Series
+    for stay_date, row in lt_df[lt_cols].iterrows():
         for lt, val in row.items():
             if pd.isna(val):
                 continue
@@ -92,13 +94,44 @@ def get_latest_asof_for_month(hotel_tag: str, target_month: str) -> Optional[str
                 lt_int = int(lt)
             except Exception:
                 continue
-            asof = stay_date - pd.Timedelta(days=lt_int)
+            asof = stay_date.normalize() - pd.Timedelta(days=lt_int)
+            # 未来日付は無視
+            if asof > today:
+                continue
             if (latest_asof is None) or (asof > latest_asof):
                 latest_asof = asof
 
     if latest_asof is None:
         return None
     return latest_asof.normalize().strftime("%Y-%m-%d")
+
+
+def get_latest_asof_for_month(hotel_tag: str, target_month: str) -> Optional[str]:
+    """
+    指定ホテル・指定宿泊月の「最新ASOF」を返す。
+
+    優先順位:
+    1. output/asof_dates_{hotel_tag}.csv の as_of_date 最大値
+    2. asof_dates が無い場合は、LT_DATA からのフォールバック推定
+    """
+    # まず asof_dates_{hotel_tag}.csv を見る
+    asof_csv = OUTPUT_DIR / f"asof_dates_{hotel_tag}.csv"
+    if asof_csv.exists():
+        try:
+            df = pd.read_csv(asof_csv, parse_dates=["as_of_date"])
+        except Exception:
+            # 壊れていればフォールバックへ
+            return _get_latest_asof_from_lt(hotel_tag, target_month)
+
+        if not df.empty and "as_of_date" in df.columns:
+            latest = df["as_of_date"].max()
+            if pd.isna(latest):
+                return None
+            return pd.to_datetime(latest).normalize().strftime("%Y-%m-%d")
+        return None
+
+    # asof_dates が無い場合は、LT_DATA から推定
+    return _get_latest_asof_from_lt(hotel_tag, target_month)
 
 
 def _get_history_months_around_asof(

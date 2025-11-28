@@ -744,27 +744,24 @@ class BookingCurveApp(tk.Tk):
         ]
         weekday_combo.grid(row=0, column=5, padx=4, pady=2)
 
-        ttk.Button(
-            form, text="Mon", width=4, command=lambda: self._on_bc_quick_weekday("0:Mon")
-        ).grid(row=0, column=6, padx=1, pady=2)
-        ttk.Button(
-            form, text="Tue", width=4, command=lambda: self._on_bc_quick_weekday("1:Tue")
-        ).grid(row=0, column=7, padx=1, pady=2)
-        ttk.Button(
-            form, text="Wed", width=4, command=lambda: self._on_bc_quick_weekday("2:Wed")
-        ).grid(row=0, column=8, padx=1, pady=2)
-        ttk.Button(
-            form, text="Thu", width=4, command=lambda: self._on_bc_quick_weekday("3:Thu")
-        ).grid(row=0, column=9, padx=1, pady=2)
-        ttk.Button(
-            form, text="Fri", width=4, command=lambda: self._on_bc_quick_weekday("4:Fri")
-        ).grid(row=0, column=10, padx=1, pady=2)
-        ttk.Button(
-            form, text="Sat", width=4, command=lambda: self._on_bc_quick_weekday("5:Sat")
-        ).grid(row=0, column=11, padx=1, pady=2)
-        ttk.Button(
-            form, text="Sun", width=4, command=lambda: self._on_bc_quick_weekday("6:Sun")
-        ).grid(row=0, column=12, padx=1, pady=2)
+        wd_btn_frame = ttk.Frame(form)
+        wd_btn_frame.grid(row=0, column=6, columnspan=7, padx=4, pady=2, sticky="w")
+
+        for text, value in [
+            ("Sun", "6:Sun"),
+            ("Mon", "0:Mon"),
+            ("Tue", "1:Tue"),
+            ("Wed", "2:Wed"),
+            ("Thu", "3:Thu"),
+            ("Fri", "4:Fri"),
+            ("Sat", "5:Sat"),
+        ]:
+            ttk.Button(
+                wd_btn_frame,
+                text=text,
+                width=4,
+                command=lambda v=value: self._on_bc_quick_weekday(v),
+            ).pack(side=tk.LEFT, padx=1)
 
         ttk.Label(form, text="AS OF (YYYY-MM-DD):").grid(row=1, column=0, sticky="w", pady=(4, 2))
         today_str = date.today().strftime("%Y-%m-%d")

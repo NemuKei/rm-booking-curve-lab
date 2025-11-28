@@ -211,12 +211,18 @@ def get_booking_curve_data(
         # 履歴が取れない場合はフォールバックとして target_month の曜日データを使う
         history_all = df_week.copy()
 
+    has_act_column = -1 in df_week_plot.columns
+    asof_normalized = asof_ts.normalize()
+
     for stay_date in df_week_plot.index:
         delta_days = (stay_date.normalize() - asof_ts).days
         if delta_days > 0:
             for lt in df_week_plot.columns:
                 if lt < delta_days:
                     df_week_plot.at[stay_date, lt] = pd.NA
+
+        if has_act_column and stay_date.normalize() >= asof_normalized:
+            df_week_plot.at[stay_date, -1] = pd.NA
 
     # stay_date ごとのカーブ
     curves = {}

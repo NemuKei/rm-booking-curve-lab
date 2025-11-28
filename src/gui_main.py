@@ -1183,6 +1183,14 @@ class BookingCurveApp(tk.Tk):
         data は get_booking_curve_data(...) の戻り値。
         """
 
+        fc_cap_str = self.bc_forecast_cap_var.get().strip() if hasattr(self, "bc_forecast_cap_var") else ""
+        forecast_cap = None
+        try:
+            if fc_cap_str:
+                forecast_cap = float(fc_cap_str)
+        except Exception:
+            forecast_cap = None
+
         curves = data.get("curves", {})
         forecast_curve = data.get("forecast_curve")
 
@@ -1295,6 +1303,8 @@ class BookingCurveApp(tk.Tk):
                 last_model_val = model_val
 
                 y_dash = float(base_actual) + float(model_val - base_model)
+                if forecast_cap is not None:
+                    y_dash = min(y_dash, forecast_cap)
                 forecast_row.append(_fmt_num(y_dash))
 
             # forecast行をタグ付きで挿入（背景色変更）

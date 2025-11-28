@@ -49,7 +49,21 @@ TARGET_MONTHS = [
 # LTの範囲など、既存スクリプトと揃える
 LT_MIN = -1
 LT_MAX = 90
-CAPACITY = 168.0
+CAPACITY = 168.0  # デフォルトキャパシティ
+
+# 指定があれば引数の値を使い、なければデフォルトCAPACITYを返す
+def _resolve_capacity(capacity: float | None) -> float:
+    """
+    capacity が None の場合はグローバル CAPACITY を返し、
+    それ以外は float(capacity) を返すヘルパー。
+    """
+    if capacity is None:
+        return CAPACITY
+    try:
+        return float(capacity)
+    except Exception:
+        return CAPACITY
+
 # ===== 設定ここまで =====
 
 def get_history_months_around_asof(
@@ -159,11 +173,13 @@ def _prepare_output(df_target: pd.DataFrame, forecast: dict[pd.Timestamp, float]
     return out_df
 
 
-def run_avg_forecast(target_month: str, as_of_date: str) -> None:
+def run_avg_forecast(target_month: str, as_of_date: str, capacity: float | None = None) -> None:
     """
     avgモデル(3ヶ月平均)で target_month を as_of_date 時点で予測し、
     run_forecast_from_avg.py と同じ形式の CSV を OUTPUT_DIR に出力する。
     """
+    cap = _resolve_capacity(capacity)
+
     df_target = load_lt_csv(target_month)
 
     # avgモデル用の履歴: target_month から見た直近3ヶ月 (M-1〜M-3)
@@ -203,7 +219,7 @@ def run_avg_forecast(target_month: str, as_of_date: str) -> None:
             lt_df=df_target_wd,
             avg_curve=avg_curve,
             as_of_date=as_of_ts,
-            capacity=CAPACITY,
+            capacity=cap,
             lt_min=0,
             lt_max=LT_MAX,
         )
@@ -225,11 +241,13 @@ def run_avg_forecast(target_month: str, as_of_date: str) -> None:
     print(f"[OK] Forecast exported to {out_path}")
 
 
-def run_recent90_forecast(target_month: str, as_of_date: str) -> None:
+def run_recent90_forecast(target_month: str, as_of_date: str, capacity: float | None = None) -> None:
     """
     recent90モデル(観測日から遡る90日平均)で target_month を as_of_date 時点で予測し、
     run_forecast_from_recent90.py と同じ形式の CSV を OUTPUT_DIR に出力する。
     """
+    cap = _resolve_capacity(capacity)
+
     as_of_ts = pd.to_datetime(as_of_date)
     history_months = get_history_months_around_asof(
         as_of_ts=as_of_ts,
@@ -283,7 +301,7 @@ def run_recent90_forecast(target_month: str, as_of_date: str) -> None:
             lt_df=df_target_wd,
             avg_curve=avg_curve,
             as_of_date=as_of_ts,
-            capacity=CAPACITY,
+            capacity=cap,
             lt_min=0,
             lt_max=LT_MAX,
         )
@@ -310,7 +328,9 @@ def run_recent90_forecast(target_month: str, as_of_date: str) -> None:
     print(f"[OK] Forecast exported to {out_path}")
 
 
-def run_recent90_weighted_forecast(target_month: str, as_of: str) -> None:
+def run_recent90_weighted_forecast(
+    target_month: str, as_of: str, capacity: float | None = None
+) -> None:
     """
     recent90_weightedモデル(観測日から遡る90日平均・重み付き)で
     target_month の予測CSVを出力する。
@@ -318,6 +338,8 @@ def run_recent90_weighted_forecast(target_month: str, as_of: str) -> None:
     出力ファイル名:
       forecast_recent90w_{target_month}_{HOTEL_TAG}_asof_{as_of}.csv
     """
+    cap = _resolve_capacity(capacity)
+
     as_of_ts = pd.to_datetime(as_of, format="%Y%m%d")
 
     history_months = get_history_months_around_asof(
@@ -375,7 +397,7 @@ def run_recent90_weighted_forecast(target_month: str, as_of: str) -> None:
             lt_df=df_target_wd,
             avg_curve=avg_curve,
             as_of_date=as_of_ts,
-            capacity=CAPACITY,
+            capacity=cap,
             lt_min=0,
             lt_max=LT_MAX,
         )

@@ -842,7 +842,8 @@ class BookingCurveApp(tk.Tk):
         plot_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=8)
 
         self.bc_fig = Figure(figsize=(10, 5))
-        self.bc_fig.subplots_adjust(left=0.08, right=0.98)
+        # 左余白は詰めたまま、凡例用に右側に少しスペースを残す
+        self.bc_fig.subplots_adjust(left=0.08, right=0.86)
         self.bc_ax = self.bc_fig.add_subplot(111)
         self.bc_ax.text(0.5, 0.5, "No data", ha="center", va="center")
         self.bc_ax.set_axis_off()

@@ -22,6 +22,7 @@ from booking_curve.gui_backend import (
     get_booking_curve_data,
     get_daily_forecast_table,
     get_latest_asof_for_hotel,
+    get_latest_asof_for_month,
     get_model_evaluation_table,
     get_monthly_curve_data,
     OUTPUT_DIR,
@@ -1367,6 +1368,8 @@ class BookingCurveApp(tk.Tk):
         main_periods = [base_period - i for i in range(4)]
         main_months = [p.strftime("%Y%m") for p in main_periods]
 
+        latest_asof = get_latest_asof_for_month(hotel_tag, ym)
+
         # 日次ブッキングカーブと同系統のカラーパレット
         line_colors = [
             "#4C72B0",  # 対象月
@@ -1384,7 +1387,11 @@ class BookingCurveApp(tk.Tk):
             """月次カーブ用DFを読み込み、LT・ACT情報を更新する。"""
             nonlocal max_lt, has_act
 
-            df = get_monthly_curve_data(hotel_tag, month_str)
+            df = get_monthly_curve_data(
+                hotel_tag=hotel_tag,
+                target_month=month_str,
+                as_of_date=latest_asof,
+            )
 
             # インデックスを int LT に統一して昇順ソート
             if not pd.api.types.is_integer_dtype(df.index):

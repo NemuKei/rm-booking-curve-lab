@@ -289,7 +289,11 @@ def get_booking_curve_data(
     }
 
 
-def get_monthly_curve_data(hotel_tag: str, target_month: str) -> pd.DataFrame:
+def get_monthly_curve_data(
+    hotel_tag: str,
+    target_month: str,
+    as_of_date: Optional[str] = None,
+) -> pd.DataFrame:
     """月次ブッキングカーブ画面向けに LT_DATA から集計した DataFrame を返す。"""
 
     lt_path = OUTPUT_DIR / f"lt_data_{target_month}_{hotel_tag}.csv"
@@ -318,6 +322,24 @@ def get_monthly_curve_data(hotel_tag: str, target_month: str) -> pd.DataFrame:
     year = int(target_month[:4])
     month = int(target_month[4:])
     df_lt = df_lt[(df_lt.index.year == year) & (df_lt.index.month == month)]
+
+    if as_of_date is not None:
+        asof_ts = pd.to_datetime(as_of_date)
+        asof_norm = asof_ts.normalize()
+
+        # 念のため LT 列だけを対象にする（int 以外は無視）
+        lt_int_cols = [c for c in df_lt.columns if isinstance(c, (int, float))]
+
+        for stay_date in df_lt.index:
+            delta_days = (stay_date.normalize() - asof_norm).days
+
+            if delta_days > 0:
+                # まだ未来の宿泊日のため、この ASOF 時点では
+                # 「LT < delta_days」のセルは存在しないはず。
+                # ここは ASOF より後の時点でのOHなので NaN にする。
+                for lt in lt_int_cols:
+                    if lt < delta_days:
+                        df_lt.at[stay_date, lt] = pd.NA
 
     if df_lt.empty:
         raise ValueError("指定月の宿泊日がありません。")

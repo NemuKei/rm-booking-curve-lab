@@ -764,8 +764,7 @@ class BookingCurveApp(tk.Tk):
             ).pack(side=tk.LEFT, padx=1)
 
         ttk.Label(form, text="AS OF (YYYY-MM-DD):").grid(row=1, column=0, sticky="w", pady=(4, 2))
-        today_str = date.today().strftime("%Y-%m-%d")
-        self.bc_asof_var = tk.StringVar(value=today_str)
+        self.bc_asof_var = tk.StringVar(value="")
         if DateEntry is not None:
             self.bc_asof_entry = DateEntry(
                 form,
@@ -906,6 +905,33 @@ class BookingCurveApp(tk.Tk):
         weekday_text = weekday_parts[1].strip() if len(weekday_parts) == 2 else weekday_label
         as_of_date = self.bc_asof_var.get().strip()
         model = self.bc_model_var.get().strip()
+
+        # ASOF と最新ASOFの比較
+        latest_str = self.bc_latest_asof_var.get().strip()
+        if latest_str and latest_str not in ("なし", "(未取得)"):
+            try:
+                asof_dt = pd.to_datetime(as_of_date)
+                latest_dt = pd.to_datetime(latest_str)
+            except Exception:
+                messagebox.showerror("Error", f"AS OF 日付の形式が不正です: {as_of_date}")
+                return
+
+            # 最新ASOFより未来の場合だけ確認ダイアログを出す
+            if asof_dt > latest_dt:
+                use_latest = messagebox.askyesno(
+                    "確認",
+                    (
+                        f"最新ASOF は {latest_str} です。\n"
+                        f"選択中の ASOF ({as_of_date}) は最新より未来の日付です。\n\n"
+                        "最新ASOFに変更して描画しますか？"
+                    ),
+                )
+                if use_latest:
+                    asof_dt = latest_dt
+                    as_of_date = latest_dt.strftime("%Y-%m-%d")
+                    self.bc_asof_var.set(as_of_date)
+                else:
+                    return
 
         try:
             weekday_int = int(weekday_parts[0])

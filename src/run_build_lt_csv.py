@@ -43,7 +43,15 @@ MAX_LT = 120
 
 
 def build_lt_for_month(sheet_name: str) -> list[pd.Timestamp]:
-    """指定月シートの LT_DATA を作成して CSV 出力し、その月の ASOF 日付一覧も返す。"""
+    """
+    指定月シートの LT_DATA を作成して CSV 出力し、その月の as_of 日付一覧を返す。
+
+    Args:
+        sheet_name: 予約月を表す YYYYMM 形式のシート名。
+
+    Returns:
+        指定月シートから抽出した as_of 日付の ``pandas.Timestamp`` リスト。
+    """
     # data_loader は data/ 配下を前提にしているので、
     # ホテルフォルダ＋ファイル名で相対パス指定する
     relative_path = f"{HOTEL_SUBDIR}/{TIME_SERIES_FILE}"
@@ -70,28 +78,40 @@ def build_lt_for_month(sheet_name: str) -> list[pd.Timestamp]:
     return [pd.Timestamp(d) for d in asof_dates]
 
 
-def main():
-    print("=== LT_DATA CSV 一括生成 ===")
-    print(f"対象ホテル: {HOTEL_SUBDIR} / ファイル: {TIME_SERIES_FILE}")
-    print(f"対象月シート: {', '.join(TARGET_MONTHS)}")
-    print("")
+def run_build_lt_for_gui(target_months: list[str]) -> None:
+    """
+    GUI から呼び出すための薄いラッパー。
+
+    ``target_months`` に指定された宿泊月(YYYYMM)だけについて LT_DATA CSV を再生成し、
+    それらの取得日一覧をまとめて ``asof_dates_<HOTEL_TAG>.csv`` として上書き出力する。
+    """
+
+    if not target_months:
+        return
 
     all_asof_dates: set[pd.Timestamp] = set()
 
-    for sheet in TARGET_MONTHS:
-        month_asofs = build_lt_for_month(sheet)
-        for d in month_asofs:
-            all_asof_dates.add(d.normalize())
+    for ym in target_months:
+        month_asofs = build_lt_for_month(ym)
+        all_asof_dates.update(d.normalize() for d in month_asofs)
 
-    # 取得日一覧 CSV を出力
-    if all_asof_dates:
-        asof_list = sorted(all_asof_dates)
-        df_asof = pd.DataFrame({"as_of_date": asof_list})
-        asof_path = OUTPUT_DIR / f"asof_dates_{HOTEL_TAG}.csv"
-        df_asof.to_csv(asof_path, index=False)
-        print(f"[OK] 取得日一覧: {asof_path}")
-    else:
+    if not all_asof_dates:
         print("[WARN] 取得日が1件も検出されませんでした (asof_dates CSV は出力されません)。")
+        return
+
+    asof_list = sorted(all_asof_dates)
+    df_asof = pd.DataFrame({"as_of_date": asof_list})
+    asof_path = OUTPUT_DIR / f"asof_dates_{HOTEL_TAG}.csv"
+    df_asof.to_csv(asof_path, index=False)
+    print(f"[OK] 取得日一覧: {asof_path}")
+
+
+def main():
+    print("=== LT_DATA CSV 一括生成 ===")
+    print(f"対象ホテル: {HOTEL_SUBDIR} / ファイル: {TIME_SERIES_FILE}")
+    print(f"対象月シート: {', '.join(TARGET_MONTHS)}\n")
+
+    run_build_lt_for_gui(TARGET_MONTHS)
 
     print("\n=== 完了しました ===")
 

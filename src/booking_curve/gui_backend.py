@@ -351,6 +351,7 @@ def run_forecast_for_gui(
     target_months: list[str],
     as_of_date: str,
     gui_model: str,
+    capacity: float | None = None,
 ) -> None:
     """
     日別フォーキャストタブから Forecast を実行するための薄いラッパー。
@@ -362,6 +363,7 @@ def run_forecast_for_gui(
       pd.to_datetime で解釈される前提。
     - gui_model: GUI のコンボボックス値
       ("avg", "recent90", "recent90_adj", "recent90w", "recent90w_adj")
+    - capacity: 予測キャップ (None の場合は run_forecast_batch 側のデフォルトを使用)
     """
     # GUI からは "YYYY-MM-DD" が渡されるので、
     # run_forecast_batch 側の想定に合わせて "YYYYMMDD" に変換する。
@@ -374,11 +376,11 @@ def run_forecast_for_gui(
 
     for ym in target_months:
         if base_model == "avg":
-            run_forecast_batch.run_avg_forecast(ym, asof_tag)
+            run_forecast_batch.run_avg_forecast(ym, asof_tag, capacity=capacity)
         elif base_model == "recent90":
-            run_forecast_batch.run_recent90_forecast(ym, asof_tag)
+            run_forecast_batch.run_recent90_forecast(ym, asof_tag, capacity=capacity)
         elif base_model == "recent90w":
-            run_forecast_batch.run_recent90_weighted_forecast(ym, asof_tag)
+            run_forecast_batch.run_recent90_weighted_forecast(ym, asof_tag, capacity=capacity)
         else:
             raise ValueError(f"Unsupported gui_model: {gui_model}")
 

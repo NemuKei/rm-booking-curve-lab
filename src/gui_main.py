@@ -379,6 +379,12 @@ class BookingCurveApp(tk.Tk):
                 if (not current) or (current == today_str):
                     self.bc_asof_var.set(latest)
 
+    def _on_bc_hotel_changed(self, event=None) -> None:
+        hotel = self.bc_hotel_var.get().strip()
+        fc_cap, _ = self._get_daily_caps_for_hotel(hotel)
+        self.bc_forecast_cap_var.set(str(fc_cap))
+        self._update_bc_latest_asof_label(False)
+
     def _on_bc_set_asof_to_latest(self) -> None:
         latest = self.bc_latest_asof_var.get().strip()
         if latest and latest not in ("なし", "(未取得)"):
@@ -735,7 +741,7 @@ class BookingCurveApp(tk.Tk):
         hotel_combo = ttk.Combobox(form, textvariable=self.bc_hotel_var, state="readonly")
         hotel_combo["values"] = list(HOTEL_CONFIG.keys())
         hotel_combo.grid(row=0, column=1, padx=4, pady=2)
-        hotel_combo.bind("<<ComboboxSelected>>", lambda e: self._update_bc_latest_asof_label(False))
+        hotel_combo.bind("<<ComboboxSelected>>", self._on_bc_hotel_changed)
 
         ttk.Label(form, text="対象月 (YYYYMM):").grid(row=0, column=2, sticky="w")
         current_month = date.today().strftime("%Y%m")
@@ -809,11 +815,18 @@ class BookingCurveApp(tk.Tk):
         model_combo["values"] = ["avg", "recent90", "recent90w"]
         model_combo.grid(row=1, column=6, padx=4, pady=(4, 2))
 
+        fc_cap, _ = self._get_daily_caps_for_hotel(DEFAULT_HOTEL)
+        self.bc_forecast_cap_var = tk.StringVar(value=str(fc_cap))
+        ttk.Label(form, text="予測キャップ:").grid(row=1, column=7, sticky="w", pady=(4, 2))
+        ttk.Entry(form, textvariable=self.bc_forecast_cap_var, width=6).grid(
+            row=1, column=8, padx=2, pady=(4, 2), sticky="w"
+        )
+
         save_btn = ttk.Button(form, text="PNG保存", command=self._on_save_booking_curve_png)
-        save_btn.grid(row=1, column=7, padx=4, pady=(4, 2))
+        save_btn.grid(row=1, column=9, padx=4, pady=(4, 2))
 
         draw_btn = ttk.Button(form, text="描画", command=self._on_draw_booking_curve)
-        draw_btn.grid(row=1, column=8, padx=4, pady=(4, 2))
+        draw_btn.grid(row=1, column=10, padx=4, pady=(4, 2))
 
         nav_frame = ttk.Frame(form)
         nav_frame.grid(row=2, column=2, columnspan=4, sticky="w", pady=(4, 0))
@@ -921,6 +934,19 @@ class BookingCurveApp(tk.Tk):
         weekday_text = weekday_parts[1].strip() if len(weekday_parts) == 2 else weekday_label
         as_of_date = self.bc_asof_var.get().strip()
         model = self.bc_model_var.get().strip()
+
+        fc_cap_str = self.bc_forecast_cap_var.get().strip()
+        if not fc_cap_str:
+            messagebox.showerror("Error", "予測キャップを入力してください。")
+            return
+        try:
+            forecast_cap = float(fc_cap_str)
+        except Exception:
+            messagebox.showerror("Error", "予測キャップには数値を入力してください。")
+            return
+
+        _, occ_cap = self._get_daily_caps_for_hotel(hotel_tag)
+        self._set_daily_caps_for_hotel(hotel_tag, forecast_cap, occ_cap)
 
         # ASOF と最新ASOFの比較
         latest_str = self.bc_latest_asof_var.get().strip()
@@ -1068,16 +1094,34 @@ class BookingCurveApp(tk.Tk):
                     last_model_val = model_val
                     y_dash[j] = float(base_actual) + float(model_val - base_model)
 
+            y_dash_capped = []
+            for v in y_dash:
+                try:
+                    fv = float(v)
+                except Exception:
+                    y_dash_capped.append(np.nan)
+                    continue
+                if np.isnan(fv):
+                    y_dash_capped.append(np.nan)
+                else:
+                    y_dash_capped.append(min(fv, forecast_cap))
+
             self.bc_ax.plot(
                 x_positions,
-                y_dash,
+                y_dash_capped,
                 color=color,
                 linestyle="--",
                 linewidth=1.4,
                 alpha=0.8,
             )
 
-        y_avg = [avg_series.get(lt, np.nan) for lt in LEAD_TIME_PITCHES]
+        y_avg = []
+        for lt in LEAD_TIME_PITCHES:
+            v = avg_series.get(lt, np.nan)
+            if np.isnan(v):
+                y_avg.append(np.nan)
+            else:
+                y_avg.append(min(float(v), forecast_cap))
         self.bc_ax.plot(
             x_positions,
             y_avg,
@@ -1102,7 +1146,8 @@ class BookingCurveApp(tk.Tk):
 
         hotel_tag = self.bc_hotel_var.get()
         capacity = HOTEL_CONFIG.get(hotel_tag, {}).get("capacity", 180.0)
-        raw_max = capacity * 1.10
+        capacity_for_axis = max(float(capacity), float(forecast_cap))
+        raw_max = capacity_for_axis * 1.10
         ymax, major_step = _choose_axis_params(raw_max)
         minor_step = max(int(major_step / 2), 1)
 

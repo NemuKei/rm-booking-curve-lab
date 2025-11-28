@@ -140,6 +140,16 @@ class BookingCurveApp(tk.Tk):
         self._shift_month_var(self.bc_month_var, delta_months)
         self._update_bc_latest_asof_label(False)
 
+    def _on_bc_quick_weekday(self, weekday_value: str) -> None:
+        """
+        ブッキングカーブタブのクイック曜日ボタン用コールバック。
+        weekday_value は "0:Mon" や "5:Sat" のような文字列。
+        """
+
+        self.bc_weekday_var.set(weekday_value)
+        # 曜日変更後、即座にブッキングカーブを再描画する
+        self._on_draw_booking_curve()
+
     # =========================
     # 3) 日別フォーキャスト一覧タブ
     # =========================
@@ -720,7 +730,9 @@ class BookingCurveApp(tk.Tk):
 
         ttk.Label(form, text="曜日:").grid(row=0, column=4, sticky="w")
         self.bc_weekday_var = tk.StringVar(value="5:Sat")
-        weekday_combo = ttk.Combobox(form, textvariable=self.bc_weekday_var, state="readonly", width=8)
+        weekday_combo = ttk.Combobox(
+            form, textvariable=self.bc_weekday_var, state="readonly", width=7
+        )
         weekday_combo["values"] = [
             "0:Mon",
             "1:Tue",
@@ -731,6 +743,28 @@ class BookingCurveApp(tk.Tk):
             "6:Sun",
         ]
         weekday_combo.grid(row=0, column=5, padx=4, pady=2)
+
+        ttk.Button(
+            form, text="Mon", width=4, command=lambda: self._on_bc_quick_weekday("0:Mon")
+        ).grid(row=0, column=6, padx=1, pady=2)
+        ttk.Button(
+            form, text="Tue", width=4, command=lambda: self._on_bc_quick_weekday("1:Tue")
+        ).grid(row=0, column=7, padx=1, pady=2)
+        ttk.Button(
+            form, text="Wed", width=4, command=lambda: self._on_bc_quick_weekday("2:Wed")
+        ).grid(row=0, column=8, padx=1, pady=2)
+        ttk.Button(
+            form, text="Thu", width=4, command=lambda: self._on_bc_quick_weekday("3:Thu")
+        ).grid(row=0, column=9, padx=1, pady=2)
+        ttk.Button(
+            form, text="Fri", width=4, command=lambda: self._on_bc_quick_weekday("4:Fri")
+        ).grid(row=0, column=10, padx=1, pady=2)
+        ttk.Button(
+            form, text="Sat", width=4, command=lambda: self._on_bc_quick_weekday("5:Sat")
+        ).grid(row=0, column=11, padx=1, pady=2)
+        ttk.Button(
+            form, text="Sun", width=4, command=lambda: self._on_bc_quick_weekday("6:Sun")
+        ).grid(row=0, column=12, padx=1, pady=2)
 
         ttk.Label(form, text="AS OF (YYYY-MM-DD):").grid(row=1, column=0, sticky="w", pady=(4, 2))
         today_str = date.today().strftime("%Y-%m-%d")
@@ -871,11 +905,13 @@ class BookingCurveApp(tk.Tk):
         hotel_tag = self.bc_hotel_var.get()
         target_month = self.bc_month_var.get().strip()
         weekday_label = self.bc_weekday_var.get().strip()
+        weekday_parts = weekday_label.split(":", 1)
+        weekday_text = weekday_parts[1].strip() if len(weekday_parts) == 2 else weekday_label
         as_of_date = self.bc_asof_var.get().strip()
         model = self.bc_model_var.get().strip()
 
         try:
-            weekday_int = int(weekday_label.split(":")[0])
+            weekday_int = int(weekday_parts[0])
         except Exception:
             messagebox.showerror("Error", "曜日の値が不正です")
             return
@@ -1040,7 +1076,7 @@ class BookingCurveApp(tk.Tk):
             title_month = f"{target_month[:4]}-{target_month[4:]}"
         else:
             title_month = target_month
-        self.bc_ax.set_title(f"{title_month} Booking Curve")
+        self.bc_ax.set_title(f"{title_month} Booking Curve ({weekday_text})")
 
         self.bc_ax.grid(axis="y", which="major", linestyle="--", alpha=0.3)
         self.bc_ax.grid(axis="y", which="minor", linestyle=":", alpha=0.15)

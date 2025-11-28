@@ -1491,7 +1491,18 @@ class BookingCurveApp(tk.Tk):
                     global_max_y = y_max
 
         # X 軸の目盛り（1日ピッチ、左が最大LT・右端がACT）
-        xlabels = ["ACT" if lt == -1 else str(lt) for lt in lt_order]
+        # ラベルは ACT を除く LT について 2 つに 1 つだけ数値表示する
+        lt_numeric = [lt for lt in lt_order if lt != -1]
+        show_map = {lt: idx % 2 == 0 for idx, lt in enumerate(lt_numeric)}
+
+        xlabels = []
+        for lt in lt_order:
+            if lt == -1:
+                xlabels.append("ACT")
+            elif show_map.get(lt, False):
+                xlabels.append(str(lt))
+            else:
+                xlabels.append("")
         self.mc_ax.set_xticks(x_positions)
         self.mc_ax.set_xticklabels(xlabels, rotation=90)
 

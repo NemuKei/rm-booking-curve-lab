@@ -343,8 +343,14 @@ class BookingCurveApp(tk.Tk):
             self.df_latest_asof_var.set("なし")
         else:
             self.df_latest_asof_var.set(latest)
-            if update_asof_if_empty and not self.df_asof_var.get().strip():
-                self.df_asof_var.set(latest)
+
+            if update_asof_if_empty:
+                today_str = date.today().strftime("%Y-%m-%d")
+                current = self.df_asof_var.get().strip()
+                # 起動直後は DateEntry が今日を入れてしまうので、
+                # 「空 or 今日」の場合だけ最新ASOFで上書きする
+                if (not current) or (current == today_str):
+                    self.df_asof_var.set(latest)
 
     def _on_df_set_asof_to_latest(self) -> None:
         latest = self.df_latest_asof_var.get().strip()
@@ -363,8 +369,14 @@ class BookingCurveApp(tk.Tk):
             self.bc_latest_asof_var.set("なし")
         else:
             self.bc_latest_asof_var.set(latest)
-            if update_asof_if_empty and not self.bc_asof_var.get().strip():
-                self.bc_asof_var.set(latest)
+
+            if update_asof_if_empty:
+                today_str = date.today().strftime("%Y-%m-%d")
+                current = self.bc_asof_var.get().strip()
+                # 起動直後は DateEntry が今日を入れてしまうので、
+                # 「空 or 今日」の場合だけ最新ASOFで上書きする
+                if (not current) or (current == today_str):
+                    self.bc_asof_var.set(latest)
 
     def _on_bc_set_asof_to_latest(self) -> None:
         latest = self.bc_latest_asof_var.get().strip()
@@ -764,7 +776,7 @@ class BookingCurveApp(tk.Tk):
             ).pack(side=tk.LEFT, padx=1)
 
         ttk.Label(form, text="AS OF (YYYY-MM-DD):").grid(row=1, column=0, sticky="w", pady=(4, 2))
-        self.bc_asof_var = tk.StringVar(value="")
+        self.bc_asof_var = tk.StringVar(value="")  # 今日ではなく空で初期化
         if DateEntry is not None:
             self.bc_asof_entry = DateEntry(
                 form,
@@ -830,6 +842,7 @@ class BookingCurveApp(tk.Tk):
         plot_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=8)
 
         self.bc_fig = Figure(figsize=(10, 5))
+        self.bc_fig.subplots_adjust(left=0.08, right=0.98)
         self.bc_ax = self.bc_fig.add_subplot(111)
         self.bc_ax.text(0.5, 0.5, "No data", ha="center", va="center")
         self.bc_ax.set_axis_off()

@@ -453,6 +453,7 @@ class BookingCurveApp(tk.Tk):
                 target_months=target_months,
                 as_of_date=asof,
                 gui_model=model,
+                capacity=forecast_cap,
             )
         except FileNotFoundError as e:
             messagebox.showerror("エラー", f"Forecast実行に必要な LT_DATA が見つかりません:\n{e}")

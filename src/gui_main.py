@@ -5,6 +5,7 @@ import json
 
 import pandas as pd
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import ttk, messagebox
 
 try:
@@ -42,6 +43,7 @@ class BookingCurveApp(tk.Tk):
         super().__init__()
         self.title("Booking Curve Lab GUI")
         self.geometry("1200x800")
+        self._style = ttk.Style(self)
 
         notebook = ttk.Notebook(self)
         notebook.pack(fill=tk.BOTH, expand=True)
@@ -156,6 +158,7 @@ class BookingCurveApp(tk.Tk):
     # 3) 日別フォーキャスト一覧タブ
     # =========================
     def _init_daily_forecast_tab(self) -> None:
+        """日別フォーキャストの一覧表を初期化（列幅調整・ストライプ・差異ハイライト）。"""
         frame = self.tab_daily_forecast
 
         # 上部入力フォーム
@@ -287,31 +290,36 @@ class BookingCurveApp(tk.Tk):
             "occ_forecast_pct",
         ]
 
+        self._style.configure("Daily.Treeview")
+
         self.df_tree = ttk.Treeview(
-            table_container, columns=columns, show="headings", height=25
+            table_container, columns=columns, show="headings", height=25, style="Daily.Treeview"
         )
+        column_settings = {
+            "stay_date": {"width": 110, "anchor": "center"},
+            "weekday": {"width": 60, "anchor": "center"},
+            "actual_rooms": {"width": 90, "anchor": "e"},
+            "forecast_rooms": {"width": 90, "anchor": "e"},
+            "diff_rooms": {"width": 80, "anchor": "e"},
+            "diff_pct": {"width": 80, "anchor": "e"},
+            "occ_actual_pct": {"width": 100, "anchor": "e"},
+            "occ_forecast_pct": {"width": 100, "anchor": "e"},
+        }
         for col in columns:
-            header = col
-            if col == "stay_date":
-                width = 100
-                anchor = "center"
-            elif col == "weekday":
-                width = 70
-                anchor = "center"
-            elif col in ("actual_rooms", "forecast_rooms", "diff_rooms"):
-                width = 90
-                anchor = "e"
-            elif col in ("diff_pct", "occ_actual_pct", "occ_forecast_pct"):
-                width = 90
-                anchor = "e"
-            else:
-                width = 90
-                anchor = "e"
+            settings = column_settings.get(col, {"width": 90, "anchor": "e"})
+            self.df_tree.heading(col, text=col)
+            self.df_tree.column(col, width=settings["width"], anchor=settings["anchor"],stretch=False)
 
-            self.df_tree.heading(col, text=header)
-            self.df_tree.column(col, width=width, anchor=anchor)
+        self.df_tree.tag_configure("daily_even", background="#FFFFFF")
+        self.df_tree.tag_configure("daily_odd", background="#F5F6FA")
+        self.df_tree.tag_configure("daily_diff_over", background="#FFECEC", foreground="#B00020")
+        self.df_tree.tag_configure("daily_diff_under", background="#E8F4FF", foreground="#0B4F6C")
 
-        self.df_tree.tag_configure("oddrow", background="#F7F7F7")
+        # TOTAL 行用の太字フォント
+        base_font = tkfont.nametofont("TkDefaultFont")
+        self._df_total_font = base_font.copy()
+        self._df_total_font.configure(weight="bold")
+        self.df_tree.tag_configure("daily_total", font=self._df_total_font)
 
         # スクロールバー
         yscroll = ttk.Scrollbar(table_container, orient="vertical", command=self.df_tree.yview)
@@ -333,31 +341,63 @@ class BookingCurveApp(tk.Tk):
 
         self._update_df_latest_asof_label(update_asof_if_empty=True)
 
-    def _update_df_latest_asof_label(self, update_asof_if_empty: bool = False) -> None:
+    def _get_latest_asof_for_daily(self, show_message: bool, update_label: bool) -> str | None:
+        """
+        日別フォーキャストタブで選択されたホテル/月の最新 ASOF を取得する。
+
+        GUI 側での表示更新/エラーダイアログ表示をまとめて行うためのヘルパー。
+        """
+
         hotel = self.df_hotel_var.get().strip()
+        target_month = self.df_month_var.get().strip()
+
+        if len(target_month) != 6 or not target_month.isdigit():
+            if update_label:
+                self.df_latest_asof_var.set("(未取得)")
+            if show_message:
+                messagebox.showerror("エラー", f"対象月の形式が不正です: {target_month}")
+            return None
+
         try:
-            latest = get_latest_asof_for_hotel(hotel)
-        except Exception:
-            self.df_latest_asof_var.set("(未取得)")
-            return
+            latest = get_latest_asof_for_month(hotel, target_month)
+        except Exception as e:
+            if update_label:
+                self.df_latest_asof_var.set("(未取得)")
+            if show_message:
+                messagebox.showerror("エラー", f"最新ASOFの取得に失敗しました:\n{e}")
+            return None
 
-        if latest is None:
-            self.df_latest_asof_var.set("なし")
-        else:
-            self.df_latest_asof_var.set(latest)
+        if update_label:
+            if latest is None:
+                self.df_latest_asof_var.set("なし")
+            else:
+                self.df_latest_asof_var.set(latest)
 
-            if update_asof_if_empty:
-                today_str = date.today().strftime("%Y-%m-%d")
-                current = self.df_asof_var.get().strip()
-                # 起動直後は DateEntry が今日を入れてしまうので、
-                # 「空 or 今日」の場合だけ最新ASOFで上書きする
-                if (not current) or (current == today_str):
-                    self.df_asof_var.set(latest)
+        if latest is None and show_message:
+            messagebox.showerror(
+                "エラー",
+                f"指定月({target_month})の ASOF が見つかりません。",
+            )
+
+        return latest
+
+    def _update_df_latest_asof_label(self, update_asof_if_empty: bool = False) -> None:
+        latest = self._get_latest_asof_for_daily(show_message=False, update_label=True)
+
+        if latest is not None and update_asof_if_empty:
+            today_str = date.today().strftime("%Y-%m-%d")
+            current = self.df_asof_var.get().strip()
+            # 起動直後は DateEntry が今日を入れてしまうので、
+            # 「空 or 今日」の場合だけ最新ASOFで上書きする
+            if (not current) or (current == today_str):
+                self.df_asof_var.set(latest)
 
     def _on_df_set_asof_to_latest(self) -> None:
-        latest = self.df_latest_asof_var.get().strip()
-        if latest and latest not in ("なし", "(未取得)"):
+        latest = self._get_latest_asof_for_daily(show_message=True, update_label=True)
+        if latest:
             self.df_asof_var.set(latest)
+            # 取得できた最新ASOFで即座に再計算する
+            self._on_run_daily_forecast()
 
     def _update_bc_latest_asof_label(self, update_asof_if_empty: bool = False) -> None:
         hotel = self.bc_hotel_var.get().strip()
@@ -424,31 +464,20 @@ class BookingCurveApp(tk.Tk):
             return
 
         latest = self.df_latest_asof_var.get().strip()
-        if latest:
+        if latest and latest not in ("なし", "(未取得)"):
             try:
                 latest_ts = pd.to_datetime(latest)
             except Exception:
                 latest_ts = None
 
-            if latest_ts is not None:
-                if asof_ts > latest_ts:
-                    messagebox.showerror(
-                        "エラー",
-                        f"AS OF が最新データ ({latest}) を超えています。\n"
-                        f"{latest} 以前の日付を指定してください。",
-                    )
-                    return
-                elif asof_ts < latest_ts:
-                    use_latest = messagebox.askyesno(
-                        "確認",
-                        f"最新ASOF は {latest} です。\n"
-                        f"選択中の ASOF ({asof}) で Forecast を実行しますか？\n\n"
-                        f"最新ASOFで実行する場合は『はい』を選択してください。",
-                    )
-                    if use_latest:
-                        asof_ts = latest_ts
-                        asof = latest_ts.strftime("%Y-%m-%d")
-                        self.df_asof_var.set(asof)
+            if latest_ts is not None and asof_ts > latest_ts:
+                messagebox.showerror(
+                    "エラー",
+                    f"AS OF が最新データ ({latest}) を超えています。\n"
+                    f"{latest} 以前の日付を指定してください。",
+                )
+                return
+
 
         # 現時点では「1ヶ月のみ」実行。将来的に複数月対応する場合は
         # ここで month 周辺のリストを組み立てて渡す。
@@ -492,14 +521,16 @@ class BookingCurveApp(tk.Tk):
         for row_id in self.df_tree.get_children():
             self.df_tree.delete(row_id)
 
-        # DataFrame を Treeview に流し込む
+        # DataFrame を Treeview に流し込む（ストライプ & 差異ハイライト付き）
         for idx, (_, row) in enumerate(df.iterrows()):
             # TOTAL 行は stay_date が NaT なので、表示用に "TOTAL" とする
             stay_date = row["stay_date"]
             if pd.isna(stay_date):
                 stay_str = "TOTAL"
+                is_total = True
             else:
                 stay_str = pd.to_datetime(stay_date).strftime("%Y-%m-%d")
+                is_total = False
 
             weekday = row["weekday"]
             # 数値のままだと分かりにくいので、0-6 は "Mon".."Sun" にしてもよい
@@ -508,21 +539,31 @@ class BookingCurveApp(tk.Tk):
             else:
                 weekday_str = str(weekday)
 
+            diff_value = row.get("diff_rooms")
+
             values = [
                 stay_str,
                 weekday_str,
                 _fmt_num(row.get("actual_rooms")),
                 _fmt_num(row.get("forecast_rooms")),
-                _fmt_num(row.get("diff_rooms")),
+                _fmt_num(diff_value),
                 _fmt_pct(row.get("diff_pct")),
                 _fmt_pct(row.get("occ_actual_pct")),
                 _fmt_pct(row.get("occ_forecast_pct")),
             ]
-            tags: tuple[str, ...] = ()
-            if idx % 2 == 1:
-                tags = ("oddrow",)
 
-            self.df_tree.insert("", tk.END, values=values, tags=tags)
+            if is_total:
+                # TOTAL 行は太字のみ（色付けはしない）
+                tags: list[str] = ["daily_total"]
+            else:
+                tags = ["daily_even" if idx % 2 == 0 else "daily_odd"]
+                if isinstance(diff_value, (int, float, np.number)) and not pd.isna(diff_value):
+                    if diff_value > 0:
+                        tags.append("daily_diff_over")
+                    elif diff_value < 0:
+                        tags.append("daily_diff_under")
+
+            self.df_tree.insert("", tk.END, values=values, tags=tuple(tags))
 
         self.df_daily_forecast_df = df
         self.df_table_df = df
@@ -942,6 +983,42 @@ class BookingCurveApp(tk.Tk):
 
         messagebox.showinfo("保存完了", f"PNG を保存しました:\n{out_path}")
 
+    def _apply_daily_asof_after_lt_build(
+        self, hotel_tag: str, latest_map: dict[str, str] | None
+    ) -> bool:
+        """
+        LT_DATA 生成後に返ってきた ASOF 情報を日別フォーキャストタブへ反映する。
+
+        戻り値: ASOF を適用して Forecast を再計算した場合は True。
+        """
+
+        if not isinstance(latest_map, dict):
+            return False
+
+        current_hotel = self.df_hotel_var.get().strip()
+        current_month = self.df_month_var.get().strip()
+
+        if hotel_tag != current_hotel:
+            return False
+
+        latest_asof = latest_map.get(current_month)
+        if not latest_asof:
+            return False
+
+        self.df_latest_asof_var.set(latest_asof)
+        self.df_asof_var.set(latest_asof)
+
+        try:
+            self._on_run_daily_forecast()
+        except Exception as e:
+            messagebox.showerror(
+                "エラー",
+                f"最新ASOFで日別フォーキャストの更新に失敗しました。\n{e}",
+            )
+            return False
+
+        return True
+
     def _on_build_lt_data(self) -> None:
         hotel_tag = self.bc_hotel_var.get()
         base_ym = self.bc_month_var.get().strip()
@@ -970,7 +1047,7 @@ class BookingCurveApp(tk.Tk):
             return
 
         try:
-            run_build_lt_data_for_gui(hotel_tag, target_months)
+            latest_map = run_build_lt_data_for_gui(hotel_tag, target_months)
         except Exception as e:
             messagebox.showerror(
                 "LT_DATA生成エラー",
@@ -978,12 +1055,21 @@ class BookingCurveApp(tk.Tk):
             )
             return
 
-        messagebox.showinfo(
-            "LT_DATA生成",
-            "LT_DATA CSV の生成が完了しました。\n"
-            f"対象月: {', '.join(target_months)}\n"
-            "必要に応じて「最新に反映」ボタンで ASOF を更新してください。",
-        )
+        applied = self._apply_daily_asof_after_lt_build(hotel_tag, latest_map)
+        if applied:
+            messagebox.showinfo(
+                "LT_DATA生成",
+                "LT_DATA CSV の生成が完了しました。\n"
+                f"対象月: {', '.join(target_months)}\n"
+                "日別フォーキャストを最新ASOFで再計算しました。",
+            )
+        else:
+            messagebox.showinfo(
+                "LT_DATA生成",
+                "LT_DATA CSV の生成が完了しました。\n"
+                f"対象月: {', '.join(target_months)}\n"
+                "ASOF は「最新に反映」ボタンで更新してください。",
+            )
 
     def _ask_month_range(
         self, initial_start: str, initial_end: str | None = None
@@ -1099,7 +1185,7 @@ class BookingCurveApp(tk.Tk):
             return
 
         try:
-            run_build_lt_data_for_gui(hotel_tag, target_months)
+            latest_map = run_build_lt_data_for_gui(hotel_tag, target_months)
         except Exception as e:
             messagebox.showerror(
                 "LT_DATA生成エラー",
@@ -1107,11 +1193,20 @@ class BookingCurveApp(tk.Tk):
             )
             return
 
-        messagebox.showinfo(
-            "LT_DATA生成",
-            "LT_DATA CSV の生成が完了しました。\n"
-            f"対象月: {', '.join(target_months)}",
-        )
+        applied = self._apply_daily_asof_after_lt_build(hotel_tag, latest_map)
+        if applied:
+            messagebox.showinfo(
+                "LT_DATA生成",
+                "LT_DATA CSV の生成が完了しました。\n"
+                f"対象月: {', '.join(target_months)}\n"
+                "日別フォーキャストを最新ASOFで再計算しました。",
+            )
+        else:
+            messagebox.showinfo(
+                "LT_DATA生成",
+                "LT_DATA CSV の生成が完了しました。\n"
+                f"対象月: {', '.join(target_months)}",
+            )
 
     def _on_draw_booking_curve(self) -> None:
         hotel_tag = self.bc_hotel_var.get()
@@ -1839,6 +1934,9 @@ def _fmt_pct(v) -> str:
         return str(v)
 
 
+# 開発者向け簡易チェック:
+# main() を実行し、日別フォーキャストタブで任意の月を読み込み、
+# diff_rooms が正負に分かれることを確認すると差異ハイライトとストライプが確認できます。
 def main() -> None:
     app = BookingCurveApp()
     app.mainloop()

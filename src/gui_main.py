@@ -42,6 +42,7 @@ class BookingCurveApp(tk.Tk):
         super().__init__()
         self.title("Booking Curve Lab GUI")
         self.geometry("1200x800")
+        self._style = ttk.Style(self)
 
         notebook = ttk.Notebook(self)
         notebook.pack(fill=tk.BOTH, expand=True)
@@ -156,6 +157,7 @@ class BookingCurveApp(tk.Tk):
     # 3) 日別フォーキャスト一覧タブ
     # =========================
     def _init_daily_forecast_tab(self) -> None:
+        """日別フォーキャストの一覧表を初期化（列幅調整・ストライプ・差異ハイライト）。"""
         frame = self.tab_daily_forecast
 
         # 上部入力フォーム
@@ -287,31 +289,30 @@ class BookingCurveApp(tk.Tk):
             "occ_forecast_pct",
         ]
 
+        self._style.configure("Daily.Treeview")
+
         self.df_tree = ttk.Treeview(
-            table_container, columns=columns, show="headings", height=25
+            table_container, columns=columns, show="headings", height=25, style="Daily.Treeview"
         )
+        column_settings = {
+            "stay_date": {"width": 110, "anchor": "center"},
+            "weekday": {"width": 70, "anchor": "center"},
+            "actual_rooms": {"width": 95, "anchor": "e"},
+            "forecast_rooms": {"width": 95, "anchor": "e"},
+            "diff_rooms": {"width": 80, "anchor": "e"},
+            "diff_pct": {"width": 80, "anchor": "e"},
+            "occ_actual_pct": {"width": 100, "anchor": "e"},
+            "occ_forecast_pct": {"width": 100, "anchor": "e"},
+        }
         for col in columns:
-            header = col
-            if col == "stay_date":
-                width = 100
-                anchor = "center"
-            elif col == "weekday":
-                width = 70
-                anchor = "center"
-            elif col in ("actual_rooms", "forecast_rooms", "diff_rooms"):
-                width = 90
-                anchor = "e"
-            elif col in ("diff_pct", "occ_actual_pct", "occ_forecast_pct"):
-                width = 90
-                anchor = "e"
-            else:
-                width = 90
-                anchor = "e"
+            settings = column_settings.get(col, {"width": 90, "anchor": "e"})
+            self.df_tree.heading(col, text=col)
+            self.df_tree.column(col, width=settings["width"], anchor=settings["anchor"])
 
-            self.df_tree.heading(col, text=header)
-            self.df_tree.column(col, width=width, anchor=anchor)
-
-        self.df_tree.tag_configure("oddrow", background="#F7F7F7")
+        self.df_tree.tag_configure("daily_even", background="#FFFFFF")
+        self.df_tree.tag_configure("daily_odd", background="#F5F6FA")
+        self.df_tree.tag_configure("daily_diff_over", background="#FFECEC", foreground="#B00020")
+        self.df_tree.tag_configure("daily_diff_under", background="#E8F4FF", foreground="#0B4F6C")
 
         # スクロールバー
         yscroll = ttk.Scrollbar(table_container, orient="vertical", command=self.df_tree.yview)
@@ -492,7 +493,7 @@ class BookingCurveApp(tk.Tk):
         for row_id in self.df_tree.get_children():
             self.df_tree.delete(row_id)
 
-        # DataFrame を Treeview に流し込む
+        # DataFrame を Treeview に流し込む（ストライプ & 差異ハイライト付き）
         for idx, (_, row) in enumerate(df.iterrows()):
             # TOTAL 行は stay_date が NaT なので、表示用に "TOTAL" とする
             stay_date = row["stay_date"]
@@ -508,21 +509,27 @@ class BookingCurveApp(tk.Tk):
             else:
                 weekday_str = str(weekday)
 
+            diff_value = row.get("diff_rooms")
+
             values = [
                 stay_str,
                 weekday_str,
                 _fmt_num(row.get("actual_rooms")),
                 _fmt_num(row.get("forecast_rooms")),
-                _fmt_num(row.get("diff_rooms")),
+                _fmt_num(diff_value),
                 _fmt_pct(row.get("diff_pct")),
                 _fmt_pct(row.get("occ_actual_pct")),
                 _fmt_pct(row.get("occ_forecast_pct")),
             ]
-            tags: tuple[str, ...] = ()
-            if idx % 2 == 1:
-                tags = ("oddrow",)
 
-            self.df_tree.insert("", tk.END, values=values, tags=tags)
+            tags: list[str] = ["daily_even" if idx % 2 == 0 else "daily_odd"]
+            if isinstance(diff_value, (int, float, np.number)) and not pd.isna(diff_value):
+                if diff_value > 0:
+                    tags.append("daily_diff_over")
+                elif diff_value < 0:
+                    tags.append("daily_diff_under")
+
+            self.df_tree.insert("", tk.END, values=values, tags=tuple(tags))
 
         self.df_daily_forecast_df = df
         self.df_table_df = df
@@ -1839,6 +1846,9 @@ def _fmt_pct(v) -> str:
         return str(v)
 
 
+# 開発者向け簡易チェック:
+# main() を実行し、日別フォーキャストタブで任意の月を読み込み、
+# diff_rooms が正負に分かれることを確認すると差異ハイライトとストライプが確認できます。
 def main() -> None:
     app = BookingCurveApp()
     app.mainloop()

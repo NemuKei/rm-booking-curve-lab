@@ -27,6 +27,7 @@ from booking_curve.gui_backend import (
     get_monthly_curve_data,
     OUTPUT_DIR,
     HOTEL_CONFIG,
+    run_build_lt_data_for_gui,
     run_forecast_for_gui,
 )
 from booking_curve.plot_booking_curve import LEAD_TIME_PITCHES
@@ -825,8 +826,13 @@ class BookingCurveApp(tk.Tk):
         save_btn = ttk.Button(form, text="PNG保存", command=self._on_save_booking_curve_png)
         save_btn.grid(row=1, column=9, padx=4, pady=(4, 2))
 
+        self.btn_build_lt = ttk.Button(
+            form, text="LT_DATA生成", command=self._on_build_lt_data
+        )
+        self.btn_build_lt.grid(row=1, column=10, padx=4, pady=(4, 2))
+
         draw_btn = ttk.Button(form, text="描画", command=self._on_draw_booking_curve)
-        draw_btn.grid(row=1, column=10, padx=4, pady=(4, 2))
+        draw_btn.grid(row=1, column=11, padx=4, pady=(4, 2))
 
         nav_frame = ttk.Frame(form)
         nav_frame.grid(row=2, column=2, columnspan=4, sticky="w", pady=(4, 0))
@@ -925,6 +931,40 @@ class BookingCurveApp(tk.Tk):
             return
 
         messagebox.showinfo("保存完了", f"PNG を保存しました:\n{out_path}")
+
+    def _on_build_lt_data(self) -> None:
+        """
+        ブッキングカーブタブから LT_DATA 生成バッチを実行する。
+        現在選択中のホテルと対象月を基に、run_build_lt_data_for_gui を呼び出す。
+        """
+
+        hotel_tag = self.bc_hotel_var.get()
+        target_month = self.bc_month_var.get().strip()
+
+        if len(target_month) != 6 or not target_month.isdigit():
+            messagebox.showerror("LT_DATA生成エラー", "対象月は6桁の数字で入力してください。")
+            return
+
+        confirm = messagebox.askokcancel(
+            "LT_DATA生成確認",
+            f"{hotel_tag} の LT_DATA を {target_month} 月で再生成します。よろしいですか？",
+        )
+        if not confirm:
+            return
+
+        try:
+            run_build_lt_data_for_gui(hotel_tag, [target_month])
+        except Exception as e:
+            messagebox.showerror(
+                "LT_DATA生成エラー",
+                f"LT_DATA生成でエラーが発生しました。\n{e}",
+            )
+            return
+
+        messagebox.showinfo(
+            "LT_DATA生成",
+            "LT_DATA CSV の生成が完了しました。\n必要に応じて「最新に反映」ボタンで ASOF を更新してください。",
+        )
 
     def _on_draw_booking_curve(self) -> None:
         hotel_tag = self.bc_hotel_var.get()

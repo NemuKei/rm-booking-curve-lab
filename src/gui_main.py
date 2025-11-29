@@ -1027,6 +1027,19 @@ class BookingCurveApp(tk.Tk):
         ttk.Button(btn_frame, text="OK", command=on_ok).pack(side=tk.LEFT, padx=4)
         ttk.Button(btn_frame, text="キャンセル", command=on_cancel).pack(side=tk.LEFT, padx=4)
 
+        dialog.update_idletasks()  # サイズ確定
+        w = dialog.winfo_width()
+        h = dialog.winfo_height()
+
+        parent_x = self.winfo_rootx()
+        parent_y = self.winfo_rooty()
+        parent_w = self.winfo_width()
+        parent_h = self.winfo_height()
+
+        x = parent_x + (parent_w - w) // 2
+        y = parent_y + (parent_h - h) // 2
+        dialog.geometry(f"{w}x{h}+{x}+{y}")
+
         start_entry.focus_set()
         dialog.wait_window(dialog)
         return result

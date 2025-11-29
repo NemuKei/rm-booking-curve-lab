@@ -296,13 +296,13 @@ class BookingCurveApp(tk.Tk):
         )
         column_settings = {
             "stay_date": {"width": 110, "anchor": "center"},
-            "weekday": {"width": 70, "anchor": "center"},
-            "actual_rooms": {"width": 95, "anchor": "e"},
-            "forecast_rooms": {"width": 95, "anchor": "e"},
-            "diff_rooms": {"width": 80, "anchor": "e"},
-            "diff_pct": {"width": 80, "anchor": "e"},
-            "occ_actual_pct": {"width": 100, "anchor": "e"},
-            "occ_forecast_pct": {"width": 100, "anchor": "e"},
+            "weekday": {"width": 60, "anchor": "center"},
+            "actual_rooms": {"width": 80, "anchor": "e"},
+            "forecast_rooms": {"width": 80, "anchor": "e"},
+            "diff_rooms": {"width": 70, "anchor": "e"},
+            "diff_pct": {"width": 70, "anchor": "e"},
+            "occ_actual_pct": {"width": 90, "anchor": "e"},
+            "occ_forecast_pct": {"width": 90, "anchor": "e"},
         }
         for col in columns:
             settings = column_settings.get(col, {"width": 90, "anchor": "e"})
@@ -439,17 +439,6 @@ class BookingCurveApp(tk.Tk):
                         f"{latest} 以前の日付を指定してください。",
                     )
                     return
-                elif asof_ts < latest_ts:
-                    use_latest = messagebox.askyesno(
-                        "確認",
-                        f"最新ASOF は {latest} です。\n"
-                        f"選択中の ASOF ({asof}) で Forecast を実行しますか？\n\n"
-                        f"最新ASOFで実行する場合は『はい』を選択してください。",
-                    )
-                    if use_latest:
-                        asof_ts = latest_ts
-                        asof = latest_ts.strftime("%Y-%m-%d")
-                        self.df_asof_var.set(asof)
 
         # 現時点では「1ヶ月のみ」実行。将来的に複数月対応する場合は
         # ここで month 周辺のリストを組み立てて渡す。

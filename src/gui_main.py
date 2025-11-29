@@ -826,19 +826,6 @@ class BookingCurveApp(tk.Tk):
         save_btn = ttk.Button(form, text="PNG保存", command=self._on_save_booking_curve_png)
         save_btn.grid(row=1, column=7, padx=4, pady=(4, 2))
 
-        self.btn_build_lt_default = ttk.Button(
-            form, text="LT_DATA(4ヶ月)", command=self._on_build_lt_data
-        )
-        self.btn_build_lt_default.grid(row=1, column=8, padx=4, pady=(4, 2))
-
-        self.btn_build_lt_range = ttk.Button(
-            form, text="LT_DATA(期間指定)", command=self._on_build_lt_data_range
-        )
-        self.btn_build_lt_range.grid(row=1, column=9, padx=4, pady=(4, 2))
-
-        draw_btn = ttk.Button(form, text="描画", command=self._on_draw_booking_curve)
-        draw_btn.grid(row=1, column=10, padx=4, pady=(4, 2))
-
         nav_frame = ttk.Frame(form)
         nav_frame.grid(row=2, column=2, columnspan=4, sticky="w", pady=(4, 0))
 
@@ -863,6 +850,22 @@ class BookingCurveApp(tk.Tk):
             text="+1Y",
             command=lambda: self._on_bc_shift_month(+12),
         ).pack(side=tk.LEFT, padx=2)
+
+        lt_btn_frame = ttk.Frame(form)
+        lt_btn_frame.grid(row=3, column=2, columnspan=8, sticky="w", pady=(2, 0))
+
+        self.btn_build_lt = ttk.Button(
+            lt_btn_frame, text="LT_DATA(4ヶ月)", command=self._on_build_lt_data
+        )
+        self.btn_build_lt.pack(side=tk.LEFT, padx=4)
+
+        self.btn_build_lt_range = ttk.Button(
+            lt_btn_frame, text="LT_DATA(期間指定)", command=self._on_build_lt_data_range
+        )
+        self.btn_build_lt_range.pack(side=tk.LEFT, padx=4)
+
+        draw_btn = ttk.Button(lt_btn_frame, text="描画", command=self._on_draw_booking_curve)
+        draw_btn.pack(side=tk.LEFT, padx=8)
 
         plot_frame = ttk.Frame(frame)
         plot_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=8)
@@ -1020,7 +1023,7 @@ class BookingCurveApp(tk.Tk):
             messagebox.showerror("LT_DATA生成エラー", "終了月は開始月以降を指定してください。")
             return
 
-        diff_months = int(end_p - start_p)
+        diff_months = (end_p.year - start_p.year) * 12 + (end_p.month - start_p.month)
         target_months = [(start_p + i).strftime("%Y%m") for i in range(diff_months + 1)]
 
         if len(target_months) > 24:

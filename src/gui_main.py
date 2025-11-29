@@ -5,7 +5,7 @@ import json
 
 import pandas as pd
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, simpledialog
 
 try:
     from tkcalendar import DateEntry
@@ -818,21 +818,26 @@ class BookingCurveApp(tk.Tk):
 
         fc_cap, _ = self._get_daily_caps_for_hotel(DEFAULT_HOTEL)
         self.bc_forecast_cap_var = tk.StringVar(value=str(fc_cap))
-        ttk.Label(form, text="予測キャップ:").grid(row=1, column=7, sticky="w", pady=(4, 2))
+        ttk.Label(form, text="予測キャップ:").grid(row=1, column=11, sticky="w", pady=(4, 2))
         ttk.Entry(form, textvariable=self.bc_forecast_cap_var, width=6).grid(
-            row=1, column=8, padx=2, pady=(4, 2), sticky="w"
+            row=1, column=12, padx=2, pady=(4, 2), sticky="w"
         )
 
         save_btn = ttk.Button(form, text="PNG保存", command=self._on_save_booking_curve_png)
-        save_btn.grid(row=1, column=9, padx=4, pady=(4, 2))
+        save_btn.grid(row=1, column=7, padx=4, pady=(4, 2))
 
-        self.btn_build_lt = ttk.Button(
-            form, text="LT_DATA生成", command=self._on_build_lt_data
+        self.btn_build_lt_default = ttk.Button(
+            form, text="LT_DATA(4ヶ月)", command=self._on_build_lt_data
         )
-        self.btn_build_lt.grid(row=1, column=10, padx=4, pady=(4, 2))
+        self.btn_build_lt_default.grid(row=1, column=8, padx=4, pady=(4, 2))
+
+        self.btn_build_lt_range = ttk.Button(
+            form, text="LT_DATA(期間指定)", command=self._on_build_lt_data_range
+        )
+        self.btn_build_lt_range.grid(row=1, column=9, padx=4, pady=(4, 2))
 
         draw_btn = ttk.Button(form, text="描画", command=self._on_draw_booking_curve)
-        draw_btn.grid(row=1, column=11, padx=4, pady=(4, 2))
+        draw_btn.grid(row=1, column=10, padx=4, pady=(4, 2))
 
         nav_frame = ttk.Frame(form)
         nav_frame.grid(row=2, column=2, columnspan=4, sticky="w", pady=(4, 0))
@@ -933,27 +938,34 @@ class BookingCurveApp(tk.Tk):
         messagebox.showinfo("保存完了", f"PNG を保存しました:\n{out_path}")
 
     def _on_build_lt_data(self) -> None:
-        """
-        ブッキングカーブタブから LT_DATA 生成バッチを実行する。
-        現在選択中のホテルと対象月を基に、run_build_lt_data_for_gui を呼び出す。
-        """
-
         hotel_tag = self.bc_hotel_var.get()
-        target_month = self.bc_month_var.get().strip()
+        base_ym = self.bc_month_var.get().strip()
 
-        if len(target_month) != 6 or not target_month.isdigit():
-            messagebox.showerror("LT_DATA生成エラー", "対象月は6桁の数字で入力してください。")
+        if len(base_ym) != 6 or not base_ym.isdigit():
+            messagebox.showerror(
+                "LT_DATA生成エラー", "対象月は 6桁の数字 (YYYYMM) で入力してください。"
+            )
             return
+
+        try:
+            base_period = pd.Period(f"{base_ym[:4]}-{base_ym[4:]}", freq="M")
+        except Exception:
+            messagebox.showerror(
+                "LT_DATA生成エラー", "対象月は 6桁の数字 (YYYYMM) で入力してください。"
+            )
+            return
+
+        target_months = [(base_period + i).strftime("%Y%m") for i in range(4)]
 
         confirm = messagebox.askokcancel(
             "LT_DATA生成確認",
-            f"{hotel_tag} の LT_DATA を {target_month} 月で再生成します。よろしいですか？",
+            f"{hotel_tag} の LT_DATA を {target_months[0]}〜{target_months[-1]} で再生成します。よろしいですか？",
         )
         if not confirm:
             return
 
         try:
-            run_build_lt_data_for_gui(hotel_tag, [target_month])
+            run_build_lt_data_for_gui(hotel_tag, target_months)
         except Exception as e:
             messagebox.showerror(
                 "LT_DATA生成エラー",
@@ -963,7 +975,85 @@ class BookingCurveApp(tk.Tk):
 
         messagebox.showinfo(
             "LT_DATA生成",
-            "LT_DATA CSV の生成が完了しました。\n必要に応じて「最新に反映」ボタンで ASOF を更新してください。",
+            "LT_DATA CSV の生成が完了しました。\n"
+            f"対象月: {', '.join(target_months)}\n"
+            "必要に応じて「最新に反映」ボタンで ASOF を更新してください。",
+        )
+
+    def _on_build_lt_data_range(self) -> None:
+        hotel_tag = self.bc_hotel_var.get()
+        default_ym = self.bc_month_var.get().strip()
+
+        start_ym = simpledialog.askstring(
+            "LT_DATA生成", "開始月 (YYYYMM) を入力してください。", initialvalue=default_ym
+        )
+        if not start_ym:
+            return
+
+        end_ym = simpledialog.askstring(
+            "LT_DATA生成", "終了月 (YYYYMM) を入力してください。", initialvalue=start_ym
+        )
+        if not end_ym:
+            return
+
+        start_ym = start_ym.strip()
+        end_ym = end_ym.strip()
+
+        for label, value in (("開始月", start_ym), ("終了月", end_ym)):
+            if len(value) != 6 or not value.isdigit():
+                messagebox.showerror(
+                    "LT_DATA生成エラー",
+                    f"{label} は 6桁の数字 (YYYYMM) で入力してください。\n入力値: {value}",
+                )
+                return
+
+        try:
+            start_p = pd.Period(f"{start_ym[:4]}-{start_ym[4:]}", freq="M")
+            end_p = pd.Period(f"{end_ym[:4]}-{end_ym[4:]}", freq="M")
+        except Exception:
+            messagebox.showerror(
+                "LT_DATA生成エラー", "開始月と終了月は YYYYMM 形式で入力してください。"
+            )
+            return
+
+        if end_p < start_p:
+            messagebox.showerror("LT_DATA生成エラー", "終了月は開始月以降を指定してください。")
+            return
+
+        diff_months = int(end_p - start_p)
+        target_months = [(start_p + i).strftime("%Y%m") for i in range(diff_months + 1)]
+
+        if len(target_months) > 24:
+            heavy_confirm = messagebox.askyesno(
+                "LT_DATA生成確認",
+                f"{len(target_months)}ヶ月分 ({target_months[0]}〜{target_months[-1]}) を生成します。\n"
+                "時間がかかる可能性がありますが、よろしいですか？",
+            )
+            if not heavy_confirm:
+                return
+
+        confirm = messagebox.askokcancel(
+            "LT_DATA生成確認",
+            f"{hotel_tag} の LT_DATA を\n"
+            f"{target_months[0]}〜{target_months[-1]} の {len(target_months)}ヶ月分で再生成します。\n"
+            "よろしいですか？",
+        )
+        if not confirm:
+            return
+
+        try:
+            run_build_lt_data_for_gui(hotel_tag, target_months)
+        except Exception as e:
+            messagebox.showerror(
+                "LT_DATA生成エラー",
+                f"LT_DATA生成でエラーが発生しました。\n{e}",
+            )
+            return
+
+        messagebox.showinfo(
+            "LT_DATA生成",
+            "LT_DATA CSV の生成が完了しました。\n"
+            f"対象月: {', '.join(target_months)}",
         )
 
     def _on_draw_booking_curve(self) -> None:

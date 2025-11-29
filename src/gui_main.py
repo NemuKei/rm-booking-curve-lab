@@ -5,6 +5,7 @@ import json
 
 import pandas as pd
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import ttk, messagebox
 
 try:
@@ -314,6 +315,12 @@ class BookingCurveApp(tk.Tk):
         self.df_tree.tag_configure("daily_diff_over", background="#FFECEC", foreground="#B00020")
         self.df_tree.tag_configure("daily_diff_under", background="#E8F4FF", foreground="#0B4F6C")
 
+        # TOTAL 行用の太字フォント
+        base_font = tkfont.nametofont("TkDefaultFont")
+        self._df_total_font = base_font.copy()
+        self._df_total_font.configure(weight="bold")
+        self.df_tree.tag_configure("daily_total", font=self._df_total_font)
+
         # スクロールバー
         yscroll = ttk.Scrollbar(table_container, orient="vertical", command=self.df_tree.yview)
         self.df_tree.configure(yscrollcommand=yscroll.set)
@@ -457,20 +464,20 @@ class BookingCurveApp(tk.Tk):
             return
 
         latest = self.df_latest_asof_var.get().strip()
-        if latest:
+        if latest and latest not in ("なし", "(未取得)"):
             try:
                 latest_ts = pd.to_datetime(latest)
             except Exception:
                 latest_ts = None
 
-            if latest_ts is not None:
-                if asof_ts > latest_ts:
-                    messagebox.showerror(
-                        "エラー",
-                        f"AS OF が最新データ ({latest}) を超えています。\n"
-                        f"{latest} 以前の日付を指定してください。",
-                    )
-                    return
+            if latest_ts is not None and asof_ts > latest_ts:
+                messagebox.showerror(
+                    "エラー",
+                    f"AS OF が最新データ ({latest}) を超えています。\n"
+                    f"{latest} 以前の日付を指定してください。",
+                )
+                return
+
 
         # 現時点では「1ヶ月のみ」実行。将来的に複数月対応する場合は
         # ここで month 周辺のリストを組み立てて渡す。
@@ -520,8 +527,10 @@ class BookingCurveApp(tk.Tk):
             stay_date = row["stay_date"]
             if pd.isna(stay_date):
                 stay_str = "TOTAL"
+                is_total = True
             else:
                 stay_str = pd.to_datetime(stay_date).strftime("%Y-%m-%d")
+                is_total = False
 
             weekday = row["weekday"]
             # 数値のままだと分かりにくいので、0-6 は "Mon".."Sun" にしてもよい
@@ -543,12 +552,16 @@ class BookingCurveApp(tk.Tk):
                 _fmt_pct(row.get("occ_forecast_pct")),
             ]
 
-            tags: list[str] = ["daily_even" if idx % 2 == 0 else "daily_odd"]
-            if isinstance(diff_value, (int, float, np.number)) and not pd.isna(diff_value):
-                if diff_value > 0:
-                    tags.append("daily_diff_over")
-                elif diff_value < 0:
-                    tags.append("daily_diff_under")
+            if is_total:
+                # TOTAL 行は太字のみ（色付けはしない）
+                tags: list[str] = ["daily_total"]
+            else:
+                tags = ["daily_even" if idx % 2 == 0 else "daily_odd"]
+                if isinstance(diff_value, (int, float, np.number)) and not pd.isna(diff_value):
+                    if diff_value > 0:
+                        tags.append("daily_diff_over")
+                    elif diff_value < 0:
+                        tags.append("daily_diff_under")
 
             self.df_tree.insert("", tk.END, values=values, tags=tuple(tags))
 

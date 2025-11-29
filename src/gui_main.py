@@ -5,7 +5,7 @@ import json
 
 import pandas as pd
 import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
+from tkinter import ttk, messagebox
 
 try:
     from tkcalendar import DateEntry
@@ -827,44 +827,46 @@ class BookingCurveApp(tk.Tk):
         save_btn.grid(row=1, column=7, padx=4, pady=(4, 2))
 
         nav_frame = ttk.Frame(form)
-        nav_frame.grid(row=2, column=2, columnspan=4, sticky="w", pady=(4, 0))
+        nav_frame.grid(row=2, column=2, columnspan=8, sticky="w", pady=(4, 0))
 
-        ttk.Label(nav_frame, text="月移動:").pack(side=tk.LEFT, padx=(0, 4))
+        nav_left = ttk.Frame(nav_frame)
+        nav_left.pack(side=tk.LEFT)
+        nav_right = ttk.Frame(nav_frame)
+        nav_right.pack(side=tk.LEFT, padx=16)
+
+        ttk.Label(nav_left, text="月移動:").pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(
-            nav_frame,
+            nav_left,
             text="-1Y",
             command=lambda: self._on_bc_shift_month(-12),
         ).pack(side=tk.LEFT, padx=2)
         ttk.Button(
-            nav_frame,
+            nav_left,
             text="-1M",
             command=lambda: self._on_bc_shift_month(-1),
         ).pack(side=tk.LEFT, padx=2)
         ttk.Button(
-            nav_frame,
+            nav_left,
             text="+1M",
             command=lambda: self._on_bc_shift_month(+1),
         ).pack(side=tk.LEFT, padx=2)
         ttk.Button(
-            nav_frame,
+            nav_left,
             text="+1Y",
             command=lambda: self._on_bc_shift_month(+12),
         ).pack(side=tk.LEFT, padx=2)
 
-        lt_btn_frame = ttk.Frame(form)
-        lt_btn_frame.grid(row=3, column=2, columnspan=8, sticky="w", pady=(2, 0))
-
         self.btn_build_lt = ttk.Button(
-            lt_btn_frame, text="LT_DATA(4ヶ月)", command=self._on_build_lt_data
+            nav_right, text="LT_DATA(4ヶ月)", command=self._on_build_lt_data
         )
         self.btn_build_lt.pack(side=tk.LEFT, padx=4)
 
         self.btn_build_lt_range = ttk.Button(
-            lt_btn_frame, text="LT_DATA(期間指定)", command=self._on_build_lt_data_range
+            nav_right, text="LT_DATA(期間指定)", command=self._on_build_lt_data_range
         )
         self.btn_build_lt_range.pack(side=tk.LEFT, padx=4)
 
-        draw_btn = ttk.Button(lt_btn_frame, text="描画", command=self._on_draw_booking_curve)
+        draw_btn = ttk.Button(nav_right, text="描画", command=self._on_draw_booking_curve)
         draw_btn.pack(side=tk.LEFT, padx=8)
 
         plot_frame = ttk.Frame(frame)
@@ -983,24 +985,63 @@ class BookingCurveApp(tk.Tk):
             "必要に応じて「最新に反映」ボタンで ASOF を更新してください。",
         )
 
+    def _ask_month_range(
+        self, initial_start: str, initial_end: str | None = None
+    ) -> tuple[str, str] | None:
+        dialog = tk.Toplevel(self)
+        dialog.title("LT_DATA生成")
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+
+        start_var = tk.StringVar(value=initial_start)
+        end_var = tk.StringVar(value=initial_end if initial_end is not None else initial_start)
+        result: tuple[str, str] | None = None
+
+        def on_ok(*_: object) -> None:
+            nonlocal result
+            result = (start_var.get().strip(), end_var.get().strip())
+            dialog.destroy()
+
+        def on_cancel(*_: object) -> None:
+            dialog.destroy()
+
+        dialog.protocol("WM_DELETE_WINDOW", on_cancel)
+        dialog.bind("<Escape>", on_cancel)
+
+        content = ttk.Frame(dialog, padding=12)
+        content.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(content, text="開始月 (YYYYMM):").grid(row=0, column=0, sticky="w", pady=4)
+        start_entry = ttk.Entry(content, textvariable=start_var, width=12)
+        start_entry.grid(row=0, column=1, padx=(4, 0), pady=4)
+        start_entry.bind("<Return>", on_ok)
+
+        ttk.Label(content, text="終了月 (YYYYMM):").grid(row=1, column=0, sticky="w", pady=4)
+        end_entry = ttk.Entry(content, textvariable=end_var, width=12)
+        end_entry.grid(row=1, column=1, padx=(4, 0), pady=4)
+        end_entry.bind("<Return>", on_ok)
+
+        btn_frame = ttk.Frame(content)
+        btn_frame.grid(row=2, column=0, columnspan=2, pady=(8, 0), sticky="e")
+        ttk.Button(btn_frame, text="OK", command=on_ok).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_frame, text="キャンセル", command=on_cancel).pack(side=tk.LEFT, padx=4)
+
+        start_entry.focus_set()
+        dialog.wait_window(dialog)
+        return result
+
     def _on_build_lt_data_range(self) -> None:
         hotel_tag = self.bc_hotel_var.get()
         default_ym = self.bc_month_var.get().strip()
 
-        start_ym = simpledialog.askstring(
-            "LT_DATA生成", "開始月 (YYYYMM) を入力してください。", initialvalue=default_ym
-        )
-        if not start_ym:
+        result = self._ask_month_range(default_ym)
+        if result is None:
             return
 
-        end_ym = simpledialog.askstring(
-            "LT_DATA生成", "終了月 (YYYYMM) を入力してください。", initialvalue=start_ym
-        )
-        if not end_ym:
+        start_ym, end_ym = result
+        if not start_ym or not end_ym:
             return
-
-        start_ym = start_ym.strip()
-        end_ym = end_ym.strip()
 
         for label, value in (("開始月", start_ym), ("終了月", end_ym)):
             if len(value) != 6 or not value.isdigit():

@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 import run_forecast_batch
+import run_build_lt_csv
 
 from booking_curve.forecast_simple import (
     moving_average_recent_90days,
@@ -513,4 +514,25 @@ def get_model_evaluation_table(hotel_tag: str) -> pd.DataFrame:
         cols.append(c)
     df = df[cols].copy()
     return df
+
+
+def run_build_lt_data_for_gui(
+    hotel_tag: str,
+    target_months: list[str],
+) -> None:
+    """
+    Tkinter GUI から LT_DATA 生成バッチを実行するための薄いラッパー。
+
+    現状は単一ホテル前提のため hotel_tag は将来拡張用のダミー引数だが、
+    インターフェースとして受け取っておく。
+    target_months には "YYYYMM" 形式の宿泊月を渡す。
+    """
+
+    if not target_months:
+        return
+
+    try:
+        run_build_lt_csv.run_build_lt_for_gui(target_months)
+    except Exception:
+        raise
 

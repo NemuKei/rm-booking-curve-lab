@@ -27,6 +27,7 @@ from booking_curve.gui_backend import (
     get_monthly_curve_data,
     OUTPUT_DIR,
     HOTEL_CONFIG,
+    run_build_lt_data_for_gui,
     run_forecast_for_gui,
 )
 from booking_curve.plot_booking_curve import LEAD_TIME_PITCHES
@@ -817,41 +818,56 @@ class BookingCurveApp(tk.Tk):
 
         fc_cap, _ = self._get_daily_caps_for_hotel(DEFAULT_HOTEL)
         self.bc_forecast_cap_var = tk.StringVar(value=str(fc_cap))
-        ttk.Label(form, text="予測キャップ:").grid(row=1, column=7, sticky="w", pady=(4, 2))
+        ttk.Label(form, text="予測キャップ:").grid(row=1, column=11, sticky="w", pady=(4, 2))
         ttk.Entry(form, textvariable=self.bc_forecast_cap_var, width=6).grid(
-            row=1, column=8, padx=2, pady=(4, 2), sticky="w"
+            row=1, column=12, padx=2, pady=(4, 2), sticky="w"
         )
 
         save_btn = ttk.Button(form, text="PNG保存", command=self._on_save_booking_curve_png)
-        save_btn.grid(row=1, column=9, padx=4, pady=(4, 2))
-
-        draw_btn = ttk.Button(form, text="描画", command=self._on_draw_booking_curve)
-        draw_btn.grid(row=1, column=10, padx=4, pady=(4, 2))
+        save_btn.grid(row=1, column=7, padx=4, pady=(4, 2))
 
         nav_frame = ttk.Frame(form)
-        nav_frame.grid(row=2, column=2, columnspan=4, sticky="w", pady=(4, 0))
+        nav_frame.grid(row=2, column=2, columnspan=8, sticky="w", pady=(4, 0))
 
-        ttk.Label(nav_frame, text="月移動:").pack(side=tk.LEFT, padx=(0, 4))
+        nav_left = ttk.Frame(nav_frame)
+        nav_left.pack(side=tk.LEFT)
+        nav_right = ttk.Frame(nav_frame)
+        nav_right.pack(side=tk.LEFT, padx=16)
+
+        ttk.Label(nav_left, text="月移動:").pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(
-            nav_frame,
+            nav_left,
             text="-1Y",
             command=lambda: self._on_bc_shift_month(-12),
         ).pack(side=tk.LEFT, padx=2)
         ttk.Button(
-            nav_frame,
+            nav_left,
             text="-1M",
             command=lambda: self._on_bc_shift_month(-1),
         ).pack(side=tk.LEFT, padx=2)
         ttk.Button(
-            nav_frame,
+            nav_left,
             text="+1M",
             command=lambda: self._on_bc_shift_month(+1),
         ).pack(side=tk.LEFT, padx=2)
         ttk.Button(
-            nav_frame,
+            nav_left,
             text="+1Y",
             command=lambda: self._on_bc_shift_month(+12),
         ).pack(side=tk.LEFT, padx=2)
+
+        self.btn_build_lt = ttk.Button(
+            nav_right, text="LT_DATA(4ヶ月)", command=self._on_build_lt_data
+        )
+        self.btn_build_lt.pack(side=tk.LEFT, padx=4)
+
+        self.btn_build_lt_range = ttk.Button(
+            nav_right, text="LT_DATA(期間指定)", command=self._on_build_lt_data_range
+        )
+        self.btn_build_lt_range.pack(side=tk.LEFT, padx=4)
+
+        draw_btn = ttk.Button(nav_right, text="描画", command=self._on_draw_booking_curve)
+        draw_btn.pack(side=tk.LEFT, padx=8)
 
         plot_frame = ttk.Frame(frame)
         plot_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=8)
@@ -925,6 +941,177 @@ class BookingCurveApp(tk.Tk):
             return
 
         messagebox.showinfo("保存完了", f"PNG を保存しました:\n{out_path}")
+
+    def _on_build_lt_data(self) -> None:
+        hotel_tag = self.bc_hotel_var.get()
+        base_ym = self.bc_month_var.get().strip()
+
+        if len(base_ym) != 6 or not base_ym.isdigit():
+            messagebox.showerror(
+                "LT_DATA生成エラー", "対象月は 6桁の数字 (YYYYMM) で入力してください。"
+            )
+            return
+
+        try:
+            base_period = pd.Period(f"{base_ym[:4]}-{base_ym[4:]}", freq="M")
+        except Exception:
+            messagebox.showerror(
+                "LT_DATA生成エラー", "対象月は 6桁の数字 (YYYYMM) で入力してください。"
+            )
+            return
+
+        target_months = [(base_period + i).strftime("%Y%m") for i in range(4)]
+
+        confirm = messagebox.askokcancel(
+            "LT_DATA生成確認",
+            f"{hotel_tag} の LT_DATA を {target_months[0]}〜{target_months[-1]} で再生成します。よろしいですか？",
+        )
+        if not confirm:
+            return
+
+        try:
+            run_build_lt_data_for_gui(hotel_tag, target_months)
+        except Exception as e:
+            messagebox.showerror(
+                "LT_DATA生成エラー",
+                f"LT_DATA生成でエラーが発生しました。\n{e}",
+            )
+            return
+
+        messagebox.showinfo(
+            "LT_DATA生成",
+            "LT_DATA CSV の生成が完了しました。\n"
+            f"対象月: {', '.join(target_months)}\n"
+            "必要に応じて「最新に反映」ボタンで ASOF を更新してください。",
+        )
+
+    def _ask_month_range(
+        self, initial_start: str, initial_end: str | None = None
+    ) -> tuple[str, str] | None:
+        dialog = tk.Toplevel(self)
+        dialog.title("LT_DATA生成")
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+
+        start_var = tk.StringVar(value=initial_start)
+        end_var = tk.StringVar(value=initial_end if initial_end is not None else initial_start)
+        result: tuple[str, str] | None = None
+
+        def on_ok(*_: object) -> None:
+            nonlocal result
+            result = (start_var.get().strip(), end_var.get().strip())
+            dialog.destroy()
+
+        def on_cancel(*_: object) -> None:
+            dialog.destroy()
+
+        dialog.protocol("WM_DELETE_WINDOW", on_cancel)
+        dialog.bind("<Escape>", on_cancel)
+
+        content = ttk.Frame(dialog, padding=12)
+        content.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(content, text="開始月 (YYYYMM):").grid(row=0, column=0, sticky="w", pady=4)
+        start_entry = ttk.Entry(content, textvariable=start_var, width=12)
+        start_entry.grid(row=0, column=1, padx=(4, 0), pady=4)
+        start_entry.bind("<Return>", on_ok)
+
+        ttk.Label(content, text="終了月 (YYYYMM):").grid(row=1, column=0, sticky="w", pady=4)
+        end_entry = ttk.Entry(content, textvariable=end_var, width=12)
+        end_entry.grid(row=1, column=1, padx=(4, 0), pady=4)
+        end_entry.bind("<Return>", on_ok)
+
+        btn_frame = ttk.Frame(content)
+        btn_frame.grid(row=2, column=0, columnspan=2, pady=(8, 0), sticky="e")
+        ttk.Button(btn_frame, text="OK", command=on_ok).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_frame, text="キャンセル", command=on_cancel).pack(side=tk.LEFT, padx=4)
+
+        dialog.update_idletasks()  # サイズ確定
+        w = dialog.winfo_width()
+        h = dialog.winfo_height()
+
+        parent_x = self.winfo_rootx()
+        parent_y = self.winfo_rooty()
+        parent_w = self.winfo_width()
+        parent_h = self.winfo_height()
+
+        x = parent_x + (parent_w - w) // 2
+        y = parent_y + (parent_h - h) // 2
+        dialog.geometry(f"{w}x{h}+{x}+{y}")
+
+        start_entry.focus_set()
+        dialog.wait_window(dialog)
+        return result
+
+    def _on_build_lt_data_range(self) -> None:
+        hotel_tag = self.bc_hotel_var.get()
+        default_ym = self.bc_month_var.get().strip()
+
+        result = self._ask_month_range(default_ym)
+        if result is None:
+            return
+
+        start_ym, end_ym = result
+        if not start_ym or not end_ym:
+            return
+
+        for label, value in (("開始月", start_ym), ("終了月", end_ym)):
+            if len(value) != 6 or not value.isdigit():
+                messagebox.showerror(
+                    "LT_DATA生成エラー",
+                    f"{label} は 6桁の数字 (YYYYMM) で入力してください。\n入力値: {value}",
+                )
+                return
+
+        try:
+            start_p = pd.Period(f"{start_ym[:4]}-{start_ym[4:]}", freq="M")
+            end_p = pd.Period(f"{end_ym[:4]}-{end_ym[4:]}", freq="M")
+        except Exception:
+            messagebox.showerror(
+                "LT_DATA生成エラー", "開始月と終了月は YYYYMM 形式で入力してください。"
+            )
+            return
+
+        if end_p < start_p:
+            messagebox.showerror("LT_DATA生成エラー", "終了月は開始月以降を指定してください。")
+            return
+
+        diff_months = (end_p.year - start_p.year) * 12 + (end_p.month - start_p.month)
+        target_months = [(start_p + i).strftime("%Y%m") for i in range(diff_months + 1)]
+
+        if len(target_months) > 24:
+            heavy_confirm = messagebox.askyesno(
+                "LT_DATA生成確認",
+                f"{len(target_months)}ヶ月分 ({target_months[0]}〜{target_months[-1]}) を生成します。\n"
+                "時間がかかる可能性がありますが、よろしいですか？",
+            )
+            if not heavy_confirm:
+                return
+
+        confirm = messagebox.askokcancel(
+            "LT_DATA生成確認",
+            f"{hotel_tag} の LT_DATA を\n"
+            f"{target_months[0]}〜{target_months[-1]} の {len(target_months)}ヶ月分で再生成します。\n"
+            "よろしいですか？",
+        )
+        if not confirm:
+            return
+
+        try:
+            run_build_lt_data_for_gui(hotel_tag, target_months)
+        except Exception as e:
+            messagebox.showerror(
+                "LT_DATA生成エラー",
+                f"LT_DATA生成でエラーが発生しました。\n{e}",
+            )
+            return
+
+        messagebox.showinfo(
+            "LT_DATA生成",
+            "LT_DATA CSV の生成が完了しました。\n"
+            f"対象月: {', '.join(target_months)}",
+        )
 
     def _on_draw_booking_curve(self) -> None:
         hotel_tag = self.bc_hotel_var.get()

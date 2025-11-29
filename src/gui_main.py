@@ -297,17 +297,17 @@ class BookingCurveApp(tk.Tk):
         column_settings = {
             "stay_date": {"width": 110, "anchor": "center"},
             "weekday": {"width": 60, "anchor": "center"},
-            "actual_rooms": {"width": 80, "anchor": "e"},
-            "forecast_rooms": {"width": 80, "anchor": "e"},
-            "diff_rooms": {"width": 70, "anchor": "e"},
-            "diff_pct": {"width": 70, "anchor": "e"},
-            "occ_actual_pct": {"width": 90, "anchor": "e"},
-            "occ_forecast_pct": {"width": 90, "anchor": "e"},
+            "actual_rooms": {"width": 90, "anchor": "e"},
+            "forecast_rooms": {"width": 90, "anchor": "e"},
+            "diff_rooms": {"width": 80, "anchor": "e"},
+            "diff_pct": {"width": 80, "anchor": "e"},
+            "occ_actual_pct": {"width": 100, "anchor": "e"},
+            "occ_forecast_pct": {"width": 100, "anchor": "e"},
         }
         for col in columns:
             settings = column_settings.get(col, {"width": 90, "anchor": "e"})
             self.df_tree.heading(col, text=col)
-            self.df_tree.column(col, width=settings["width"], anchor=settings["anchor"])
+            self.df_tree.column(col, width=settings["width"], anchor=settings["anchor"],stretch=False)
 
         self.df_tree.tag_configure("daily_even", background="#FFFFFF")
         self.df_tree.tag_configure("daily_odd", background="#F5F6FA")

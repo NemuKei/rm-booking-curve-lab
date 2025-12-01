@@ -42,7 +42,7 @@ TARGET_MONTHS = [
     "202509",
     "202510",
 ]
-ASOF_TYPES = ["M-1_END", "M10", "M20"]
+ASOF_TYPES = ["M-2_END", "M-1_END", "M10", "M20"]
 
 LT_MIN = -1
 LT_MAX = 90
@@ -55,10 +55,12 @@ def resolve_asof_dates_for_month(target_month: str) -> list[tuple[str, str]]:
 
     first_day = date(year, month, 1)
     prev_month_end = first_day - timedelta(days=1)
+    prev2_month_end = prev_month_end.replace(day=1) - timedelta(days=1)
     asof_10 = date(year, month, 10)
     asof_20 = date(year, month, 20)
 
     return [
+        ("M-2_END", prev2_month_end.strftime("%Y%m%d")),
         ("M-1_END", prev_month_end.strftime("%Y%m%d")),
         ("M10", asof_10.strftime("%Y%m%d")),
         ("M20", asof_20.strftime("%Y%m%d")),

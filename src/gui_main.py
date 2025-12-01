@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import Optional
 import json
 
 import pandas as pd
@@ -58,6 +59,11 @@ class BookingCurveApp(tk.Tk):
         notebook.add(self.tab_model_eval, text="モデル評価")
 
         self._settings = self._load_settings()
+
+        # モデル評価タブ用の状態変数
+        self.model_eval_df: Optional[pd.DataFrame] = None
+        self.me_from_var = tk.StringVar(value="")
+        self.me_to_var = tk.StringVar(value="")
 
         self._init_daily_forecast_tab()
         self._init_model_eval_tab()
@@ -697,6 +703,16 @@ class BookingCurveApp(tk.Tk):
         run_btn = ttk.Button(top, text="評価読み込み", command=self._on_load_model_eval)
         run_btn.grid(row=0, column=2, padx=4, pady=2)
 
+        ttk.Label(top, text="開始月(YYYYMM):").grid(row=0, column=3, sticky="w", padx=(8, 4))
+        ttk.Entry(top, textvariable=self.me_from_var, width=8).grid(row=0, column=4, padx=4, pady=2)
+
+        ttk.Label(top, text="終了月(YYYYMM):").grid(row=0, column=5, sticky="w", padx=(8, 4))
+        ttk.Entry(top, textvariable=self.me_to_var, width=8).grid(row=0, column=6, padx=4, pady=2)
+
+        ttk.Button(top, text="直近12ヶ月", command=self._on_me_last12_clicked).grid(
+            row=0, column=7, padx=4, pady=2
+        )
+
         columns = [
             "target_month",
             "model",
@@ -723,15 +739,53 @@ class BookingCurveApp(tk.Tk):
     def _on_load_model_eval(self) -> None:
         try:
             hotel = self.me_hotel_var.get()
-            df = get_model_evaluation_table(hotel)
+            self.model_eval_df = get_model_evaluation_table(hotel)
         except Exception as e:
             messagebox.showerror("エラー", f"モデル評価読み込みに失敗しました:\n{e}")
             return
 
+        self._refresh_model_eval_table()
+
+    def _refresh_model_eval_table(self) -> None:
+        if self.model_eval_df is None or self.model_eval_df.empty:
+            for row_id in self.me_tree.get_children():
+                self.me_tree.delete(row_id)
+            return
+
+        df = self.model_eval_df.copy()
+        from_str = self.me_from_var.get().strip()
+        to_str = self.me_to_var.get().strip()
+
+        df_total = df[df["target_month"] == "TOTAL"]
+        df_body = df[df["target_month"] != "TOTAL"].copy()
+
+        def _to_int_ym(val):
+            try:
+                return int(val)
+            except Exception:
+                return None
+
+        df_body["target_month_int"] = df_body["target_month"].map(_to_int_ym)
+        df_body = df_body[~df_body["target_month_int"].isna()]
+
+        try:
+            if from_str:
+                from_int = int(from_str)
+                df_body = df_body[df_body["target_month_int"] >= from_int]
+            if to_str:
+                to_int = int(to_str)
+                df_body = df_body[df_body["target_month_int"] <= to_int]
+        except Exception:
+            messagebox.showerror("エラー", "開始月/終了月はYYYYMMの整数で指定してください。")
+            return
+
+        df_body = df_body.drop(columns=["target_month_int"], errors="ignore")
+        df_view = pd.concat([df_body, df_total], ignore_index=True)
+
         for row_id in self.me_tree.get_children():
             self.me_tree.delete(row_id)
 
-        for _, row in df.iterrows():
+        for _, row in df_view.iterrows():
             n_raw = row.get("n_samples")
             try:
                 if pd.isna(n_raw):
@@ -750,6 +804,43 @@ class BookingCurveApp(tk.Tk):
                 n_str,
             ]
             self.me_tree.insert("", tk.END, values=values)
+
+    def _on_me_last12_clicked(self) -> None:
+        if self.model_eval_df is None:
+            self._on_load_model_eval()
+
+        if self.model_eval_df is None or self.model_eval_df.empty:
+            return
+
+        df_body = self.model_eval_df[self.model_eval_df["target_month"] != "TOTAL"].copy()
+
+        def _to_int_ym(val):
+            try:
+                return int(val)
+            except Exception:
+                return None
+
+        df_body["target_month_int"] = df_body["target_month"].map(_to_int_ym)
+        df_body = df_body[~df_body["target_month_int"].isna()]
+        if df_body.empty:
+            return
+
+        latest_int = int(df_body["target_month_int"].max())
+
+        def _add_months(ym_int: int, offset: int) -> int:
+            s = f"{ym_int:06d}"
+            y = int(s[:4])
+            m = int(s[4:])
+            total = y * 12 + (m - 1) + offset
+            y2 = total // 12
+            m2 = total % 12 + 1
+            return int(f"{y2}{m2:02d}")
+
+        start_int = _add_months(latest_int, -11)
+        self.me_from_var.set(f"{start_int:06d}")
+        self.me_to_var.set(f"{latest_int:06d}")
+
+        self._refresh_model_eval_table()
 
     # =========================
     # 1) ブッキングカーブタブ

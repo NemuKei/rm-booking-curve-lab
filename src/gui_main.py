@@ -32,6 +32,8 @@ from booking_curve.gui_backend import (
     HOTEL_CONFIG,
     run_build_lt_data_for_gui,
     run_forecast_for_gui,
+    build_calendar_for_gui,
+    get_calendar_coverage,
 )
 from booking_curve.plot_booking_curve import LEAD_TIME_PITCHES
 
@@ -46,23 +48,27 @@ class BookingCurveApp(tk.Tk):
         self.title("Booking Curve Lab GUI")
         self.geometry("1200x800")
 
-        notebook = ttk.Notebook(self)
-        notebook.pack(fill=tk.BOTH, expand=True)
+        self.notebook = ttk.Notebook(self)
+        self.notebook.pack(fill=tk.BOTH, expand=True)
 
         # タブ作成
-        self.tab_booking_curve = ttk.Frame(notebook)
-        self.tab_monthly_curve = ttk.Frame(notebook)
-        self.tab_daily_forecast = ttk.Frame(notebook)
-        self.tab_model_eval = ttk.Frame(notebook)
-        self.tab_asof_eval = ttk.Frame(notebook)
+        self.tab_booking_curve = ttk.Frame(self.notebook)
+        self.tab_monthly_curve = ttk.Frame(self.notebook)
+        self.tab_daily_forecast = ttk.Frame(self.notebook)
+        self.tab_model_eval = ttk.Frame(self.notebook)
+        self.tab_asof_eval = ttk.Frame(self.notebook)
+        self.tab_master_settings = ttk.Frame(self.notebook)
 
-        notebook.add(self.tab_booking_curve, text="ブッキングカーブ")
-        notebook.add(self.tab_monthly_curve, text="月次カーブ")
-        notebook.add(self.tab_daily_forecast, text="日別フォーキャスト")
-        notebook.add(self.tab_model_eval, text="モデル評価")
-        notebook.add(self.tab_asof_eval, text="ASOF比較")
+        self.notebook.add(self.tab_booking_curve, text="ブッキングカーブ")
+        self.notebook.add(self.tab_monthly_curve, text="月次カーブ")
+        self.notebook.add(self.tab_daily_forecast, text="日別フォーキャスト")
+        self.notebook.add(self.tab_model_eval, text="モデル評価")
+        self.notebook.add(self.tab_asof_eval, text="ASOF比較")
+        self.notebook.add(self.tab_master_settings, text="マスタ設定")
 
         self._settings = self._load_settings()
+
+        self.hotel_var = tk.StringVar(value=DEFAULT_HOTEL)
 
         # モデル評価タブ用の状態変数
         self.model_eval_df: Optional[pd.DataFrame] = None
@@ -75,6 +81,7 @@ class BookingCurveApp(tk.Tk):
         self._init_asof_eval_tab()
         self._init_booking_curve_tab()
         self._init_monthly_curve_tab()
+        self._create_master_settings_tab()
 
     def _load_settings(self) -> dict:
         try:
@@ -163,6 +170,77 @@ class BookingCurveApp(tk.Tk):
         self.bc_weekday_var.set(weekday_value)
         # 曜日変更後、即座にブッキングカーブを再描画する
         self._on_draw_booking_curve()
+
+    def _create_master_settings_tab(self) -> None:
+        frame = self.tab_master_settings
+
+        calendar_frame = ttk.LabelFrame(frame, text="カレンダー")
+        calendar_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
+
+        ttk.Label(calendar_frame, text="ホテル:").grid(row=0, column=0, sticky="w")
+        self.hotel_combo = ttk.Combobox(
+            calendar_frame, textvariable=self.hotel_var, state="readonly"
+        )
+        self.hotel_combo["values"] = list(HOTEL_CONFIG.keys())
+        self.hotel_combo.grid(row=0, column=1, padx=4, pady=2, sticky="w")
+        self.hotel_combo.bind("<<ComboboxSelected>>", self._on_hotel_changed)
+
+        self.calendar_coverage_var = tk.StringVar()
+        self.calendar_coverage_label = ttk.Label(
+            calendar_frame, textvariable=self.calendar_coverage_var
+        )
+        self.calendar_coverage_label.grid(
+            row=1, column=0, columnspan=3, padx=4, pady=2, sticky="w"
+        )
+
+        self.calendar_build_button = ttk.Button(
+            calendar_frame,
+            text="カレンダー再生成",
+            command=self._on_build_calendar_clicked,
+        )
+        self.calendar_build_button.grid(row=1, column=3, padx=4, pady=2, sticky="e")
+
+        self._refresh_calendar_coverage()
+
+    def _on_hotel_changed(self, event=None) -> None:
+        self._refresh_calendar_coverage()
+
+    def _on_build_calendar_clicked(self) -> None:
+        hotel_tag = self.hotel_var.get()
+        if not hotel_tag:
+            messagebox.showerror("エラー", "ホテルが選択されていません。")
+            return
+
+        self.calendar_build_button["state"] = "disabled"
+        try:
+            csv_path = build_calendar_for_gui(hotel_tag)
+        except Exception as e:
+            messagebox.showerror("エラー", f"カレンダー再生成に失敗しました:\n{e}")
+        else:
+            messagebox.showinfo("完了", f"カレンダーを再生成しました。\n{csv_path}")
+            self._refresh_calendar_coverage()
+        finally:
+            self.calendar_build_button["state"] = "normal"
+
+    def _refresh_calendar_coverage(self) -> None:
+        if not hasattr(self, "calendar_coverage_var"):
+            return
+
+        hotel_tag = self.hotel_var.get()
+        if not hotel_tag:
+            self.calendar_coverage_var.set("カレンダー: ホテル未選択")
+            return
+
+        coverage = get_calendar_coverage(hotel_tag)
+        min_date = coverage.get("min_date")
+        max_date = coverage.get("max_date")
+
+        if min_date is None and max_date is None:
+            self.calendar_coverage_var.set("カレンダー: 未作成")
+        elif min_date is None or max_date is None:
+            self.calendar_coverage_var.set("カレンダー: 範囲情報を取得できませんでした")
+        else:
+            self.calendar_coverage_var.set(f"カレンダー: {min_date} ～ {max_date}")
 
     # =========================
     # 3) 日別フォーキャスト一覧タブ

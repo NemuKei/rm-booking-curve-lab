@@ -656,6 +656,153 @@ def get_model_evaluation_table(hotel_tag: str) -> pd.DataFrame:
     return out
 
 
+def _target_month_to_int(value: object) -> int:
+    """target_month を int に正規化する。"""
+
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        raise ValueError(f"Invalid target_month value: {value}")
+
+
+def _filter_by_target_month(
+    df: pd.DataFrame, from_ym: Optional[str], to_ym: Optional[str]
+) -> pd.DataFrame:
+    df = df.copy()
+    df["target_month_int"] = df["target_month"].map(_target_month_to_int)
+
+    mask = pd.Series([True] * len(df))
+    if from_ym is not None:
+        mask &= df["target_month_int"] >= _target_month_to_int(from_ym)
+    if to_ym is not None:
+        mask &= df["target_month_int"] <= _target_month_to_int(to_ym)
+
+    return df.loc[mask].copy()
+
+
+def get_eval_overview_by_asof(
+    hotel_tag: str,
+    from_ym: str | None = None,
+    to_ym: str | None = None,
+) -> pd.DataFrame:
+    """
+    モデル×ASOFタイプ別の期間トータル評価指標を返す。
+
+    - 入力: evaluation_{hotel_tag}_detail.csv
+    - 期間フィルタ:
+        * from_ym, to_ym は "YYYYMM" 形式の文字列または None。
+        * target_month を int 化して between でフィルタする。
+        * None の場合は制限なし。
+    - 出力列:
+        ["model", "asof_type",
+         "mean_error_pct",  # error_pct の平均
+         "mae_pct",         # abs_error_pct の平均
+         "rmse_pct",        # sqrt(mean(error_pct^2))
+         "n_samples"]       # サンプル数
+    - 並び順:
+        model 昇順, asof_type 昇順。
+    """
+
+    csv_path = OUTPUT_DIR / f"evaluation_{hotel_tag}_detail.csv"
+    if not csv_path.exists():
+        raise FileNotFoundError(f"evaluation detail csv not found: {csv_path}")
+
+    df_detail = pd.read_csv(csv_path)
+    df_detail = _filter_by_target_month(df_detail, from_ym=from_ym, to_ym=to_ym)
+
+    df_detail["error_pct"] = pd.to_numeric(df_detail["error_pct"], errors="coerce")
+    df_detail["abs_error_pct"] = pd.to_numeric(
+        df_detail["abs_error_pct"], errors="coerce"
+    )
+
+    records = []
+    for (model, asof_type), g in df_detail.groupby(["model", "asof_type"]):
+        err = g["error_pct"].dropna()
+        err_abs = g["abs_error_pct"].dropna()
+        mean_error = err.mean() if not err.empty else float("nan")
+        mae = err_abs.mean() if not err_abs.empty else float("nan")
+        rmse = err.pow(2).mean() ** 0.5 if not err.empty else float("nan")
+        n = int(err.count())
+
+        records.append(
+            {
+                "model": model,
+                "asof_type": asof_type,
+                "mean_error_pct": mean_error,
+                "mae_pct": mae,
+                "rmse_pct": rmse,
+                "n_samples": n,
+            }
+        )
+
+    out = pd.DataFrame(
+        records,
+        columns=[
+            "model",
+            "asof_type",
+            "mean_error_pct",
+            "mae_pct",
+            "rmse_pct",
+            "n_samples",
+        ],
+    )
+
+    out.sort_values(by=["model", "asof_type"], inplace=True)
+
+    return out
+
+
+def get_eval_monthly_by_asof(
+    hotel_tag: str,
+    from_ym: str | None = None,
+    to_ym: str | None = None,
+    asof_types: list[str] | None = None,
+    models: list[str] | None = None,
+) -> pd.DataFrame:
+    """
+    月別×ASOF×モデルの評価ログを返す（1行=1 target_month×asof_type×model）。
+
+    - 入力: evaluation_{hotel_tag}_detail.csv
+    - 期間フィルタ:
+        from_ym/to_ym は get_eval_overview_by_asof と同じ。
+    - asof_types フィルタ:
+        None の場合は全て、リスト指定時はその asof_type のみ残す。
+    - models フィルタ:
+        None の場合は全て、リスト指定時はその model のみ残す。
+    - 出力列:
+        ["target_month", "asof_type", "model",
+         "error_pct", "abs_error_pct"]
+      必要に応じて GUI 側で mean_error_pct / mae_pct として解釈する。
+    - 並び順:
+        target_month 昇順, asof_type 昇順, model 昇順。
+    """
+
+    csv_path = OUTPUT_DIR / f"evaluation_{hotel_tag}_detail.csv"
+    if not csv_path.exists():
+        raise FileNotFoundError(f"evaluation detail csv not found: {csv_path}")
+
+    df_detail = pd.read_csv(csv_path)
+    df_detail = _filter_by_target_month(df_detail, from_ym=from_ym, to_ym=to_ym)
+
+    if asof_types is not None:
+        df_detail = df_detail[df_detail["asof_type"].isin(asof_types)]
+    if models is not None:
+        df_detail = df_detail[df_detail["model"].isin(models)]
+
+    df_detail["error_pct"] = pd.to_numeric(df_detail["error_pct"], errors="coerce")
+    df_detail["abs_error_pct"] = pd.to_numeric(
+        df_detail["abs_error_pct"], errors="coerce"
+    )
+
+    df_detail.sort_values(
+        by=["target_month_int", "asof_type", "model"], inplace=True
+    )
+
+    return df_detail[
+        ["target_month", "asof_type", "model", "error_pct", "abs_error_pct"]
+    ].reset_index(drop=True)
+
+
 def run_build_lt_data_for_gui(
     hotel_tag: str,
     target_months: list[str],

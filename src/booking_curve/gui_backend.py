@@ -500,97 +500,148 @@ def get_daily_forecast_table(
 
 
 def get_model_evaluation_table(hotel_tag: str) -> pd.DataFrame:
-    """ASOF 明細を集計した月別×モデル＋モデル TOTAL の評価指標を返す。"""
+    """
+    評価CSVを読み込み、月別×モデル + モデルTOTAL の評価指標を返す。
 
-    csv_path = OUTPUT_DIR / f"evaluation_{hotel_tag}_multi.csv"
-    if not csv_path.exists():
-        raise FileNotFoundError(f"evaluation csv not found: {csv_path}")
+    - mean_error_pct : 誤差率の平均（バイアス）
+    - mae_pct        : 誤差率絶対値の平均
+    - rmse_pct       : 誤差率の二乗平均平方根
+    - n_samples      : 集計に使ったサンプル数（ASOF数）
 
-    df = pd.read_csv(csv_path)
+    備考:
+    - run_evaluate_forecasts.py が出力する
+        evaluation_{hotel_tag}_multi.csv   : 月次サマリ
+        evaluation_{hotel_tag}_detail.csv  : ASOF明細
+      を利用する。
+    """
 
-    required_cols = ["target_month", "model", "error_pct", "abs_error_pct"]
-    missing_cols = [c for c in required_cols if c not in df.columns]
-    if missing_cols:
-        raise ValueError(f"{csv_path} に {', '.join(missing_cols)} 列がありません。")
+    summary_path = OUTPUT_DIR / f"evaluation_{hotel_tag}_multi.csv"
+    detail_path = OUTPUT_DIR / f"evaluation_{hotel_tag}_detail.csv"
 
-    df = df.copy()
-    df["target_month"] = df["target_month"].astype(str)
-    df["model"] = df["model"].astype(str)
-    df["error_pct"] = pd.to_numeric(df["error_pct"], errors="coerce")
-    df["abs_error_pct"] = pd.to_numeric(df["abs_error_pct"], errors="coerce")
+    if not summary_path.exists():
+        raise FileNotFoundError(f"evaluation summary csv not found: {summary_path}")
 
-    def _aggregate(group: pd.DataFrame) -> dict:
-        err = group["error_pct"].dropna()
-        err_abs = group["abs_error_pct"].dropna()
-        n = int(err.count())
-        mean_error_pct = err.mean() if not err.empty else float("nan")
-        mae_pct = err_abs.mean() if not err_abs.empty else float("nan")
-        rmse_pct = err.pow(2).mean() ** 0.5 if not err.empty else float("nan")
-        return {
-            "mean_error_pct": mean_error_pct,
-            "mae_pct": mae_pct,
-            "rmse_pct": rmse_pct,
-            "n_samples": n,
-        }
+    # --- 月次サマリ (mean_error_pct / mae_pct) 読み込み ---
+    df_summary = pd.read_csv(summary_path)
 
-    monthly_records: list[dict] = []
-    for (target_month, model), group in df.groupby(["target_month", "model"]):
-        agg = _aggregate(group)
-        monthly_records.append(
-            {
-                "target_month": target_month,
-                "model": model,
-                **agg,
-            }
+    required_summary_cols = ["target_month", "model", "mean_error_pct", "mae_pct"]
+    missing_sum = [c for c in required_summary_cols if c not in df_summary.columns]
+    if missing_sum:
+        raise ValueError(f"{summary_path} に {', '.join(missing_sum)} 列がありません。")
+
+    df_summary = df_summary.copy()
+    df_summary["target_month"] = df_summary["target_month"].astype(str)
+    df_summary["model"] = df_summary["model"].astype(str)
+    df_summary["mean_error_pct"] = pd.to_numeric(
+        df_summary["mean_error_pct"], errors="coerce"
+    )
+    df_summary["mae_pct"] = pd.to_numeric(df_summary["mae_pct"], errors="coerce")
+
+    # --- 明細から rmse_pct / n_samples を計算 ---
+    if detail_path.exists():
+        df_detail = pd.read_csv(detail_path)
+
+        required_detail_cols = ["target_month", "model", "error_pct", "abs_error_pct"]
+        missing_det = [c for c in required_detail_cols if c not in df_detail.columns]
+        if missing_det:
+            raise ValueError(f"{detail_path} に {', '.join(missing_det)} 列がありません。")
+
+        df_detail = df_detail.copy()
+        df_detail["target_month"] = df_detail["target_month"].astype(str)
+        df_detail["model"] = df_detail["model"].astype(str)
+        df_detail["error_pct"] = pd.to_numeric(
+            df_detail["error_pct"], errors="coerce"
+        )
+        df_detail["abs_error_pct"] = pd.to_numeric(
+            df_detail["abs_error_pct"], errors="coerce"
         )
 
-    df_monthly = pd.DataFrame(
-        monthly_records,
-        columns=[
-            "target_month",
-            "model",
-            "mean_error_pct",
-            "mae_pct",
-            "rmse_pct",
-            "n_samples",
-        ],
-    )
-
-    total_records: list[dict] = []
-    for model, group in df.groupby("model"):
-        agg = _aggregate(group)
-        total_records.append(
-            {
-                "target_month": "TOTAL",
-                "model": model,
-                **agg,
+        def _agg_group(g: pd.DataFrame) -> dict:
+            err = g["error_pct"].dropna()
+            err_abs = g["abs_error_pct"].dropna()
+            n = int(err.count())
+            rmse = err.pow(2).mean() ** 0.5 if not err.empty else float("nan")
+            return {
+                "rmse_pct": rmse,
+                "n_samples": n,
             }
+
+        # 月別×モデルの rmse_pct / n_samples
+        records = []
+        for (tm, model), g in df_detail.groupby(["target_month", "model"]):
+            agg = _agg_group(g)
+            records.append(
+                {"target_month": tm, "model": model, **agg}
+            )
+
+        df_rmse = pd.DataFrame(
+            records,
+            columns=["target_month", "model", "rmse_pct", "n_samples"],
         )
 
-    df_total = pd.DataFrame(
-        total_records,
-        columns=[
-            "target_month",
-            "model",
-            "mean_error_pct",
-            "mae_pct",
-            "rmse_pct",
-            "n_samples",
-        ],
-    )
+        # サマリと結合
+        df_merged = pd.merge(
+            df_summary,
+            df_rmse,
+            on=["target_month", "model"],
+            how="left",
+        )
 
-    out = pd.concat([df_monthly, df_total], ignore_index=True)
+        # モデル別 TOTAL 行（全期間まとめ）
+        total_records = []
+        for model, g in df_detail.groupby("model"):
+            agg = _agg_group(g)
+            # TOTAL については mean_error_pct / mae_pct も detail から再計算
+            err = g["error_pct"].dropna()
+            err_abs = g["abs_error_pct"].dropna()
+            mean_error = err.mean() if not err.empty else float("nan")
+            mae = err_abs.mean() if not err_abs.empty else float("nan")
 
+            total_records.append(
+                {
+                    "target_month": "TOTAL",
+                    "model": model,
+                    "mean_error_pct": mean_error,
+                    "mae_pct": mae,
+                    "rmse_pct": agg["rmse_pct"],
+                    "n_samples": agg["n_samples"],
+                }
+            )
+
+        df_total = pd.DataFrame(
+            total_records,
+            columns=[
+                "target_month",
+                "model",
+                "mean_error_pct",
+                "mae_pct",
+                "rmse_pct",
+                "n_samples",
+            ],
+        )
+
+        out = pd.concat([df_merged, df_total], ignore_index=True)
+
+    else:
+        # 明細が無い場合は rmse/n_samples は NaN のまま
+        df_summary["rmse_pct"] = float("nan")
+        df_summary["n_samples"] = float("nan")
+        out = df_summary
+
+    # 並び替え
     def _sort_target_month(value: str) -> int:
         try:
             return int(value)
         except (TypeError, ValueError):
+            # "TOTAL" などは最後に回す
             return 999999
 
+    out["target_month"] = out["target_month"].astype(str)
     out["__sort_month"] = out["target_month"].map(_sort_target_month)
     out.sort_values(by=["model", "__sort_month"], inplace=True)
     out.drop(columns=["__sort_month"], inplace=True)
 
+    # 列順を固定
     out = out[
         [
             "target_month",

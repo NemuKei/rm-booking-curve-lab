@@ -500,20 +500,109 @@ def get_daily_forecast_table(
 
 
 def get_model_evaluation_table(hotel_tag: str) -> pd.DataFrame:
-    """モデル評価画面向けに、月次 MAE/バイアス一覧を返す。"""
+    """ASOF 明細を集計した月別×モデル＋モデル TOTAL の評価指標を返す。"""
+
     csv_path = OUTPUT_DIR / f"evaluation_{hotel_tag}_multi.csv"
     if not csv_path.exists():
         raise FileNotFoundError(f"evaluation csv not found: {csv_path}")
 
     df = pd.read_csv(csv_path)
-    # 必要な列だけに整形 (target_month, model, mean_error_pct, mae_pct)
-    cols = []
-    for c in ["target_month", "model", "mean_error_pct", "mae_pct"]:
-        if c not in df.columns:
-            raise ValueError(f"{csv_path} に {c} 列がありません。")
-        cols.append(c)
-    df = df[cols].copy()
-    return df
+
+    required_cols = ["target_month", "model", "error_pct", "abs_error_pct"]
+    missing_cols = [c for c in required_cols if c not in df.columns]
+    if missing_cols:
+        raise ValueError(f"{csv_path} に {', '.join(missing_cols)} 列がありません。")
+
+    df = df.copy()
+    df["target_month"] = df["target_month"].astype(str)
+    df["model"] = df["model"].astype(str)
+    df["error_pct"] = pd.to_numeric(df["error_pct"], errors="coerce")
+    df["abs_error_pct"] = pd.to_numeric(df["abs_error_pct"], errors="coerce")
+
+    def _aggregate(group: pd.DataFrame) -> dict:
+        err = group["error_pct"].dropna()
+        err_abs = group["abs_error_pct"].dropna()
+        n = int(err.count())
+        mean_error_pct = err.mean() if not err.empty else float("nan")
+        mae_pct = err_abs.mean() if not err_abs.empty else float("nan")
+        rmse_pct = err.pow(2).mean() ** 0.5 if not err.empty else float("nan")
+        return {
+            "mean_error_pct": mean_error_pct,
+            "mae_pct": mae_pct,
+            "rmse_pct": rmse_pct,
+            "n_samples": n,
+        }
+
+    monthly_records: list[dict] = []
+    for (target_month, model), group in df.groupby(["target_month", "model"]):
+        agg = _aggregate(group)
+        monthly_records.append(
+            {
+                "target_month": target_month,
+                "model": model,
+                **agg,
+            }
+        )
+
+    df_monthly = pd.DataFrame(
+        monthly_records,
+        columns=[
+            "target_month",
+            "model",
+            "mean_error_pct",
+            "mae_pct",
+            "rmse_pct",
+            "n_samples",
+        ],
+    )
+
+    total_records: list[dict] = []
+    for model, group in df.groupby("model"):
+        agg = _aggregate(group)
+        total_records.append(
+            {
+                "target_month": "TOTAL",
+                "model": model,
+                **agg,
+            }
+        )
+
+    df_total = pd.DataFrame(
+        total_records,
+        columns=[
+            "target_month",
+            "model",
+            "mean_error_pct",
+            "mae_pct",
+            "rmse_pct",
+            "n_samples",
+        ],
+    )
+
+    out = pd.concat([df_monthly, df_total], ignore_index=True)
+
+    def _sort_target_month(value: str) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 999999
+
+    out["__sort_month"] = out["target_month"].map(_sort_target_month)
+    out.sort_values(by=["model", "__sort_month"], inplace=True)
+    out.drop(columns=["__sort_month"], inplace=True)
+
+    out = out[
+        [
+            "target_month",
+            "model",
+            "mean_error_pct",
+            "mae_pct",
+            "rmse_pct",
+            "n_samples",
+        ]
+    ]
+
+    return out
 
 
 def run_build_lt_data_for_gui(

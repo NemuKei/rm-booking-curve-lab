@@ -7,6 +7,7 @@ import pandas as pd
 import build_calendar_features
 import run_forecast_batch
 import run_build_lt_csv
+from run_full_evaluation import run_full_evaluation_for_gui
 
 from booking_curve.forecast_simple import (
     moving_average_recent_90days,
@@ -24,6 +25,43 @@ HOTEL_CONFIG: Dict[str, Dict[str, float]] = {
     },
     # 他ホテルを追加する場合はここに辞書を増やす
 }
+
+
+def generate_month_range(start_yyyymm: str, end_yyyymm: str) -> list[str]:
+    """
+    開始月・終了月 (YYYYMM) から、両端を含む月リストを生成する。
+    例: "202401", "202403" -> ["202401", "202402", "202403"]
+    """
+
+    def _parse_yyyymm(value: str) -> tuple[int, int]:
+        if len(value) != 6:
+            raise ValueError(f"Invalid YYYYMM format: {value}")
+        try:
+            year = int(value[:4])
+            month = int(value[4:])
+        except ValueError:
+            raise ValueError(f"Invalid YYYYMM format: {value}") from None
+        if not 1 <= month <= 12:
+            raise ValueError(f"Invalid month in YYYYMM: {value}")
+        return year, month
+
+    start_year, start_month = _parse_yyyymm(start_yyyymm)
+    end_year, end_month = _parse_yyyymm(end_yyyymm)
+
+    if (start_year, start_month) > (end_year, end_month):
+        raise ValueError("start_yyyymm must not be later than end_yyyymm")
+
+    months: list[str] = []
+    year, month = start_year, start_month
+    while (year, month) <= (end_year, end_month):
+        months.append(f"{year}{month:02d}")
+        if month == 12:
+            year += 1
+            month = 1
+        else:
+            month += 1
+
+    return months
 
 
 def build_calendar_for_gui(hotel_tag: str) -> str:
@@ -888,4 +926,17 @@ def run_build_lt_data_for_gui(
         run_build_lt_csv.run_build_lt_for_gui(target_months)
     except Exception:
         raise
+
+
+def run_full_evaluation_for_gui_range(
+    hotel_tag: str,
+    start_yyyymm: str,
+    end_yyyymm: str,
+) -> tuple[Path, Path]:
+    months = generate_month_range(start_yyyymm, end_yyyymm)
+    detail_path, summary_path = run_full_evaluation_for_gui(
+        hotel_tag=hotel_tag,
+        target_months=months,
+    )
+    return detail_path, summary_path
 

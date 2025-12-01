@@ -853,6 +853,10 @@ class BookingCurveApp(tk.Tk):
     def _init_asof_eval_tab(self) -> None:
         frame = self.tab_asof_eval
 
+        self._asof_overview_df: Optional[pd.DataFrame] = None
+        self._asof_detail_df: Optional[pd.DataFrame] = None
+        self._asof_best_only_var = tk.BooleanVar(value=False)
+
         # 上部フィルタフォーム
         top = ttk.Frame(frame)
         top.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
@@ -872,6 +876,13 @@ class BookingCurveApp(tk.Tk):
 
         run_btn = ttk.Button(top, text="評価読み込み", command=self._on_load_asof_eval)
         run_btn.grid(row=0, column=6, padx=4, pady=2)
+
+        ttk.Checkbutton(
+            top,
+            text="各月の最適モデルのみ表示",
+            variable=self._asof_best_only_var,
+            command=self._refresh_asof_eval_tables,
+        ).grid(row=0, column=7, padx=4, pady=2, sticky="w")
 
         # ASOF別サマリテーブル
         overview_frame = ttk.LabelFrame(frame, text="ASOF別サマリ")
@@ -932,12 +943,22 @@ class BookingCurveApp(tk.Tk):
             df_over = get_eval_overview_by_asof(hotel, from_ym=from_ym, to_ym=to_ym)
             df_detail = get_eval_monthly_by_asof(hotel, from_ym=from_ym, to_ym=to_ym)
         except Exception as e:
+            self._asof_overview_df = None
+            self._asof_detail_df = None
             messagebox.showerror("エラー", f"ASOF別評価の読込に失敗しました:\n{e}")
+            return
+
+        self._asof_overview_df = df_over
+        self._asof_detail_df = df_detail
+        self._refresh_asof_eval_tables()
+
+    def _refresh_asof_eval_tables(self) -> None:
+        if self._asof_overview_df is None or self._asof_detail_df is None:
             return
 
         for row_id in self.asof_overview_tree.get_children():
             self.asof_overview_tree.delete(row_id)
-        for _, row in df_over.iterrows():
+        for _, row in self._asof_overview_df.iterrows():
             values = [
                 str(row.get("model")),
                 str(row.get("asof_type")),
@@ -948,9 +969,25 @@ class BookingCurveApp(tk.Tk):
             ]
             self.asof_overview_tree.insert("", tk.END, values=values)
 
+        base_df = self._asof_detail_df.copy()
+        if self._asof_best_only_var.get():
+            sort_cols = ["abs_error_pct"]
+            if "rmse_pct" in base_df.columns:
+                sort_cols.append("rmse_pct")
+            selected_idx = []
+            for _, grp in base_df.groupby(["target_month", "asof_type"], sort=False):
+                candidates = grp.dropna(subset=["abs_error_pct"])
+                if candidates.empty:
+                    continue
+                best_row = candidates.sort_values(sort_cols, ascending=True).iloc[0]
+                selected_idx.append(best_row.name)
+            base_df = base_df.loc[selected_idx]
+
+        base_df = base_df.sort_values(["target_month", "asof_type", "model"])
+
         for row_id in self.asof_detail_tree.get_children():
             self.asof_detail_tree.delete(row_id)
-        for _, row in df_detail.iterrows():
+        for _, row in base_df.iterrows():
             values = [
                 str(row.get("target_month")),
                 str(row.get("asof_type")),

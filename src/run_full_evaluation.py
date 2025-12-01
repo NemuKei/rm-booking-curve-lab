@@ -292,14 +292,46 @@ def build_evaluation_summary(df_detail: pd.DataFrame) -> pd.DataFrame:
     return df_summary.sort_values(by=["target_month", "model"]).reset_index(drop=True)
 
 
-def main() -> None:
-    df_detail = build_evaluation_detail(HOTEL_TAG, TARGET_MONTHS)
-    detail_path = Path(OUTPUT_DIR) / f"evaluation_{HOTEL_TAG}_detail.csv"
+def run_full_evaluation_for_range(
+    hotel_tag: str, target_months: list[str]
+) -> tuple[pd.DataFrame, pd.DataFrame, Path, Path]:
+    """
+    指定ホテル・指定宿泊月リストについて評価を実行し、
+    詳細・サマリの DataFrame と、それぞれの出力パスを返す。
+    """
+
+    df_detail = build_evaluation_detail(hotel_tag=hotel_tag, target_months=target_months)
+    detail_path = Path(OUTPUT_DIR) / f"evaluation_{hotel_tag}_detail.csv"
     df_detail.to_csv(detail_path, index=False)
 
     df_multi = build_evaluation_summary(df_detail)
-    summary_path = Path(OUTPUT_DIR) / f"evaluation_{HOTEL_TAG}_multi.csv"
+    summary_path = Path(OUTPUT_DIR) / f"evaluation_{hotel_tag}_multi.csv"
     df_multi.to_csv(summary_path, index=False)
+
+    return df_detail, df_multi, detail_path, summary_path
+
+
+def run_full_evaluation_for_gui(hotel_tag: str, target_months: list[str]) -> tuple[Path, Path]:
+    """
+    GUI 用の簡易ラッパ。
+    詳細・サマリCSVを書き出し、そのパスだけを返す。
+    """
+
+    _, _, detail_path, summary_path = run_full_evaluation_for_range(
+        hotel_tag=hotel_tag,
+        target_months=target_months,
+    )
+    return detail_path, summary_path
+
+
+def main() -> None:
+    hotel_tag = HOTEL_TAG
+    target_months = list(TARGET_MONTHS)
+
+    df_detail, df_multi, detail_path, summary_path = run_full_evaluation_for_range(
+        hotel_tag=hotel_tag,
+        target_months=target_months,
+    )
 
     print("[OK] Evaluation tables generated.")
     print("Detail:", detail_path)

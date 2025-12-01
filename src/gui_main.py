@@ -66,6 +66,7 @@ class BookingCurveApp(tk.Tk):
 
         # モデル評価タブ用の状態変数
         self.model_eval_df: Optional[pd.DataFrame] = None
+        self.model_eval_best_idx: set[int] = set()
         self.me_from_var = tk.StringVar(value="")
         self.me_to_var = tk.StringVar(value="")
 
@@ -735,6 +736,10 @@ class BookingCurveApp(tk.Tk):
         self.me_tree.column("mae_pct", width=90, anchor="e")
         self.me_tree.column("rmse_pct", width=90, anchor="e")
         self.me_tree.column("n_samples", width=80, anchor="e")
+        self.me_tree.tag_configure("me_even", background="#ffffff")
+        self.me_tree.tag_configure("me_odd", background="#f5f5f5")
+        self.me_tree.tag_configure("me_total", background="#fff4d8")
+        self.me_tree.tag_configure("me_best", background="#e0f2ff")
         self.me_tree.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=8)
 
         vsb = ttk.Scrollbar(frame, orient="vertical", command=self.me_tree.yview)
@@ -744,7 +749,14 @@ class BookingCurveApp(tk.Tk):
     def _on_load_model_eval(self) -> None:
         try:
             hotel = self.me_hotel_var.get()
-            self.model_eval_df = get_model_evaluation_table(hotel)
+            df = get_model_evaluation_table(hotel)
+            best_idx = set()
+            tmp = df[df["target_month"] != "TOTAL"].dropna(subset=["mae_pct"])
+            for _, grp in tmp.groupby("target_month", sort=False):
+                row = grp.loc[grp["mae_pct"].idxmin()]
+                best_idx.add(row.name)
+            self.model_eval_df = df
+            self.model_eval_best_idx = best_idx
         except Exception as e:
             messagebox.showerror("エラー", f"モデル評価読み込みに失敗しました:\n{e}")
             return
@@ -785,12 +797,18 @@ class BookingCurveApp(tk.Tk):
             return
 
         df_body = df_body.drop(columns=["target_month_int"], errors="ignore")
-        df_view = pd.concat([df_body, df_total], ignore_index=True)
+        df_view = pd.concat([df_body, df_total], ignore_index=False)
+
+        best_idx = set()
+        tmp = df_body.dropna(subset=["mae_pct"])
+        for _, grp in tmp.groupby("target_month", sort=False):
+            row = grp.loc[grp["mae_pct"].idxmin()]
+            best_idx.add(row.name)
 
         for row_id in self.me_tree.get_children():
             self.me_tree.delete(row_id)
 
-        for _, row in df_view.iterrows():
+        for i, (idx, row) in enumerate(df_view.iterrows()):
             n_raw = row.get("n_samples")
             try:
                 if pd.isna(n_raw):
@@ -808,7 +826,12 @@ class BookingCurveApp(tk.Tk):
                 _fmt_pct(row.get("rmse_pct")),
                 n_str,
             ]
-            self.me_tree.insert("", tk.END, values=values)
+            tags = ["me_even" if i % 2 == 0 else "me_odd"]
+            if str(row.get("target_month")) == "TOTAL":
+                tags.append("me_total")
+            if idx in best_idx:
+                tags.append("me_best")
+            self.me_tree.insert("", tk.END, values=values, tags=tags)
 
     def _on_me_last12_clicked(self) -> None:
         if self.model_eval_df is None:
@@ -912,6 +935,9 @@ class BookingCurveApp(tk.Tk):
         for col in ["mean_error_pct", "mae_pct", "rmse_pct"]:
             self.asof_overview_tree.column(col, width=120, anchor="e")
         self.asof_overview_tree.column("n_samples", width=100, anchor="e")
+        self.asof_overview_tree.tag_configure("asof_even", background="#ffffff")
+        self.asof_overview_tree.tag_configure("asof_odd", background="#f5f5f5")
+        self.asof_overview_tree.tag_configure("asof_best", background="#e0f2ff")
 
         self.asof_overview_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 4), pady=4)
         vsb1 = ttk.Scrollbar(overview_frame, orient="vertical", command=self.asof_overview_tree.yview)
@@ -934,6 +960,9 @@ class BookingCurveApp(tk.Tk):
         self.asof_detail_tree.column("model", width=120, anchor="w")
         self.asof_detail_tree.column("error_pct", width=120, anchor="e")
         self.asof_detail_tree.column("abs_error_pct", width=120, anchor="e")
+        self.asof_detail_tree.tag_configure("asofd_even", background="#ffffff")
+        self.asof_detail_tree.tag_configure("asofd_odd", background="#f5f5f5")
+        self.asof_detail_tree.tag_configure("asofd_best", background="#e0f2ff")
 
         self.asof_detail_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 4), pady=4)
         vsb2 = ttk.Scrollbar(detail_frame, orient="vertical", command=self.asof_detail_tree.yview)
@@ -971,6 +1000,7 @@ class BookingCurveApp(tk.Tk):
         asof_value = self._asof_filter_var.get()
 
         overview_df = self._asof_overview_df.copy()
+        best_overview_idx: set[int] = set()
         if self._asof_best_only_var.get():
             sort_cols = ["mae_pct"]
             if "rmse_pct" in overview_df.columns:
@@ -987,11 +1017,21 @@ class BookingCurveApp(tk.Tk):
         if asof_value and asof_value != "(すべて)":
             overview_df = overview_df[overview_df["asof_type"] == asof_value]
 
+        if not self._asof_best_only_var.get():
+            tmp = overview_df.dropna(subset=["mae_pct"])
+            if not tmp.empty:
+                for _, grp in tmp.groupby("asof_type", sort=False):
+                    sort_cols = ["mae_pct"]
+                    if "rmse_pct" in grp.columns:
+                        sort_cols.append("rmse_pct")
+                    best_row = grp.sort_values(sort_cols, ascending=True).iloc[0]
+                    best_overview_idx.add(best_row.name)
+
         overview_df = overview_df.sort_values(["asof_type", "model"])
 
         for row_id in self.asof_overview_tree.get_children():
             self.asof_overview_tree.delete(row_id)
-        for _, row in overview_df.iterrows():
+        for i, (idx, row) in enumerate(overview_df.iterrows()):
             values = [
                 str(row["model"]),
                 str(row["asof_type"]),
@@ -1000,12 +1040,16 @@ class BookingCurveApp(tk.Tk):
                 _fmt_pct(row.get("rmse_pct")),
                 str(row["n_samples"]),
             ]
-            self.asof_overview_tree.insert("", tk.END, values=values)
+            tags = ["asof_even" if i % 2 == 0 else "asof_odd"]
+            if idx in best_overview_idx:
+                tags.append("asof_best")
+            self.asof_overview_tree.insert("", tk.END, values=values, tags=tags)
 
         base_df = self._asof_detail_df.copy()
         if asof_value and asof_value != "(すべて)":
             base_df = base_df[base_df["asof_type"] == asof_value]
 
+        best_detail_idx: set[int] = set()
         if self._asof_best_only_var.get():
             sort_cols = ["abs_error_pct"]
             if "rmse_pct" in base_df.columns:
@@ -1019,11 +1063,21 @@ class BookingCurveApp(tk.Tk):
                 selected_idx.append(best_row.name)
             base_df = base_df.loc[selected_idx]
 
+        if not self._asof_best_only_var.get():
+            tmp = base_df.dropna(subset=["abs_error_pct"])
+            if not tmp.empty:
+                for _, grp in tmp.groupby(["target_month", "asof_type"], sort=False):
+                    sort_cols = ["abs_error_pct"]
+                    if "rmse_pct" in grp.columns:
+                        sort_cols.append("rmse_pct")
+                    best_row = grp.sort_values(sort_cols, ascending=True).iloc[0]
+                    best_detail_idx.add(best_row.name)
+
         base_df = base_df.sort_values(["target_month", "asof_type", "model"])
 
         for row_id in self.asof_detail_tree.get_children():
             self.asof_detail_tree.delete(row_id)
-        for _, row in base_df.iterrows():
+        for i, (idx, row) in enumerate(base_df.iterrows()):
             values = [
                 str(row["target_month"]),
                 str(row["asof_type"]),
@@ -1031,7 +1085,10 @@ class BookingCurveApp(tk.Tk):
                 _fmt_pct(row.get("error_pct")),
                 _fmt_pct(row.get("abs_error_pct")),
             ]
-            self.asof_detail_tree.insert("", tk.END, values=values)
+            tags = ["asofd_even" if i % 2 == 0 else "asofd_odd"]
+            if idx in best_detail_idx:
+                tags.append("asofd_best")
+            self.asof_detail_tree.insert("", tk.END, values=values, tags=tags)
 
     # =========================
     # 1) ブッキングカーブタブ

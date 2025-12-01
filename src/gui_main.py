@@ -880,7 +880,7 @@ class BookingCurveApp(tk.Tk):
 
         ttk.Checkbutton(
             top,
-            text="各月の最適モデルのみ表示",
+            text="最適モデルのみ表示",
             variable=self._asof_best_only_var,
             command=self._refresh_asof_eval_tables,
         ).grid(row=0, column=7, padx=4, pady=2, sticky="w")

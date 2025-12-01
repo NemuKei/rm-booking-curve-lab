@@ -25,6 +25,8 @@ from booking_curve.gui_backend import (
     get_latest_asof_for_hotel,
     get_latest_asof_for_month,
     get_model_evaluation_table,
+    get_eval_monthly_by_asof,
+    get_eval_overview_by_asof,
     get_monthly_curve_data,
     OUTPUT_DIR,
     HOTEL_CONFIG,
@@ -52,11 +54,13 @@ class BookingCurveApp(tk.Tk):
         self.tab_monthly_curve = ttk.Frame(notebook)
         self.tab_daily_forecast = ttk.Frame(notebook)
         self.tab_model_eval = ttk.Frame(notebook)
+        self.tab_asof_eval = ttk.Frame(notebook)
 
         notebook.add(self.tab_booking_curve, text="ブッキングカーブ")
         notebook.add(self.tab_monthly_curve, text="月次カーブ")
         notebook.add(self.tab_daily_forecast, text="日別フォーキャスト")
         notebook.add(self.tab_model_eval, text="モデル評価")
+        notebook.add(self.tab_asof_eval, text="ASOF比較")
 
         self._settings = self._load_settings()
 
@@ -67,6 +71,7 @@ class BookingCurveApp(tk.Tk):
 
         self._init_daily_forecast_tab()
         self._init_model_eval_tab()
+        self._init_asof_eval_tab()
         self._init_booking_curve_tab()
         self._init_monthly_curve_tab()
 
@@ -841,6 +846,119 @@ class BookingCurveApp(tk.Tk):
         self.me_to_var.set(f"{latest_int:06d}")
 
         self._refresh_model_eval_table()
+
+    # =========================
+    # 5) ASOF比較タブ
+    # =========================
+    def _init_asof_eval_tab(self) -> None:
+        frame = self.tab_asof_eval
+
+        # 上部フィルタフォーム
+        top = ttk.Frame(frame)
+        top.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
+
+        self.asof_hotel_var = tk.StringVar(value=DEFAULT_HOTEL)
+        ttk.Label(top, text="ホテル:").grid(row=0, column=0, sticky="w")
+        hotel_combo = ttk.Combobox(top, textvariable=self.asof_hotel_var, state="readonly")
+        hotel_combo["values"] = list(HOTEL_CONFIG.keys())
+        hotel_combo.grid(row=0, column=1, padx=4, pady=2)
+
+        self.asof_from_ym_var = tk.StringVar()
+        self.asof_to_ym_var = tk.StringVar()
+        ttk.Label(top, text="期間From (YYYYMM):").grid(row=0, column=2, sticky="w")
+        ttk.Entry(top, textvariable=self.asof_from_ym_var, width=8).grid(row=0, column=3, padx=4, pady=2)
+        ttk.Label(top, text="期間To (YYYYMM):").grid(row=0, column=4, sticky="w")
+        ttk.Entry(top, textvariable=self.asof_to_ym_var, width=8).grid(row=0, column=5, padx=4, pady=2)
+
+        run_btn = ttk.Button(top, text="評価読み込み", command=self._on_load_asof_eval)
+        run_btn.grid(row=0, column=6, padx=4, pady=2)
+
+        # ASOF別サマリテーブル
+        overview_frame = ttk.LabelFrame(frame, text="ASOF別サマリ")
+        overview_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=(0, 4))
+
+        columns = ["model", "asof_type", "mean_error_pct", "mae_pct", "rmse_pct", "n_samples"]
+        self.asof_overview_tree = ttk.Treeview(
+            overview_frame, columns=columns, show="headings", height=8
+        )
+        for col in columns:
+            self.asof_overview_tree.heading(col, text=col)
+        # 列幅・整列設定
+        self.asof_overview_tree.column("model", width=120, anchor="w")
+        self.asof_overview_tree.column("asof_type", width=120, anchor="w")
+        for col in ["mean_error_pct", "mae_pct", "rmse_pct"]:
+            self.asof_overview_tree.column(col, width=120, anchor="e")
+        self.asof_overview_tree.column("n_samples", width=100, anchor="e")
+
+        self.asof_overview_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 4), pady=4)
+        vsb1 = ttk.Scrollbar(overview_frame, orient="vertical", command=self.asof_overview_tree.yview)
+        self.asof_overview_tree.configure(yscrollcommand=vsb1.set)
+        vsb1.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # 月別ログテーブル
+        detail_frame = ttk.LabelFrame(frame, text="月別ログ")
+        detail_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+
+        detail_columns = ["target_month", "asof_type", "model", "error_pct", "abs_error_pct"]
+        self.asof_detail_tree = ttk.Treeview(
+            detail_frame, columns=detail_columns, show="headings", height=12
+        )
+        for col in detail_columns:
+            self.asof_detail_tree.heading(col, text=col)
+
+        self.asof_detail_tree.column("target_month", width=100, anchor="w")
+        self.asof_detail_tree.column("asof_type", width=100, anchor="w")
+        self.asof_detail_tree.column("model", width=120, anchor="w")
+        self.asof_detail_tree.column("error_pct", width=120, anchor="e")
+        self.asof_detail_tree.column("abs_error_pct", width=120, anchor="e")
+
+        self.asof_detail_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 4), pady=4)
+        vsb2 = ttk.Scrollbar(detail_frame, orient="vertical", command=self.asof_detail_tree.yview)
+        self.asof_detail_tree.configure(yscrollcommand=vsb2.set)
+        vsb2.pack(side=tk.RIGHT, fill=tk.Y)
+
+    def _on_load_asof_eval(self) -> None:
+        """
+        ASOF比較タブの「評価読み込み」ボタン押下時の処理。
+        - get_eval_overview_by_asof / get_eval_monthly_by_asof を呼び、
+          サマリテーブルと月別ログテーブルを更新する。
+        """
+
+        try:
+            hotel = self.asof_hotel_var.get().strip() or DEFAULT_HOTEL
+            from_ym = self.asof_from_ym_var.get().strip() or None
+            to_ym = self.asof_to_ym_var.get().strip() or None
+
+            df_over = get_eval_overview_by_asof(hotel, from_ym=from_ym, to_ym=to_ym)
+            df_detail = get_eval_monthly_by_asof(hotel, from_ym=from_ym, to_ym=to_ym)
+        except Exception as e:
+            messagebox.showerror("エラー", f"ASOF別評価の読込に失敗しました:\n{e}")
+            return
+
+        for row_id in self.asof_overview_tree.get_children():
+            self.asof_overview_tree.delete(row_id)
+        for _, row in df_over.iterrows():
+            values = [
+                str(row.get("model")),
+                str(row.get("asof_type")),
+                _fmt_pct(row.get("mean_error_pct")),
+                _fmt_pct(row.get("mae_pct")),
+                _fmt_pct(row.get("rmse_pct")),
+                str(row.get("n_samples")),
+            ]
+            self.asof_overview_tree.insert("", tk.END, values=values)
+
+        for row_id in self.asof_detail_tree.get_children():
+            self.asof_detail_tree.delete(row_id)
+        for _, row in df_detail.iterrows():
+            values = [
+                str(row.get("target_month")),
+                str(row.get("asof_type")),
+                str(row.get("model")),
+                _fmt_pct(row.get("error_pct")),
+                _fmt_pct(row.get("abs_error_pct")),
+            ]
+            self.asof_detail_tree.insert("", tk.END, values=values)
 
     # =========================
     # 1) ブッキングカーブタブ

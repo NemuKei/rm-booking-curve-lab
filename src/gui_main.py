@@ -856,6 +856,7 @@ class BookingCurveApp(tk.Tk):
         self._asof_overview_df: Optional[pd.DataFrame] = None
         self._asof_detail_df: Optional[pd.DataFrame] = None
         self._asof_best_only_var = tk.BooleanVar(value=False)
+        self._asof_filter_var = tk.StringVar(value="(すべて)")
 
         # 上部フィルタフォーム
         top = ttk.Frame(frame)
@@ -883,6 +884,17 @@ class BookingCurveApp(tk.Tk):
             variable=self._asof_best_only_var,
             command=self._refresh_asof_eval_tables,
         ).grid(row=0, column=7, padx=4, pady=2, sticky="w")
+
+        ttk.Label(top, text="ASOFフィルタ:").grid(row=0, column=8, padx=(12, 0), pady=2, sticky="w")
+        asof_filter_combo = ttk.Combobox(
+            top,
+            textvariable=self._asof_filter_var,
+            state="readonly",
+            values=["(すべて)", "M-1_END", "M10", "M20"],
+            width=10,
+        )
+        asof_filter_combo.grid(row=0, column=9, padx=4, pady=2, sticky="w")
+        asof_filter_combo.bind("<<ComboboxSelected>>", lambda *_: self._refresh_asof_eval_tables())
 
         # ASOF別サマリテーブル
         overview_frame = ttk.LabelFrame(frame, text="ASOF別サマリ")
@@ -940,36 +952,60 @@ class BookingCurveApp(tk.Tk):
             from_ym = self.asof_from_ym_var.get().strip() or None
             to_ym = self.asof_to_ym_var.get().strip() or None
 
-            df_over = get_eval_overview_by_asof(hotel, from_ym=from_ym, to_ym=to_ym)
-            df_detail = get_eval_monthly_by_asof(hotel, from_ym=from_ym, to_ym=to_ym)
-        except Exception as e:
+            overview_df = get_eval_overview_by_asof(hotel, from_ym=from_ym, to_ym=to_ym)
+            detail_df = get_eval_monthly_by_asof(hotel, from_ym=from_ym, to_ym=to_ym)
+        except Exception as exc:
             self._asof_overview_df = None
             self._asof_detail_df = None
-            messagebox.showerror("エラー", f"ASOF別評価の読込に失敗しました:\n{e}")
+            messagebox.showerror("エラー", f"モデル評価読み込みに失敗しました:\n{exc}")
             return
 
-        self._asof_overview_df = df_over
-        self._asof_detail_df = df_detail
+        self._asof_overview_df = overview_df
+        self._asof_detail_df = detail_df
         self._refresh_asof_eval_tables()
 
     def _refresh_asof_eval_tables(self) -> None:
         if self._asof_overview_df is None or self._asof_detail_df is None:
             return
 
+        asof_value = self._asof_filter_var.get()
+
+        overview_df = self._asof_overview_df.copy()
+        if self._asof_best_only_var.get():
+            sort_cols = ["mae_pct"]
+            if "rmse_pct" in overview_df.columns:
+                sort_cols.append("rmse_pct")
+            selected_idx = []
+            for _, grp in overview_df.groupby("asof_type", sort=False):
+                candidates = grp.dropna(subset=["mae_pct"])
+                if candidates.empty:
+                    continue
+                best_row = candidates.sort_values(sort_cols, ascending=True).iloc[0]
+                selected_idx.append(best_row.name)
+            overview_df = overview_df.loc[selected_idx]
+
+        if asof_value and asof_value != "(すべて)":
+            overview_df = overview_df[overview_df["asof_type"] == asof_value]
+
+        overview_df = overview_df.sort_values(["asof_type", "model"])
+
         for row_id in self.asof_overview_tree.get_children():
             self.asof_overview_tree.delete(row_id)
-        for _, row in self._asof_overview_df.iterrows():
+        for _, row in overview_df.iterrows():
             values = [
-                str(row.get("model")),
-                str(row.get("asof_type")),
+                str(row["model"]),
+                str(row["asof_type"]),
                 _fmt_pct(row.get("mean_error_pct")),
                 _fmt_pct(row.get("mae_pct")),
                 _fmt_pct(row.get("rmse_pct")),
-                str(row.get("n_samples")),
+                str(row["n_samples"]),
             ]
             self.asof_overview_tree.insert("", tk.END, values=values)
 
         base_df = self._asof_detail_df.copy()
+        if asof_value and asof_value != "(すべて)":
+            base_df = base_df[base_df["asof_type"] == asof_value]
+
         if self._asof_best_only_var.get():
             sort_cols = ["abs_error_pct"]
             if "rmse_pct" in base_df.columns:
@@ -989,9 +1025,9 @@ class BookingCurveApp(tk.Tk):
             self.asof_detail_tree.delete(row_id)
         for _, row in base_df.iterrows():
             values = [
-                str(row.get("target_month")),
-                str(row.get("asof_type")),
-                str(row.get("model")),
+                str(row["target_month"]),
+                str(row["asof_type"]),
+                str(row["model"]),
                 _fmt_pct(row.get("error_pct")),
                 _fmt_pct(row.get("abs_error_pct")),
             ]

@@ -174,6 +174,7 @@ class BookingCurveApp(tk.Tk):
     def _create_master_settings_tab(self) -> None:
         frame = self.tab_master_settings
 
+        # ------- カレンダー設定 -------
         calendar_frame = ttk.LabelFrame(frame, text="カレンダー")
         calendar_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
 
@@ -200,10 +201,37 @@ class BookingCurveApp(tk.Tk):
         )
         self.calendar_build_button.grid(row=1, column=3, padx=4, pady=2, sticky="e")
 
+        # ------- 日別FC / ブッキング共通キャパ設定 -------
+        caps_frame = ttk.LabelFrame(frame, text="日別フォーキャスト / ブッキングカーブ共通設定")
+        caps_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 8))
+
+        ttk.Label(caps_frame, text="予測キャップ:").grid(row=0, column=0, sticky="w", padx=4, pady=2)
+        self.master_fc_cap_var = tk.StringVar()
+        ttk.Entry(caps_frame, textvariable=self.master_fc_cap_var, width=8).grid(
+            row=0, column=1, padx=4, pady=2, sticky="w"
+        )
+
+        ttk.Label(caps_frame, text="稼働率キャパ:").grid(row=0, column=2, sticky="w", padx=12, pady=2)
+        self.master_occ_cap_var = tk.StringVar()
+        ttk.Entry(caps_frame, textvariable=self.master_occ_cap_var, width=8).grid(
+            row=0, column=3, padx=4, pady=2, sticky="w"
+        )
+
+        ttk.Button(
+            caps_frame,
+            text="保存（このホテルのみ）",
+            command=self._on_save_master_daily_caps,
+        ).grid(row=0, column=4, padx=12, pady=2, sticky="e")
+
+        # 初期表示
         self._refresh_calendar_coverage()
+        self._refresh_master_daily_caps()
+
 
     def _on_hotel_changed(self, event=None) -> None:
+        # マスタ設定タブのホテル変更時に、カレンダー範囲とキャパ設定を両方更新
         self._refresh_calendar_coverage()
+        self._refresh_master_daily_caps()
 
     def _on_build_calendar_clicked(self) -> None:
         hotel_tag = self.hotel_var.get()
@@ -241,6 +269,59 @@ class BookingCurveApp(tk.Tk):
             self.calendar_coverage_var.set("カレンダー: 範囲情報を取得できませんでした")
         else:
             self.calendar_coverage_var.set(f"カレンダー: {min_date} ～ {max_date}")
+
+    def _refresh_master_daily_caps(self) -> None:
+        """マスタ設定タブのキャパシティ表示を現在のホテルに合わせて更新する。"""
+        if not hasattr(self, "master_fc_cap_var"):
+            return
+
+        hotel_tag = self.hotel_var.get().strip()
+        if not hotel_tag:
+            self.master_fc_cap_var.set("")
+            self.master_occ_cap_var.set("")
+            return
+
+        fc_cap, occ_cap = self._get_daily_caps_for_hotel(hotel_tag)
+        # 整数っぽい値は整数表示、それ以外はそのまま
+        try:
+            self.master_fc_cap_var.set(str(int(fc_cap)))
+        except Exception:
+            self.master_fc_cap_var.set(str(fc_cap))
+        try:
+            self.master_occ_cap_var.set(str(int(occ_cap)))
+        except Exception:
+            self.master_occ_cap_var.set(str(occ_cap))
+
+    def _on_save_master_daily_caps(self) -> None:
+        """マスタ設定タブからキャパシティを保存し、関連タブにも反映する。"""
+        hotel_tag = self.hotel_var.get().strip()
+        if not hotel_tag:
+            messagebox.showerror("エラー", "ホテルが選択されていません。")
+            return
+
+        fc_str = self.master_fc_cap_var.get().strip()
+        occ_str = self.master_occ_cap_var.get().strip()
+        try:
+            fc_val = float(fc_str)
+            occ_val = float(occ_str)
+        except Exception:
+            messagebox.showerror("エラー", "キャパシティには数値を入力してください。")
+            return
+
+        # 永続化
+        self._set_daily_caps_for_hotel(hotel_tag, fc_val, occ_val)
+
+        # 日別フォーキャストタブに反映（同じホテルを見ている場合のみ）
+        if hasattr(self, "df_hotel_var") and self.df_hotel_var.get().strip() == hotel_tag:
+            self.df_forecast_cap_var.set(str(fc_val))
+            self.df_occ_cap_var.set(str(occ_val))
+
+        # ブッキングカーブタブに反映（同じホテルを見ている場合のみ）
+        if hasattr(self, "bc_hotel_var") and self.bc_hotel_var.get().strip() == hotel_tag:
+            self.bc_forecast_cap_var.set(str(fc_val))
+
+        messagebox.showinfo("保存完了", "キャパシティ設定を保存しました。")
+
 
     # =========================
     # 3) 日別フォーキャスト一覧タブ

@@ -1113,7 +1113,7 @@ class BookingCurveApp(tk.Tk):
             top,
             textvariable=self._asof_filter_var,
             state="readonly",
-            values=["(すべて)", "M-1_END", "M10", "M20"],
+            values=["(すべて)", "M-2_END", "M-1_END", "M10", "M20"],
             width=10,
         )
         asof_filter_combo.grid(row=0, column=9, padx=4, pady=2, sticky="w")

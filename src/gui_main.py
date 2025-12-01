@@ -46,7 +46,7 @@ class BookingCurveApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("Booking Curve Lab GUI")
-        self.geometry("1200x800")
+        self.geometry("1200x900")
 
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill=tk.BOTH, expand=True)

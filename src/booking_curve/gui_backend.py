@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import pandas as pd
+import build_calendar_features
 import run_forecast_batch
 import run_build_lt_csv
 
@@ -23,6 +24,71 @@ HOTEL_CONFIG: Dict[str, Dict[str, float]] = {
     },
     # 他ホテルを追加する場合はここに辞書を増やす
 }
+
+
+def build_calendar_for_gui(hotel_tag: str) -> str:
+    """
+    GUI からのカレンダー再生成ボタン用ラッパ。
+
+    現状は build_calendar_features.main() が内部で HOTEL_TAG="daikokucho" 固定で
+    calendar_features_daikokucho.csv を出力する前提になっている。
+
+    将来的には hotel_tag ごとに別のカレンダーを生成するように build_calendar_features 側を
+    拡張する想定だが、現時点では hotel_tag はインターフェース上の引数として受け取るだけにする。
+
+    戻り値:
+        生成されたカレンダーファイルの絶対パス文字列。
+    """
+
+    # まず既存の main() を呼んでファイル生成を行う。
+    try:
+        build_calendar_features.main()
+    except Exception:
+        # 例外はそのまま呼び出し元(GUI側)に送る
+        raise
+
+    # 現状は hotel_tag に関わらず daikokucho 固定ファイルが出力される想定。
+    # OUTPUT_DIR は本モジュール内で定義されている output フォルダへのパスを使う。
+    csv_path = OUTPUT_DIR / f"calendar_features_{hotel_tag}.csv"
+    return str(csv_path)
+
+
+def get_calendar_coverage(hotel_tag: str) -> Dict[str, Optional[str]]:
+    """
+    calendar_features_<hotel_tag>.csv の日付範囲を返すヘルパー。
+
+    戻り値:
+        {
+            "min_date": "YYYY-MM-DD" または None,
+            "max_date": "YYYY-MM-DD" または None,
+        }
+
+    ファイルが存在しない、もしくは内容が不正な場合は両方とも None を返す。
+    """
+
+    csv_path = OUTPUT_DIR / f"calendar_features_{hotel_tag}.csv"
+    if not csv_path.exists():
+        return {"min_date": None, "max_date": None}
+
+    try:
+        df = pd.read_csv(csv_path, parse_dates=["date"])
+    except Exception:
+        return {"min_date": None, "max_date": None}
+
+    if df.empty or "date" not in df.columns:
+        return {"min_date": None, "max_date": None}
+
+    # date 列から最小・最大を取得
+    min_dt = df["date"].min()
+    max_dt = df["date"].max()
+
+    if pd.isna(min_dt) or pd.isna(max_dt):
+        return {"min_date": None, "max_date": None}
+
+    min_str = pd.to_datetime(min_dt).normalize().strftime("%Y-%m-%d")
+    max_str = pd.to_datetime(max_dt).normalize().strftime("%Y-%m-%d")
+
+    return {"min_date": min_str, "max_date": max_str}
 
 
 def _get_capacity(hotel_tag: str, capacity: Optional[float]) -> float:

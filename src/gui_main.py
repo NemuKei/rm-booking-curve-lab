@@ -697,11 +697,23 @@ class BookingCurveApp(tk.Tk):
         run_btn = ttk.Button(top, text="評価読み込み", command=self._on_load_model_eval)
         run_btn.grid(row=0, column=2, padx=4, pady=2)
 
-        columns = ["target_month", "model", "mean_error_pct", "mae_pct"]
+        columns = [
+            "target_month",
+            "model",
+            "mean_error_pct",
+            "mae_pct",
+            "rmse_pct",
+            "n_samples",
+        ]
         self.me_tree = ttk.Treeview(frame, columns=columns, show="headings", height=25)
         for col in columns:
             self.me_tree.heading(col, text=col)
-            self.me_tree.column(col, width=150, anchor="e")
+        self.me_tree.column("target_month", width=100, anchor="center")
+        self.me_tree.column("model", width=120, anchor="center")
+        self.me_tree.column("mean_error_pct", width=90, anchor="e")
+        self.me_tree.column("mae_pct", width=90, anchor="e")
+        self.me_tree.column("rmse_pct", width=90, anchor="e")
+        self.me_tree.column("n_samples", width=80, anchor="e")
         self.me_tree.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=8)
 
         vsb = ttk.Scrollbar(frame, orient="vertical", command=self.me_tree.yview)
@@ -720,11 +732,22 @@ class BookingCurveApp(tk.Tk):
             self.me_tree.delete(row_id)
 
         for _, row in df.iterrows():
+            n_raw = row.get("n_samples")
+            try:
+                if pd.isna(n_raw):
+                    n_str = ""
+                else:
+                    n_str = str(int(n_raw))
+            except Exception:
+                n_str = ""
+
             values = [
                 str(row.get("target_month")),
                 str(row.get("model")),
                 _fmt_pct(row.get("mean_error_pct")),
                 _fmt_pct(row.get("mae_pct")),
+                _fmt_pct(row.get("rmse_pct")),
+                n_str,
             ]
             self.me_tree.insert("", tk.END, values=values)
 

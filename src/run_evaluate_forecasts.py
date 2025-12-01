@@ -135,14 +135,29 @@ def main() -> None:
 
     # 出力
     out_dir = Path(OUTPUT_DIR)
-    out_name = f"evaluation_{HOTEL_TAG}_multi.csv"
-    out_path = out_dir / out_name
-    df_result.to_csv(out_path, index=False)
+    detail_name = f"evaluation_{HOTEL_TAG}_detail.csv"
+    detail_path = out_dir / detail_name
+    df_result.to_csv(detail_path, index=False)
+
+    df_summary = (
+        df_result.groupby(["target_month", "model"], dropna=False)
+        .agg(
+            mean_error_pct=("error_pct", "mean"),
+            mae_pct=("abs_error_pct", "mean"),
+        )
+        .reset_index()
+    )
+
+    summary_name = f"evaluation_{HOTEL_TAG}_multi.csv"
+    summary_path = out_dir / summary_name
+    df_summary.to_csv(summary_path, index=False)
 
     print("[OK] 評価結果を出力しました:")
-    print(out_path)
+    print("詳細:", detail_path)
+    print("サマリ:", summary_path)
     print()
-    print(df_result.to_string(index=False, float_format=lambda x: f"{x:,.1f}"))
+    print("[Summary]")
+    print(df_summary.to_string(index=False, float_format=lambda x: f"{x:,.1f}"))
 
 
 if __name__ == "__main__":

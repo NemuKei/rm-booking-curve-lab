@@ -72,9 +72,12 @@ class BookingCurveApp(tk.Tk):
 
         # モデル評価タブ用の状態変数
         self.model_eval_df: Optional[pd.DataFrame] = None
+        self.model_eval_view_df: Optional[pd.DataFrame] = None
         self.model_eval_best_idx: set[int] = set()
         self.me_from_var = tk.StringVar(value="")
         self.me_to_var = tk.StringVar(value="")
+        self._asof_overview_view_df: Optional[pd.DataFrame] = None
+        self._asof_detail_view_df: Optional[pd.DataFrame] = None
 
         self._init_daily_forecast_tab()
         self._init_model_eval_tab()
@@ -877,6 +880,9 @@ class BookingCurveApp(tk.Tk):
         ttk.Button(top, text="直近12ヶ月", command=self._on_me_last12_clicked).grid(
             row=0, column=7, padx=4, pady=2
         )
+        ttk.Button(top, text="CSV出力", command=self._on_export_model_eval_csv).grid(
+            row=0, column=8, padx=4, pady=2
+        )
 
         columns = [
             "target_month",
@@ -924,6 +930,7 @@ class BookingCurveApp(tk.Tk):
 
     def _refresh_model_eval_table(self) -> None:
         if self.model_eval_df is None or self.model_eval_df.empty:
+            self.model_eval_view_df = None
             for row_id in self.me_tree.get_children():
                 self.me_tree.delete(row_id)
             return
@@ -964,6 +971,8 @@ class BookingCurveApp(tk.Tk):
             row = grp.loc[grp["mae_pct"].idxmin()]
             best_idx.add(row.name)
 
+        self.model_eval_view_df = df_view.copy()
+
         for row_id in self.me_tree.get_children():
             self.me_tree.delete(row_id)
 
@@ -991,6 +1000,38 @@ class BookingCurveApp(tk.Tk):
             if idx in best_idx:
                 tags.append("me_best")
             self.me_tree.insert("", tk.END, values=values, tags=tags)
+
+    def _on_export_model_eval_csv(self) -> None:
+        """
+        モデル評価タブで現在表示中の内容を CSV 出力する。
+        """
+
+        df = getattr(self, "model_eval_view_df", None)
+        if df is None or df.empty:
+            messagebox.showerror("エラー", "先に評価を読み込んでください。")
+            return
+
+        hotel = self.me_hotel_var.get().strip() if hasattr(self, "me_hotel_var") else ""
+        from_ym = self.me_from_var.get().strip() if hasattr(self, "me_from_var") else ""
+        to_ym = self.me_to_var.get().strip() if hasattr(self, "me_to_var") else ""
+
+        if not hotel:
+            hotel = "unknown"
+        if not from_ym:
+            from_ym = "ALL"
+        if not to_ym:
+            to_ym = "ALL"
+
+        try:
+            OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            filename = f"model_eval_{hotel}_{from_ym}_{to_ym}.csv"
+            out_path = OUTPUT_DIR / filename
+            df.to_csv(out_path, index=False)
+        except Exception as e:
+            messagebox.showerror("エラー", f"CSV出力に失敗しました:\n{e}")
+            return
+
+        messagebox.showinfo("保存完了", f"CSV を保存しました。\n{out_path}")
 
     def _on_me_last12_clicked(self) -> None:
         if self.model_eval_df is None:
@@ -1078,6 +1119,13 @@ class BookingCurveApp(tk.Tk):
         asof_filter_combo.grid(row=0, column=9, padx=4, pady=2, sticky="w")
         asof_filter_combo.bind("<<ComboboxSelected>>", lambda *_: self._refresh_asof_eval_tables())
 
+        ttk.Button(top, text="CSV出力(サマリ)", command=self._on_export_asof_overview_csv).grid(
+            row=0, column=10, padx=4, pady=2
+        )
+        ttk.Button(top, text="CSV出力(月別ログ)", command=self._on_export_asof_detail_csv).grid(
+            row=0, column=11, padx=4, pady=2
+        )
+
         # ASOF別サマリテーブル
         overview_frame = ttk.LabelFrame(frame, text="ASOF別サマリ")
         overview_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=(0, 4))
@@ -1154,6 +1202,8 @@ class BookingCurveApp(tk.Tk):
 
     def _refresh_asof_eval_tables(self) -> None:
         if self._asof_overview_df is None or self._asof_detail_df is None:
+            self._asof_overview_view_df = None
+            self._asof_detail_view_df = None
             return
 
         asof_value = self._asof_filter_var.get()
@@ -1187,6 +1237,8 @@ class BookingCurveApp(tk.Tk):
                     best_overview_idx.add(best_row.name)
 
         overview_df = overview_df.sort_values(["asof_type", "model"])
+
+        self._asof_overview_view_df = overview_df.copy()
 
         for row_id in self.asof_overview_tree.get_children():
             self.asof_overview_tree.delete(row_id)
@@ -1234,6 +1286,8 @@ class BookingCurveApp(tk.Tk):
 
         base_df = base_df.sort_values(["target_month", "asof_type", "model"])
 
+        self._asof_detail_view_df = base_df.copy()
+
         for row_id in self.asof_detail_tree.get_children():
             self.asof_detail_tree.delete(row_id)
         for i, (idx, row) in enumerate(base_df.iterrows()):
@@ -1248,6 +1302,86 @@ class BookingCurveApp(tk.Tk):
             if idx in best_detail_idx:
                 tags.append("asofd_best")
             self.asof_detail_tree.insert("", tk.END, values=values, tags=tags)
+
+    def _on_export_asof_overview_csv(self) -> None:
+        """
+        ASOF比較タブの上段サマリを CSV 出力する。
+        """
+
+        df = getattr(self, "_asof_overview_view_df", None)
+        if df is None or df.empty:
+            messagebox.showerror("エラー", "先に評価を読み込んでください。")
+            return
+
+        hotel = self.asof_hotel_var.get().strip() if hasattr(self, "asof_hotel_var") else ""
+        from_ym = self.asof_from_ym_var.get().strip() if hasattr(self, "asof_from_ym_var") else ""
+        to_ym = self.asof_to_ym_var.get().strip() if hasattr(self, "asof_to_ym_var") else ""
+        asof_filter = self._asof_filter_var.get().strip() if hasattr(self, "_asof_filter_var") else ""
+        best_only = "best" if getattr(self, "_asof_best_only_var", tk.BooleanVar(value=False)).get() else "all"
+
+        if not hotel:
+            hotel = "unknown"
+        if not from_ym:
+            from_ym = "ALL"
+        if not to_ym:
+            to_ym = "ALL"
+
+        if not asof_filter or "(すべて" in asof_filter:
+            asof_key = "ALL"
+        else:
+            asof_key = asof_filter
+            asof_key = asof_key.replace("(", "_").replace(")", "_").replace(" ", "_")
+
+        try:
+            OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            filename = f"asof_overview_{hotel}_{from_ym}_{to_ym}_{asof_key}_{best_only}.csv"
+            out_path = OUTPUT_DIR / filename
+            df.to_csv(out_path, index=False)
+        except Exception as e:
+            messagebox.showerror("エラー", f"CSV出力に失敗しました:\n{e}")
+            return
+
+        messagebox.showinfo("保存完了", f"CSV を保存しました。\n{out_path}")
+
+    def _on_export_asof_detail_csv(self) -> None:
+        """
+        ASOF比較タブの下段(月別ログ)を CSV 出力する。
+        """
+
+        df = getattr(self, "_asof_detail_view_df", None)
+        if df is None or df.empty:
+            messagebox.showerror("エラー", "先に評価を読み込んでください。")
+            return
+
+        hotel = self.asof_hotel_var.get().strip() if hasattr(self, "asof_hotel_var") else ""
+        from_ym = self.asof_from_ym_var.get().strip() if hasattr(self, "asof_from_ym_var") else ""
+        to_ym = self.asof_to_ym_var.get().strip() if hasattr(self, "asof_to_ym_var") else ""
+        asof_filter = self._asof_filter_var.get().strip() if hasattr(self, "_asof_filter_var") else ""
+        best_only = "best" if getattr(self, "_asof_best_only_var", tk.BooleanVar(value=False)).get() else "all"
+
+        if not hotel:
+            hotel = "unknown"
+        if not from_ym:
+            from_ym = "ALL"
+        if not to_ym:
+            to_ym = "ALL"
+
+        if not asof_filter or "(すべて" in asof_filter:
+            asof_key = "ALL"
+        else:
+            asof_key = asof_filter
+            asof_key = asof_key.replace("(", "_").replace(")", "_").replace(" ", "_")
+
+        try:
+            OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            filename = f"asof_detail_{hotel}_{from_ym}_{to_ym}_{asof_key}_{best_only}.csv"
+            out_path = OUTPUT_DIR / filename
+            df.to_csv(out_path, index=False)
+        except Exception as e:
+            messagebox.showerror("エラー", f"CSV出力に失敗しました:\n{e}")
+            return
+
+        messagebox.showinfo("保存完了", f"CSV を保存しました。\n{out_path}")
 
     # =========================
     # 1) ブッキングカーブタブ

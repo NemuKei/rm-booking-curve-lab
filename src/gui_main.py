@@ -34,6 +34,7 @@ from booking_curve.gui_backend import (
     run_forecast_for_gui,
     build_calendar_for_gui,
     get_calendar_coverage,
+    run_full_evaluation_for_gui_range,
 )
 from booking_curve.plot_booking_curve import LEAD_TIME_PITCHES
 
@@ -883,6 +884,9 @@ class BookingCurveApp(tk.Tk):
         ttk.Button(top, text="CSV出力", command=self._on_export_model_eval_csv).grid(
             row=0, column=8, padx=4, pady=2
         )
+        ttk.Button(top, text="評価再計算", command=self._on_rebuild_evaluation_csv).grid(
+            row=0, column=9, padx=4, pady=2
+        )
 
         columns = [
             "target_month",
@@ -910,6 +914,58 @@ class BookingCurveApp(tk.Tk):
         vsb = ttk.Scrollbar(frame, orient="vertical", command=self.me_tree.yview)
         self.me_tree.configure(yscrollcommand=vsb.set)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+    def _on_rebuild_evaluation_csv(self) -> None:
+        """
+        選択中ホテルと期間From/To(YYYYMM)に基づいて評価CSVを再作成する。
+        """
+
+        hotel = (self.me_hotel_var.get() or "").strip()
+        if not hotel:
+            hotel = DEFAULT_HOTEL
+
+        start = (self.me_from_var.get() or "").strip()
+        end = (self.me_to_var.get() or "").strip()
+
+        if not start or not end:
+            messagebox.showerror(
+                "エラー",
+                "評価CSVを再計算するには、開始月と終了月(YYYYMM)を指定するか、直近12ヶ月ボタンで設定してください。",
+            )
+            return
+
+        try:
+            detail_path, summary_path = run_full_evaluation_for_gui_range(
+                hotel_tag=hotel,
+                start_yyyymm=start,
+                end_yyyymm=end,
+            )
+        except ValueError as e:
+            messagebox.showerror("エラー", f"期間指定が不正です:\n{e}")
+            return
+        except Exception as e:
+            messagebox.showerror("エラー", f"評価CSVの再計算に失敗しました:\n{e}")
+            return
+
+        try:
+            self._on_load_model_eval()
+        except Exception:
+            pass
+
+        try:
+            if getattr(self, "asof_hotel_var", None) is not None:
+                asof_hotel = (self.asof_hotel_var.get() or "").strip() or DEFAULT_HOTEL
+                if asof_hotel == hotel:
+                    self._on_load_asof_eval()
+        except Exception:
+            pass
+
+        messagebox.showinfo(
+            "完了",
+            "評価CSVを再計算しました。\n"
+            f"Detail:  {detail_path}\n"
+            f"Summary: {summary_path}",
+        )
 
     def _on_load_model_eval(self) -> None:
         try:

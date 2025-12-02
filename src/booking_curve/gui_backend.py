@@ -970,16 +970,18 @@ def run_build_lt_data_for_gui(
     """
     Tkinter GUI から LT_DATA 生成バッチを実行するための薄いラッパー。
 
-    現状は単一ホテル前提のため hotel_tag は将来拡張用のダミー引数だが、
-    インターフェースとして受け取っておく。
-    target_months には "YYYYMM" 形式の宿泊月を渡す。
+    hotel_tag ごとに config.HOTEL_CONFIG で定義された時系列Excelを読み込み、
+    run_build_lt_csv.run_build_lt_for_gui() を呼び出す。
     """
 
     if not target_months:
         return
 
     try:
-        run_build_lt_csv.run_build_lt_for_gui(target_months)
+        run_build_lt_csv.run_build_lt_for_gui(
+            hotel_tag=hotel_tag,
+            target_months=target_months,
+        )
     except Exception:
         raise
 

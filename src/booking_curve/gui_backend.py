@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Dict, List, Optional
+import json
 
 import pandas as pd
 import build_calendar_features
@@ -16,15 +17,66 @@ from booking_curve.forecast_simple import (
 )
 
 # プロジェクトルートから見た output ディレクトリ
-OUTPUT_DIR = Path(__file__).resolve().parents[2] / "output"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+OUTPUT_DIR = PROJECT_ROOT / "output"
+CONFIG_DIR = PROJECT_ROOT / "config"
+HOTEL_CONFIG_PATH = CONFIG_DIR / "hotels.json"
 
-# ホテル別設定 (将来は設定画面や外部ファイルに出してもよい)
-HOTEL_CONFIG: Dict[str, Dict[str, float]] = {
-    "daikokucho": {
-        "capacity": 168.0,
-    },
-    # 他ホテルを追加する場合はここに辞書を増やす
-}
+
+def _load_default_hotel_config() -> Dict[str, Dict[str, float]]:
+    """設定ファイルが無い場合に使うデフォルト設定。現状は大国町のみ。"""
+    return {
+        "daikokucho": {
+            "capacity": 168.0,
+        }
+    }
+
+
+def load_hotel_config() -> Dict[str, Dict[str, float]]:
+    """
+    config/hotels.json からホテル設定を読み込む。
+    - ファイルが存在しない場合や読み込みエラー時は、デフォルト設定を返す。
+    - JSON のフォーマットは:
+        {
+          "daikokucho": {
+            "display_name": "ソビアルなんば大国町",
+            "capacity": 168
+          },
+          "kansai": {
+            "display_name": "ホテル関西",
+            "capacity": 400
+          }
+        }
+      のような想定とする。
+    - display_name は現時点では利用しない（あっても無視してよい）。
+    """
+    try:
+        if not HOTEL_CONFIG_PATH.exists():
+            return _load_default_hotel_config()
+        with HOTEL_CONFIG_PATH.open("r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except Exception:
+        return _load_default_hotel_config()
+
+    config: Dict[str, Dict[str, float]] = {}
+    for key, value in raw.items():
+        if not isinstance(value, dict):
+            continue
+        cap = value.get("capacity")
+        if cap is None:
+            continue
+        try:
+            cap_f = float(cap)
+        except Exception:
+            continue
+        config[key] = {"capacity": cap_f}
+
+    if not config:
+        return _load_default_hotel_config()
+    return config
+
+
+HOTEL_CONFIG: Dict[str, Dict[str, float]] = load_hotel_config()
 
 
 def generate_month_range(start_yyyymm: str, end_yyyymm: str) -> list[str]:
@@ -135,7 +187,7 @@ def _get_capacity(hotel_tag: str, capacity: Optional[float]) -> float:
     """
     if capacity is not None:
         return float(capacity)
-    return float(HOTEL_CONFIG.get(hotel_tag, {}).get("capacity", 1.0))
+    return float(HOTEL_CONFIG.get(hotel_tag, {}).get("capacity", 168.0))
 
 
 def get_latest_asof_for_hotel(hotel_tag: str) -> Optional[str]:

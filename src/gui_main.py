@@ -339,7 +339,7 @@ class BookingCurveApp(tk.Tk):
 
         # ホテル
         ttk.Label(form, text="ホテル:").grid(row=0, column=0, sticky="w")
-        self.df_hotel_var = tk.StringVar(value=DEFAULT_HOTEL)
+        self.df_hotel_var = self.hotel_var
         hotel_combo = ttk.Combobox(form, textvariable=self.df_hotel_var, state="readonly")
         hotel_combo["values"] = sorted(HOTEL_CONFIG.keys())
         hotel_combo.grid(row=0, column=1, padx=4, pady=2)
@@ -864,7 +864,7 @@ class BookingCurveApp(tk.Tk):
         top.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
 
         ttk.Label(top, text="ホテル:").grid(row=0, column=0, sticky="w")
-        self.me_hotel_var = tk.StringVar(value=DEFAULT_HOTEL)
+        self.me_hotel_var = self.hotel_var
         hotel_combo = ttk.Combobox(top, textvariable=self.me_hotel_var, state="readonly")
         hotel_combo["values"] = sorted(HOTEL_CONFIG.keys())
         hotel_combo.grid(row=0, column=1, padx=4, pady=2)
@@ -1141,7 +1141,7 @@ class BookingCurveApp(tk.Tk):
         top = ttk.Frame(frame)
         top.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
 
-        self.asof_hotel_var = tk.StringVar(value=DEFAULT_HOTEL)
+        self.asof_hotel_var = self.hotel_var
         ttk.Label(top, text="ホテル:").grid(row=0, column=0, sticky="w")
         hotel_combo = ttk.Combobox(top, textvariable=self.asof_hotel_var, state="readonly")
         hotel_combo["values"] = sorted(HOTEL_CONFIG.keys())
@@ -1449,7 +1449,7 @@ class BookingCurveApp(tk.Tk):
         form.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
 
         ttk.Label(form, text="ホテル:").grid(row=0, column=0, sticky="w")
-        self.bc_hotel_var = tk.StringVar(value=DEFAULT_HOTEL)
+        self.bc_hotel_var = self.hotel_var
         hotel_combo = ttk.Combobox(form, textvariable=self.bc_hotel_var, state="readonly")
         hotel_combo["values"] = sorted(HOTEL_CONFIG.keys())
         hotel_combo.grid(row=0, column=1, padx=4, pady=2)
@@ -2218,7 +2218,7 @@ class BookingCurveApp(tk.Tk):
         form.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
 
         ttk.Label(form, text="ホテル:").grid(row=0, column=0, sticky="w")
-        self.mc_hotel_var = tk.StringVar(value=DEFAULT_HOTEL)
+        self.mc_hotel_var = self.hotel_var
         mc_combo = ttk.Combobox(form, textvariable=self.mc_hotel_var, state="readonly")
         mc_combo["values"] = sorted(HOTEL_CONFIG.keys())
         mc_combo.grid(row=0, column=1, padx=4, pady=2)

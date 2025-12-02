@@ -3,7 +3,7 @@
     "display_name": "ソビアルなんば大国町",
     "capacity": 171,
     "data_subdir": "namba_daikokucho",
-    "timeseries_file": "ソビアルなんば大国町_時系列データ.xlsx"
+    "timeseries_file": "大国町_時系列データ.xlsx"
   },
   "kansai": {
     "display_name": "ホテル関西",

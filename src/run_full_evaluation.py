@@ -87,8 +87,8 @@ def get_avg_history_months(target_month: str, months_back: int = 3) -> list[str]
     return months
 
 
-def load_lt_csv(month: str) -> pd.DataFrame:
-    file_name = f"lt_data_{month}_{HOTEL_TAG}.csv"
+def load_lt_csv(month: str, hotel_tag: str) -> pd.DataFrame:
+    file_name = f"lt_data_{month}_{hotel_tag}.csv"
     file_path = Path(OUTPUT_DIR) / file_name
     return pd.read_csv(file_path, index_col=0)
 
@@ -141,7 +141,7 @@ def _infer_target_month(lt_df: pd.DataFrame) -> str:
 
 
 def build_monthly_forecast(
-    lt_df: pd.DataFrame, model_name: str, as_of_date: str
+    lt_df: pd.DataFrame, model_name: str, as_of_date: str, hotel_tag: str
 ) -> pd.Series:
     as_of_ts = pd.to_datetime(as_of_date)
     target_month = _infer_target_month(lt_df)
@@ -156,7 +156,7 @@ def build_monthly_forecast(
     history_raw: dict[str, pd.DataFrame] = {}
     for ym in history_months:
         try:
-            df_m = load_lt_csv(ym)
+            df_m = load_lt_csv(ym, hotel_tag=hotel_tag)
         except FileNotFoundError:
             continue
         if df_m.empty:
@@ -216,7 +216,7 @@ def build_monthly_forecast(
         return projected
 
     out_df = forecast_month_from_recent90(
-        df_target=lt_df, forecasts=all_forecasts, as_of_ts=as_of_ts, hotel_tag=HOTEL_TAG
+        df_target=lt_df, forecasts=all_forecasts, as_of_ts=as_of_ts, hotel_tag=hotel_tag
     )
 
     if model_name in {"recent90_adj", "recent90w_adj"}:
@@ -249,7 +249,10 @@ def build_evaluation_detail(hotel_tag: str, target_months: list[str]) -> pd.Data
                 "recent90w_adj",
             ]:
                 forecast_series = build_monthly_forecast(
-                    lt_df=lt_df, model_name=model_name, as_of_date=asof_ts
+                    lt_df=lt_df,
+                    model_name=model_name,
+                    as_of_date=asof_ts,
+                    hotel_tag=hotel_tag,
                 )
                 forecast_total_rooms = float(
                     pd.to_numeric(forecast_series, errors="coerce").sum(skipna=True)

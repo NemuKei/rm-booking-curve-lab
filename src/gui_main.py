@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import Optional
 import json
 
 import pandas as pd
@@ -25,11 +26,16 @@ from booking_curve.gui_backend import (
     get_latest_asof_for_hotel,
     get_latest_asof_for_month,
     get_model_evaluation_table,
+    get_eval_monthly_by_asof,
+    get_eval_overview_by_asof,
     get_monthly_curve_data,
     OUTPUT_DIR,
     HOTEL_CONFIG,
     run_build_lt_data_for_gui,
     run_forecast_for_gui,
+    build_calendar_for_gui,
+    get_calendar_coverage,
+    run_full_evaluation_for_gui_range,
 )
 from booking_curve.plot_booking_curve import LEAD_TIME_PITCHES
 
@@ -42,29 +48,45 @@ class BookingCurveApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("Booking Curve Lab GUI")
-        self.geometry("1200x800")
-        self._style = ttk.Style(self)
+        self.geometry("1200x900")
 
-        notebook = ttk.Notebook(self)
-        notebook.pack(fill=tk.BOTH, expand=True)
+        self.notebook = ttk.Notebook(self)
+        self.notebook.pack(fill=tk.BOTH, expand=True)
 
         # タブ作成
-        self.tab_booking_curve = ttk.Frame(notebook)
-        self.tab_monthly_curve = ttk.Frame(notebook)
-        self.tab_daily_forecast = ttk.Frame(notebook)
-        self.tab_model_eval = ttk.Frame(notebook)
+        self.tab_booking_curve = ttk.Frame(self.notebook)
+        self.tab_monthly_curve = ttk.Frame(self.notebook)
+        self.tab_daily_forecast = ttk.Frame(self.notebook)
+        self.tab_model_eval = ttk.Frame(self.notebook)
+        self.tab_asof_eval = ttk.Frame(self.notebook)
+        self.tab_master_settings = ttk.Frame(self.notebook)
 
-        notebook.add(self.tab_booking_curve, text="ブッキングカーブ")
-        notebook.add(self.tab_monthly_curve, text="月次カーブ")
-        notebook.add(self.tab_daily_forecast, text="日別フォーキャスト")
-        notebook.add(self.tab_model_eval, text="モデル評価")
+        self.notebook.add(self.tab_booking_curve, text="ブッキングカーブ")
+        self.notebook.add(self.tab_monthly_curve, text="月次カーブ")
+        self.notebook.add(self.tab_daily_forecast, text="日別フォーキャスト")
+        self.notebook.add(self.tab_model_eval, text="モデル評価")
+        self.notebook.add(self.tab_asof_eval, text="ASOF比較")
+        self.notebook.add(self.tab_master_settings, text="マスタ設定")
 
         self._settings = self._load_settings()
 
+        self.hotel_var = tk.StringVar(value=DEFAULT_HOTEL)
+
+        # モデル評価タブ用の状態変数
+        self.model_eval_df: Optional[pd.DataFrame] = None
+        self.model_eval_view_df: Optional[pd.DataFrame] = None
+        self.model_eval_best_idx: set[int] = set()
+        self.me_from_var = tk.StringVar(value="")
+        self.me_to_var = tk.StringVar(value="")
+        self._asof_overview_view_df: Optional[pd.DataFrame] = None
+        self._asof_detail_view_df: Optional[pd.DataFrame] = None
+
         self._init_daily_forecast_tab()
         self._init_model_eval_tab()
+        self._init_asof_eval_tab()
         self._init_booking_curve_tab()
         self._init_monthly_curve_tab()
+        self._create_master_settings_tab()
 
     def _load_settings(self) -> dict:
         try:
@@ -153,6 +175,158 @@ class BookingCurveApp(tk.Tk):
         self.bc_weekday_var.set(weekday_value)
         # 曜日変更後、即座にブッキングカーブを再描画する
         self._on_draw_booking_curve()
+
+    def _create_master_settings_tab(self) -> None:
+        frame = self.tab_master_settings
+
+        # ------- カレンダー設定 -------
+        calendar_frame = ttk.LabelFrame(frame, text="カレンダー")
+        calendar_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
+
+        ttk.Label(calendar_frame, text="ホテル:").grid(row=0, column=0, sticky="w")
+        self.hotel_combo = ttk.Combobox(
+            calendar_frame, textvariable=self.hotel_var, state="readonly"
+        )
+        self.hotel_combo["values"] = list(HOTEL_CONFIG.keys())
+        self.hotel_combo.grid(row=0, column=1, padx=4, pady=2, sticky="w")
+        self.hotel_combo.bind("<<ComboboxSelected>>", self._on_hotel_changed)
+
+        self.calendar_coverage_var = tk.StringVar()
+        self.calendar_coverage_label = ttk.Label(
+            calendar_frame, textvariable=self.calendar_coverage_var
+        )
+        self.calendar_coverage_label.grid(
+            row=1, column=0, columnspan=3, padx=4, pady=2, sticky="w"
+        )
+
+        self.calendar_build_button = ttk.Button(
+            calendar_frame,
+            text="カレンダー再生成",
+            command=self._on_build_calendar_clicked,
+        )
+        self.calendar_build_button.grid(row=1, column=3, padx=4, pady=2, sticky="e")
+
+        # ------- 日別FC / ブッキング共通キャパ設定 -------
+        caps_frame = ttk.LabelFrame(frame, text="日別フォーキャスト / ブッキングカーブ共通設定")
+        caps_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 8))
+
+        ttk.Label(caps_frame, text="予測キャップ:").grid(row=0, column=0, sticky="w", padx=4, pady=2)
+        self.master_fc_cap_var = tk.StringVar()
+        ttk.Entry(caps_frame, textvariable=self.master_fc_cap_var, width=8).grid(
+            row=0, column=1, padx=4, pady=2, sticky="w"
+        )
+
+        ttk.Label(caps_frame, text="稼働率キャパ:").grid(row=0, column=2, sticky="w", padx=12, pady=2)
+        self.master_occ_cap_var = tk.StringVar()
+        ttk.Entry(caps_frame, textvariable=self.master_occ_cap_var, width=8).grid(
+            row=0, column=3, padx=4, pady=2, sticky="w"
+        )
+
+        ttk.Button(
+            caps_frame,
+            text="保存（このホテルのみ）",
+            command=self._on_save_master_daily_caps,
+        ).grid(row=0, column=4, padx=12, pady=2, sticky="e")
+
+        # 初期表示
+        self._refresh_calendar_coverage()
+        self._refresh_master_daily_caps()
+
+
+    def _on_hotel_changed(self, event=None) -> None:
+        # マスタ設定タブのホテル変更時に、カレンダー範囲とキャパ設定を両方更新
+        self._refresh_calendar_coverage()
+        self._refresh_master_daily_caps()
+
+    def _on_build_calendar_clicked(self) -> None:
+        hotel_tag = self.hotel_var.get()
+        if not hotel_tag:
+            messagebox.showerror("エラー", "ホテルが選択されていません。")
+            return
+
+        self.calendar_build_button["state"] = "disabled"
+        try:
+            csv_path = build_calendar_for_gui(hotel_tag)
+        except Exception as e:
+            messagebox.showerror("エラー", f"カレンダー再生成に失敗しました:\n{e}")
+        else:
+            messagebox.showinfo("完了", f"カレンダーを再生成しました。\n{csv_path}")
+            self._refresh_calendar_coverage()
+        finally:
+            self.calendar_build_button["state"] = "normal"
+
+    def _refresh_calendar_coverage(self) -> None:
+        if not hasattr(self, "calendar_coverage_var"):
+            return
+
+        hotel_tag = self.hotel_var.get()
+        if not hotel_tag:
+            self.calendar_coverage_var.set("カレンダー: ホテル未選択")
+            return
+
+        coverage = get_calendar_coverage(hotel_tag)
+        min_date = coverage.get("min_date")
+        max_date = coverage.get("max_date")
+
+        if min_date is None and max_date is None:
+            self.calendar_coverage_var.set("カレンダー: 未作成")
+        elif min_date is None or max_date is None:
+            self.calendar_coverage_var.set("カレンダー: 範囲情報を取得できませんでした")
+        else:
+            self.calendar_coverage_var.set(f"カレンダー: {min_date} ～ {max_date}")
+
+    def _refresh_master_daily_caps(self) -> None:
+        """マスタ設定タブのキャパシティ表示を現在のホテルに合わせて更新する。"""
+        if not hasattr(self, "master_fc_cap_var"):
+            return
+
+        hotel_tag = self.hotel_var.get().strip()
+        if not hotel_tag:
+            self.master_fc_cap_var.set("")
+            self.master_occ_cap_var.set("")
+            return
+
+        fc_cap, occ_cap = self._get_daily_caps_for_hotel(hotel_tag)
+        # 整数っぽい値は整数表示、それ以外はそのまま
+        try:
+            self.master_fc_cap_var.set(str(int(fc_cap)))
+        except Exception:
+            self.master_fc_cap_var.set(str(fc_cap))
+        try:
+            self.master_occ_cap_var.set(str(int(occ_cap)))
+        except Exception:
+            self.master_occ_cap_var.set(str(occ_cap))
+
+    def _on_save_master_daily_caps(self) -> None:
+        """マスタ設定タブからキャパシティを保存し、関連タブにも反映する。"""
+        hotel_tag = self.hotel_var.get().strip()
+        if not hotel_tag:
+            messagebox.showerror("エラー", "ホテルが選択されていません。")
+            return
+
+        fc_str = self.master_fc_cap_var.get().strip()
+        occ_str = self.master_occ_cap_var.get().strip()
+        try:
+            fc_val = float(fc_str)
+            occ_val = float(occ_str)
+        except Exception:
+            messagebox.showerror("エラー", "キャパシティには数値を入力してください。")
+            return
+
+        # 永続化
+        self._set_daily_caps_for_hotel(hotel_tag, fc_val, occ_val)
+
+        # 日別フォーキャストタブに反映（同じホテルを見ている場合のみ）
+        if hasattr(self, "df_hotel_var") and self.df_hotel_var.get().strip() == hotel_tag:
+            self.df_forecast_cap_var.set(str(fc_val))
+            self.df_occ_cap_var.set(str(occ_val))
+
+        # ブッキングカーブタブに反映（同じホテルを見ている場合のみ）
+        if hasattr(self, "bc_hotel_var") and self.bc_hotel_var.get().strip() == hotel_tag:
+            self.bc_forecast_cap_var.set(str(fc_val))
+
+        messagebox.showinfo("保存完了", "キャパシティ設定を保存しました。")
+
 
     # =========================
     # 3) 日別フォーキャスト一覧タブ
@@ -738,36 +912,572 @@ class BookingCurveApp(tk.Tk):
         run_btn = ttk.Button(top, text="評価読み込み", command=self._on_load_model_eval)
         run_btn.grid(row=0, column=2, padx=4, pady=2)
 
-        columns = ["target_month", "model", "mean_error_pct", "mae_pct"]
+        ttk.Label(top, text="開始月(YYYYMM):").grid(row=0, column=3, sticky="w", padx=(8, 4))
+        ttk.Entry(top, textvariable=self.me_from_var, width=8).grid(row=0, column=4, padx=4, pady=2)
+
+        ttk.Label(top, text="終了月(YYYYMM):").grid(row=0, column=5, sticky="w", padx=(8, 4))
+        ttk.Entry(top, textvariable=self.me_to_var, width=8).grid(row=0, column=6, padx=4, pady=2)
+
+        ttk.Button(top, text="直近12ヶ月", command=self._on_me_last12_clicked).grid(
+            row=0, column=7, padx=4, pady=2
+        )
+        ttk.Button(top, text="CSV出力", command=self._on_export_model_eval_csv).grid(
+            row=0, column=8, padx=4, pady=2
+        )
+        ttk.Button(top, text="評価再計算", command=self._on_rebuild_evaluation_csv).grid(
+            row=0, column=9, padx=4, pady=2
+        )
+
+        columns = [
+            "target_month",
+            "model",
+            "mean_error_pct",
+            "mae_pct",
+            "rmse_pct",
+            "n_samples",
+        ]
         self.me_tree = ttk.Treeview(frame, columns=columns, show="headings", height=25)
         for col in columns:
             self.me_tree.heading(col, text=col)
-            self.me_tree.column(col, width=150, anchor="e")
+        self.me_tree.column("target_month", width=100, anchor="center")
+        self.me_tree.column("model", width=120, anchor="center")
+        self.me_tree.column("mean_error_pct", width=90, anchor="e")
+        self.me_tree.column("mae_pct", width=90, anchor="e")
+        self.me_tree.column("rmse_pct", width=90, anchor="e")
+        self.me_tree.column("n_samples", width=80, anchor="e")
+        self.me_tree.tag_configure("me_even", background="#ffffff")
+        self.me_tree.tag_configure("me_odd", background="#f5f5f5")
+        self.me_tree.tag_configure("me_total", background="#fff4d8")
+        self.me_tree.tag_configure("me_best", background="#e0f2ff")
         self.me_tree.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=8)
 
         vsb = ttk.Scrollbar(frame, orient="vertical", command=self.me_tree.yview)
         self.me_tree.configure(yscrollcommand=vsb.set)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
 
+    def _on_rebuild_evaluation_csv(self) -> None:
+        """
+        選択中ホテルと期間From/To(YYYYMM)に基づいて評価CSVを再作成する。
+        """
+
+        hotel = (self.me_hotel_var.get() or "").strip()
+        if not hotel:
+            hotel = DEFAULT_HOTEL
+
+        start = (self.me_from_var.get() or "").strip()
+        end = (self.me_to_var.get() or "").strip()
+
+        if not start or not end:
+            messagebox.showerror(
+                "エラー",
+                "評価CSVを再計算するには、開始月と終了月(YYYYMM)を指定するか、直近12ヶ月ボタンで設定してください。",
+            )
+            return
+
+        try:
+            detail_path, summary_path = run_full_evaluation_for_gui_range(
+                hotel_tag=hotel,
+                start_yyyymm=start,
+                end_yyyymm=end,
+            )
+        except ValueError as e:
+            messagebox.showerror("エラー", f"期間指定が不正です:\n{e}")
+            return
+        except Exception as e:
+            messagebox.showerror("エラー", f"評価CSVの再計算に失敗しました:\n{e}")
+            return
+
+        try:
+            self._on_load_model_eval()
+        except Exception:
+            pass
+
+        try:
+            if getattr(self, "asof_hotel_var", None) is not None:
+                asof_hotel = (self.asof_hotel_var.get() or "").strip() or DEFAULT_HOTEL
+                if asof_hotel == hotel:
+                    self._on_load_asof_eval()
+        except Exception:
+            pass
+
+        messagebox.showinfo(
+            "完了",
+            "評価CSVを再計算しました。\n"
+            f"Detail:  {detail_path}\n"
+            f"Summary: {summary_path}",
+        )
+
     def _on_load_model_eval(self) -> None:
         try:
             hotel = self.me_hotel_var.get()
             df = get_model_evaluation_table(hotel)
+            best_idx = set()
+            tmp = df[df["target_month"] != "TOTAL"].dropna(subset=["mae_pct"])
+            for _, grp in tmp.groupby("target_month", sort=False):
+                row = grp.loc[grp["mae_pct"].idxmin()]
+                best_idx.add(row.name)
+            self.model_eval_df = df
+            self.model_eval_best_idx = best_idx
         except Exception as e:
             messagebox.showerror("エラー", f"モデル評価読み込みに失敗しました:\n{e}")
             return
 
+        self._refresh_model_eval_table()
+
+    def _refresh_model_eval_table(self) -> None:
+        if self.model_eval_df is None or self.model_eval_df.empty:
+            self.model_eval_view_df = None
+            for row_id in self.me_tree.get_children():
+                self.me_tree.delete(row_id)
+            return
+
+        df = self.model_eval_df.copy()
+        from_str = self.me_from_var.get().strip()
+        to_str = self.me_to_var.get().strip()
+
+        df_total = df[df["target_month"] == "TOTAL"]
+        df_body = df[df["target_month"] != "TOTAL"].copy()
+
+        def _to_int_ym(val):
+            try:
+                return int(val)
+            except Exception:
+                return None
+
+        df_body["target_month_int"] = df_body["target_month"].map(_to_int_ym)
+        df_body = df_body[~df_body["target_month_int"].isna()]
+
+        try:
+            if from_str:
+                from_int = int(from_str)
+                df_body = df_body[df_body["target_month_int"] >= from_int]
+            if to_str:
+                to_int = int(to_str)
+                df_body = df_body[df_body["target_month_int"] <= to_int]
+        except Exception:
+            messagebox.showerror("エラー", "開始月/終了月はYYYYMMの整数で指定してください。")
+            return
+
+        df_body = df_body.drop(columns=["target_month_int"], errors="ignore")
+        df_view = pd.concat([df_body, df_total], ignore_index=False)
+
+        best_idx = set()
+        tmp = df_body.dropna(subset=["mae_pct"])
+        for _, grp in tmp.groupby("target_month", sort=False):
+            row = grp.loc[grp["mae_pct"].idxmin()]
+            best_idx.add(row.name)
+
+        self.model_eval_view_df = df_view.copy()
+
         for row_id in self.me_tree.get_children():
             self.me_tree.delete(row_id)
 
-        for _, row in df.iterrows():
+        for i, (idx, row) in enumerate(df_view.iterrows()):
+            n_raw = row.get("n_samples")
+            try:
+                if pd.isna(n_raw):
+                    n_str = ""
+                else:
+                    n_str = str(int(n_raw))
+            except Exception:
+                n_str = ""
+
             values = [
                 str(row.get("target_month")),
                 str(row.get("model")),
                 _fmt_pct(row.get("mean_error_pct")),
                 _fmt_pct(row.get("mae_pct")),
+                _fmt_pct(row.get("rmse_pct")),
+                n_str,
             ]
-            self.me_tree.insert("", tk.END, values=values)
+            tags = ["me_even" if i % 2 == 0 else "me_odd"]
+            if str(row.get("target_month")) == "TOTAL":
+                tags.append("me_total")
+            if idx in best_idx:
+                tags.append("me_best")
+            self.me_tree.insert("", tk.END, values=values, tags=tags)
+
+    def _on_export_model_eval_csv(self) -> None:
+        """
+        モデル評価タブで現在表示中の内容を CSV 出力する。
+        """
+
+        df = getattr(self, "model_eval_view_df", None)
+        if df is None or df.empty:
+            messagebox.showerror("エラー", "先に評価を読み込んでください。")
+            return
+
+        hotel = self.me_hotel_var.get().strip() if hasattr(self, "me_hotel_var") else ""
+        from_ym = self.me_from_var.get().strip() if hasattr(self, "me_from_var") else ""
+        to_ym = self.me_to_var.get().strip() if hasattr(self, "me_to_var") else ""
+
+        if not hotel:
+            hotel = "unknown"
+        if not from_ym:
+            from_ym = "ALL"
+        if not to_ym:
+            to_ym = "ALL"
+
+        try:
+            OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            filename = f"model_eval_{hotel}_{from_ym}_{to_ym}.csv"
+            out_path = OUTPUT_DIR / filename
+            df.to_csv(out_path, index=False)
+        except Exception as e:
+            messagebox.showerror("エラー", f"CSV出力に失敗しました:\n{e}")
+            return
+
+        messagebox.showinfo("保存完了", f"CSV を保存しました。\n{out_path}")
+
+    def _on_me_last12_clicked(self) -> None:
+        if self.model_eval_df is None:
+            self._on_load_model_eval()
+
+        if self.model_eval_df is None or self.model_eval_df.empty:
+            return
+
+        df_body = self.model_eval_df[self.model_eval_df["target_month"] != "TOTAL"].copy()
+
+        def _to_int_ym(val):
+            try:
+                return int(val)
+            except Exception:
+                return None
+
+        df_body["target_month_int"] = df_body["target_month"].map(_to_int_ym)
+        df_body = df_body[~df_body["target_month_int"].isna()]
+        if df_body.empty:
+            return
+
+        latest_int = int(df_body["target_month_int"].max())
+
+        def _add_months(ym_int: int, offset: int) -> int:
+            s = f"{ym_int:06d}"
+            y = int(s[:4])
+            m = int(s[4:])
+            total = y * 12 + (m - 1) + offset
+            y2 = total // 12
+            m2 = total % 12 + 1
+            return int(f"{y2}{m2:02d}")
+
+        start_int = _add_months(latest_int, -11)
+        self.me_from_var.set(f"{start_int:06d}")
+        self.me_to_var.set(f"{latest_int:06d}")
+
+        self._refresh_model_eval_table()
+
+    # =========================
+    # 5) ASOF比較タブ
+    # =========================
+    def _init_asof_eval_tab(self) -> None:
+        frame = self.tab_asof_eval
+
+        self._asof_overview_df: Optional[pd.DataFrame] = None
+        self._asof_detail_df: Optional[pd.DataFrame] = None
+        self._asof_best_only_var = tk.BooleanVar(value=False)
+        self._asof_filter_var = tk.StringVar(value="(すべて)")
+
+        # 上部フィルタフォーム
+        top = ttk.Frame(frame)
+        top.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
+
+        self.asof_hotel_var = tk.StringVar(value=DEFAULT_HOTEL)
+        ttk.Label(top, text="ホテル:").grid(row=0, column=0, sticky="w")
+        hotel_combo = ttk.Combobox(top, textvariable=self.asof_hotel_var, state="readonly")
+        hotel_combo["values"] = list(HOTEL_CONFIG.keys())
+        hotel_combo.grid(row=0, column=1, padx=4, pady=2)
+
+        self.asof_from_ym_var = tk.StringVar()
+        self.asof_to_ym_var = tk.StringVar()
+        ttk.Label(top, text="期間From (YYYYMM):").grid(row=0, column=2, sticky="w")
+        ttk.Entry(top, textvariable=self.asof_from_ym_var, width=8).grid(row=0, column=3, padx=4, pady=2)
+        ttk.Label(top, text="期間To (YYYYMM):").grid(row=0, column=4, sticky="w")
+        ttk.Entry(top, textvariable=self.asof_to_ym_var, width=8).grid(row=0, column=5, padx=4, pady=2)
+
+        run_btn = ttk.Button(top, text="評価読み込み", command=self._on_load_asof_eval)
+        run_btn.grid(row=0, column=6, padx=4, pady=2)
+
+        ttk.Checkbutton(
+            top,
+            text="最適モデルのみ表示",
+            variable=self._asof_best_only_var,
+            command=self._refresh_asof_eval_tables,
+        ).grid(row=0, column=7, padx=4, pady=2, sticky="w")
+
+        ttk.Label(top, text="ASOFフィルタ:").grid(row=0, column=8, padx=(12, 0), pady=2, sticky="w")
+        asof_filter_combo = ttk.Combobox(
+            top,
+            textvariable=self._asof_filter_var,
+            state="readonly",
+            values=["(すべて)", "M-2_END", "M-1_END", "M10", "M20"],
+            width=10,
+        )
+        asof_filter_combo.grid(row=0, column=9, padx=4, pady=2, sticky="w")
+        asof_filter_combo.bind("<<ComboboxSelected>>", lambda *_: self._refresh_asof_eval_tables())
+
+        ttk.Button(top, text="CSV出力(サマリ)", command=self._on_export_asof_overview_csv).grid(
+            row=0, column=10, padx=4, pady=2
+        )
+        ttk.Button(top, text="CSV出力(月別ログ)", command=self._on_export_asof_detail_csv).grid(
+            row=0, column=11, padx=4, pady=2
+        )
+
+        # ASOF別サマリテーブル
+        overview_frame = ttk.LabelFrame(frame, text="ASOF別サマリ")
+        overview_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=(0, 4))
+
+        columns = ["model", "asof_type", "mean_error_pct", "mae_pct", "rmse_pct", "n_samples"]
+        self.asof_overview_tree = ttk.Treeview(
+            overview_frame, columns=columns, show="headings", height=8
+        )
+        for col in columns:
+            self.asof_overview_tree.heading(col, text=col)
+        # 列幅・整列設定
+        self.asof_overview_tree.column("model", width=120, anchor="w")
+        self.asof_overview_tree.column("asof_type", width=120, anchor="w")
+        for col in ["mean_error_pct", "mae_pct", "rmse_pct"]:
+            self.asof_overview_tree.column(col, width=120, anchor="e")
+        self.asof_overview_tree.column("n_samples", width=100, anchor="e")
+        self.asof_overview_tree.tag_configure("asof_even", background="#ffffff")
+        self.asof_overview_tree.tag_configure("asof_odd", background="#f5f5f5")
+        self.asof_overview_tree.tag_configure("asof_best", background="#e0f2ff")
+
+        self.asof_overview_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 4), pady=4)
+        vsb1 = ttk.Scrollbar(overview_frame, orient="vertical", command=self.asof_overview_tree.yview)
+        self.asof_overview_tree.configure(yscrollcommand=vsb1.set)
+        vsb1.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # 月別ログテーブル
+        detail_frame = ttk.LabelFrame(frame, text="月別ログ")
+        detail_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+
+        detail_columns = ["target_month", "asof_type", "model", "error_pct", "abs_error_pct"]
+        self.asof_detail_tree = ttk.Treeview(
+            detail_frame, columns=detail_columns, show="headings", height=12
+        )
+        for col in detail_columns:
+            self.asof_detail_tree.heading(col, text=col)
+
+        self.asof_detail_tree.column("target_month", width=100, anchor="w")
+        self.asof_detail_tree.column("asof_type", width=100, anchor="w")
+        self.asof_detail_tree.column("model", width=120, anchor="w")
+        self.asof_detail_tree.column("error_pct", width=120, anchor="e")
+        self.asof_detail_tree.column("abs_error_pct", width=120, anchor="e")
+        self.asof_detail_tree.tag_configure("asofd_even", background="#ffffff")
+        self.asof_detail_tree.tag_configure("asofd_odd", background="#f5f5f5")
+        self.asof_detail_tree.tag_configure("asofd_best", background="#e0f2ff")
+
+        self.asof_detail_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 4), pady=4)
+        vsb2 = ttk.Scrollbar(detail_frame, orient="vertical", command=self.asof_detail_tree.yview)
+        self.asof_detail_tree.configure(yscrollcommand=vsb2.set)
+        vsb2.pack(side=tk.RIGHT, fill=tk.Y)
+
+    def _on_load_asof_eval(self) -> None:
+        """
+        ASOF比較タブの「評価読み込み」ボタン押下時の処理。
+        - get_eval_overview_by_asof / get_eval_monthly_by_asof を呼び、
+          サマリテーブルと月別ログテーブルを更新する。
+        """
+
+        try:
+            hotel = self.asof_hotel_var.get().strip() or DEFAULT_HOTEL
+            from_ym = self.asof_from_ym_var.get().strip() or None
+            to_ym = self.asof_to_ym_var.get().strip() or None
+
+            overview_df = get_eval_overview_by_asof(hotel, from_ym=from_ym, to_ym=to_ym)
+            detail_df = get_eval_monthly_by_asof(hotel, from_ym=from_ym, to_ym=to_ym)
+        except Exception as exc:
+            self._asof_overview_df = None
+            self._asof_detail_df = None
+            messagebox.showerror("エラー", f"モデル評価読み込みに失敗しました:\n{exc}")
+            return
+
+        self._asof_overview_df = overview_df
+        self._asof_detail_df = detail_df
+        self._refresh_asof_eval_tables()
+
+    def _refresh_asof_eval_tables(self) -> None:
+        if self._asof_overview_df is None or self._asof_detail_df is None:
+            self._asof_overview_view_df = None
+            self._asof_detail_view_df = None
+            return
+
+        asof_value = self._asof_filter_var.get()
+
+        overview_df = self._asof_overview_df.copy()
+        best_overview_idx: set[int] = set()
+        if self._asof_best_only_var.get():
+            sort_cols = ["mae_pct"]
+            if "rmse_pct" in overview_df.columns:
+                sort_cols.append("rmse_pct")
+            selected_idx = []
+            for _, grp in overview_df.groupby("asof_type", sort=False):
+                candidates = grp.dropna(subset=["mae_pct"])
+                if candidates.empty:
+                    continue
+                best_row = candidates.sort_values(sort_cols, ascending=True).iloc[0]
+                selected_idx.append(best_row.name)
+            overview_df = overview_df.loc[selected_idx]
+
+        if asof_value and asof_value != "(すべて)":
+            overview_df = overview_df[overview_df["asof_type"] == asof_value]
+
+        if not self._asof_best_only_var.get():
+            tmp = overview_df.dropna(subset=["mae_pct"])
+            if not tmp.empty:
+                for _, grp in tmp.groupby("asof_type", sort=False):
+                    sort_cols = ["mae_pct"]
+                    if "rmse_pct" in grp.columns:
+                        sort_cols.append("rmse_pct")
+                    best_row = grp.sort_values(sort_cols, ascending=True).iloc[0]
+                    best_overview_idx.add(best_row.name)
+
+        overview_df = overview_df.sort_values(["asof_type", "model"])
+
+        self._asof_overview_view_df = overview_df.copy()
+
+        for row_id in self.asof_overview_tree.get_children():
+            self.asof_overview_tree.delete(row_id)
+        for i, (idx, row) in enumerate(overview_df.iterrows()):
+            values = [
+                str(row["model"]),
+                str(row["asof_type"]),
+                _fmt_pct(row.get("mean_error_pct")),
+                _fmt_pct(row.get("mae_pct")),
+                _fmt_pct(row.get("rmse_pct")),
+                str(row["n_samples"]),
+            ]
+            tags = ["asof_even" if i % 2 == 0 else "asof_odd"]
+            if idx in best_overview_idx:
+                tags.append("asof_best")
+            self.asof_overview_tree.insert("", tk.END, values=values, tags=tags)
+
+        base_df = self._asof_detail_df.copy()
+        if asof_value and asof_value != "(すべて)":
+            base_df = base_df[base_df["asof_type"] == asof_value]
+
+        best_detail_idx: set[int] = set()
+        if self._asof_best_only_var.get():
+            sort_cols = ["abs_error_pct"]
+            if "rmse_pct" in base_df.columns:
+                sort_cols.append("rmse_pct")
+            selected_idx = []
+            for _, grp in base_df.groupby(["target_month", "asof_type"], sort=False):
+                candidates = grp.dropna(subset=["abs_error_pct"])
+                if candidates.empty:
+                    continue
+                best_row = candidates.sort_values(sort_cols, ascending=True).iloc[0]
+                selected_idx.append(best_row.name)
+            base_df = base_df.loc[selected_idx]
+
+        if not self._asof_best_only_var.get():
+            tmp = base_df.dropna(subset=["abs_error_pct"])
+            if not tmp.empty:
+                for _, grp in tmp.groupby(["target_month", "asof_type"], sort=False):
+                    sort_cols = ["abs_error_pct"]
+                    if "rmse_pct" in grp.columns:
+                        sort_cols.append("rmse_pct")
+                    best_row = grp.sort_values(sort_cols, ascending=True).iloc[0]
+                    best_detail_idx.add(best_row.name)
+
+        base_df = base_df.sort_values(["target_month", "asof_type", "model"])
+
+        self._asof_detail_view_df = base_df.copy()
+
+        for row_id in self.asof_detail_tree.get_children():
+            self.asof_detail_tree.delete(row_id)
+        for i, (idx, row) in enumerate(base_df.iterrows()):
+            values = [
+                str(row["target_month"]),
+                str(row["asof_type"]),
+                str(row["model"]),
+                _fmt_pct(row.get("error_pct")),
+                _fmt_pct(row.get("abs_error_pct")),
+            ]
+            tags = ["asofd_even" if i % 2 == 0 else "asofd_odd"]
+            if idx in best_detail_idx:
+                tags.append("asofd_best")
+            self.asof_detail_tree.insert("", tk.END, values=values, tags=tags)
+
+    def _on_export_asof_overview_csv(self) -> None:
+        """
+        ASOF比較タブの上段サマリを CSV 出力する。
+        """
+
+        df = getattr(self, "_asof_overview_view_df", None)
+        if df is None or df.empty:
+            messagebox.showerror("エラー", "先に評価を読み込んでください。")
+            return
+
+        hotel = self.asof_hotel_var.get().strip() if hasattr(self, "asof_hotel_var") else ""
+        from_ym = self.asof_from_ym_var.get().strip() if hasattr(self, "asof_from_ym_var") else ""
+        to_ym = self.asof_to_ym_var.get().strip() if hasattr(self, "asof_to_ym_var") else ""
+        asof_filter = self._asof_filter_var.get().strip() if hasattr(self, "_asof_filter_var") else ""
+        best_only = "best" if getattr(self, "_asof_best_only_var", tk.BooleanVar(value=False)).get() else "all"
+
+        if not hotel:
+            hotel = "unknown"
+        if not from_ym:
+            from_ym = "ALL"
+        if not to_ym:
+            to_ym = "ALL"
+
+        if not asof_filter or "(すべて" in asof_filter:
+            asof_key = "ALL"
+        else:
+            asof_key = asof_filter
+            asof_key = asof_key.replace("(", "_").replace(")", "_").replace(" ", "_")
+
+        try:
+            OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            filename = f"asof_overview_{hotel}_{from_ym}_{to_ym}_{asof_key}_{best_only}.csv"
+            out_path = OUTPUT_DIR / filename
+            df.to_csv(out_path, index=False)
+        except Exception as e:
+            messagebox.showerror("エラー", f"CSV出力に失敗しました:\n{e}")
+            return
+
+        messagebox.showinfo("保存完了", f"CSV を保存しました。\n{out_path}")
+
+    def _on_export_asof_detail_csv(self) -> None:
+        """
+        ASOF比較タブの下段(月別ログ)を CSV 出力する。
+        """
+
+        df = getattr(self, "_asof_detail_view_df", None)
+        if df is None or df.empty:
+            messagebox.showerror("エラー", "先に評価を読み込んでください。")
+            return
+
+        hotel = self.asof_hotel_var.get().strip() if hasattr(self, "asof_hotel_var") else ""
+        from_ym = self.asof_from_ym_var.get().strip() if hasattr(self, "asof_from_ym_var") else ""
+        to_ym = self.asof_to_ym_var.get().strip() if hasattr(self, "asof_to_ym_var") else ""
+        asof_filter = self._asof_filter_var.get().strip() if hasattr(self, "_asof_filter_var") else ""
+        best_only = "best" if getattr(self, "_asof_best_only_var", tk.BooleanVar(value=False)).get() else "all"
+
+        if not hotel:
+            hotel = "unknown"
+        if not from_ym:
+            from_ym = "ALL"
+        if not to_ym:
+            to_ym = "ALL"
+
+        if not asof_filter or "(すべて" in asof_filter:
+            asof_key = "ALL"
+        else:
+            asof_key = asof_filter
+            asof_key = asof_key.replace("(", "_").replace(")", "_").replace(" ", "_")
+
+        try:
+            OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            filename = f"asof_detail_{hotel}_{from_ym}_{to_ym}_{asof_key}_{best_only}.csv"
+            out_path = OUTPUT_DIR / filename
+            df.to_csv(out_path, index=False)
+        except Exception as e:
+            messagebox.showerror("エラー", f"CSV出力に失敗しました:\n{e}")
+            return
+
+        messagebox.showinfo("保存完了", f"CSV を保存しました。\n{out_path}")
 
     # =========================
     # 1) ブッキングカーブタブ

@@ -208,12 +208,16 @@ def moving_average_recent_90days_weighted(
     as_of_date: pd.Timestamp,
     lt_min: int = -1,
     lt_max: int = 90,
+    weights: tuple[float, float, float] | None = None,
 ) -> pd.Series:
     """Compute LT-wise weighted averages using a moving 90-day stay-date window.
 
     Observations are weighted by their absolute age in days relative to
     ``as_of_date`` with the following scheme: 0–14 days = 3.0, 15–30 days =
-    2.0, 31–90 days = 1.0. Observations outside that range are ignored.
+    2.0, 31–90 days = 1.0. Observations outside that range are ignored. The
+    ``weights`` argument can be used to override these defaults by passing a
+    tuple ``(w_recent, w_mid, w_old)``; when omitted, ``(3.0, 2.0, 1.0)`` is
+    applied.
     """
 
     if lt_min > lt_max:
@@ -232,6 +236,24 @@ def moving_average_recent_90days_weighted(
 
     as_of_ts = pd.to_datetime(as_of_date)
 
+    if weights is None:
+        weight_func = _recent90_weight
+    else:
+        if len(weights) != 3:
+            raise ValueError("weights must contain exactly three values")
+        w_recent, w_mid, w_old = weights
+
+        def weight_func(age_days: int) -> float:
+            d = abs(age_days)
+            if 0 <= d <= 14:
+                return w_recent
+            elif 15 <= d <= 30:
+                return w_mid
+            elif 31 <= d <= 90:
+                return w_old
+            else:
+                return 0.0
+
     result: dict[int, float] = {}
     for lt in range(lt_min, lt_max + 1):
         if lt not in lt_col_map:
@@ -248,7 +270,7 @@ def moving_average_recent_90days_weighted(
         weight_sum = 0.0
         for obs_date, value in values.items():
             diff_days = (obs_date - as_of_ts).days
-            weight = _recent90_weight(diff_days)
+            weight = weight_func(diff_days)
             if weight == 0.0 or pd.isna(value):
                 continue
             weighted_sum += value * weight

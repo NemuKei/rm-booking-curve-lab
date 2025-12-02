@@ -4,8 +4,10 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import pandas as pd
+import build_calendar_features
 import run_forecast_batch
 import run_build_lt_csv
+from run_full_evaluation import run_full_evaluation_for_gui
 
 from booking_curve.forecast_simple import (
     moving_average_recent_90days,
@@ -23,6 +25,108 @@ HOTEL_CONFIG: Dict[str, Dict[str, float]] = {
     },
     # 他ホテルを追加する場合はここに辞書を増やす
 }
+
+
+def generate_month_range(start_yyyymm: str, end_yyyymm: str) -> list[str]:
+    """
+    開始月・終了月 (YYYYMM) から、両端を含む月リストを生成する。
+    例: "202401", "202403" -> ["202401", "202402", "202403"]
+    """
+
+    def _parse_yyyymm(value: str) -> tuple[int, int]:
+        if len(value) != 6:
+            raise ValueError(f"Invalid YYYYMM format: {value}")
+        try:
+            year = int(value[:4])
+            month = int(value[4:])
+        except ValueError:
+            raise ValueError(f"Invalid YYYYMM format: {value}") from None
+        if not 1 <= month <= 12:
+            raise ValueError(f"Invalid month in YYYYMM: {value}")
+        return year, month
+
+    start_year, start_month = _parse_yyyymm(start_yyyymm)
+    end_year, end_month = _parse_yyyymm(end_yyyymm)
+
+    if (start_year, start_month) > (end_year, end_month):
+        raise ValueError("start_yyyymm must not be later than end_yyyymm")
+
+    months: list[str] = []
+    year, month = start_year, start_month
+    while (year, month) <= (end_year, end_month):
+        months.append(f"{year}{month:02d}")
+        if month == 12:
+            year += 1
+            month = 1
+        else:
+            month += 1
+
+    return months
+
+
+def build_calendar_for_gui(hotel_tag: str) -> str:
+    """
+    GUI からのカレンダー再生成ボタン用ラッパ。
+
+    現状は build_calendar_features.main() が内部で HOTEL_TAG="daikokucho" 固定で
+    calendar_features_daikokucho.csv を出力する前提になっている。
+
+    将来的には hotel_tag ごとに別のカレンダーを生成するように build_calendar_features 側を
+    拡張する想定だが、現時点では hotel_tag はインターフェース上の引数として受け取るだけにする。
+
+    戻り値:
+        生成されたカレンダーファイルの絶対パス文字列。
+    """
+
+    # まず既存の main() を呼んでファイル生成を行う。
+    try:
+        build_calendar_features.main()
+    except Exception:
+        # 例外はそのまま呼び出し元(GUI側)に送る
+        raise
+
+    # 現状は hotel_tag に関わらず daikokucho 固定ファイルが出力される想定。
+    # OUTPUT_DIR は本モジュール内で定義されている output フォルダへのパスを使う。
+    csv_path = OUTPUT_DIR / f"calendar_features_{hotel_tag}.csv"
+    return str(csv_path)
+
+
+def get_calendar_coverage(hotel_tag: str) -> Dict[str, Optional[str]]:
+    """
+    calendar_features_<hotel_tag>.csv の日付範囲を返すヘルパー。
+
+    戻り値:
+        {
+            "min_date": "YYYY-MM-DD" または None,
+            "max_date": "YYYY-MM-DD" または None,
+        }
+
+    ファイルが存在しない、もしくは内容が不正な場合は両方とも None を返す。
+    """
+
+    csv_path = OUTPUT_DIR / f"calendar_features_{hotel_tag}.csv"
+    if not csv_path.exists():
+        return {"min_date": None, "max_date": None}
+
+    try:
+        df = pd.read_csv(csv_path, parse_dates=["date"])
+    except Exception:
+        return {"min_date": None, "max_date": None}
+
+    if df.empty or "date" not in df.columns:
+        return {"min_date": None, "max_date": None}
+
+    # date 列から最小・最大を取得
+    min_dt = df["date"].min()
+    max_dt = df["date"].max()
+
+    if pd.isna(min_dt) or pd.isna(max_dt):
+        return {"min_date": None, "max_date": None}
+
+    min_str = pd.to_datetime(min_dt).normalize().strftime("%Y-%m-%d")
+    max_str = pd.to_datetime(max_dt).normalize().strftime("%Y-%m-%d")
+
+    return {"min_date": min_str, "max_date": max_str}
 
 
 def _get_capacity(hotel_tag: str, capacity: Optional[float]) -> float:
@@ -500,20 +604,307 @@ def get_daily_forecast_table(
 
 
 def get_model_evaluation_table(hotel_tag: str) -> pd.DataFrame:
-    """モデル評価画面向けに、月次 MAE/バイアス一覧を返す。"""
-    csv_path = OUTPUT_DIR / f"evaluation_{hotel_tag}_multi.csv"
-    if not csv_path.exists():
-        raise FileNotFoundError(f"evaluation csv not found: {csv_path}")
+    """
+    評価CSVを読み込み、月別×モデル + モデルTOTAL の評価指標を返す。
 
-    df = pd.read_csv(csv_path)
-    # 必要な列だけに整形 (target_month, model, mean_error_pct, mae_pct)
-    cols = []
-    for c in ["target_month", "model", "mean_error_pct", "mae_pct"]:
-        if c not in df.columns:
-            raise ValueError(f"{csv_path} に {c} 列がありません。")
-        cols.append(c)
-    df = df[cols].copy()
-    return df
+    - mean_error_pct : 誤差率の平均（バイアス）
+    - mae_pct        : 誤差率絶対値の平均
+    - rmse_pct       : 誤差率の二乗平均平方根
+    - n_samples      : 集計に使ったサンプル数（ASOF数）
+
+    備考:
+    - run_evaluate_forecasts.py が出力する
+        evaluation_{hotel_tag}_multi.csv   : 月次サマリ
+        evaluation_{hotel_tag}_detail.csv  : ASOF明細
+      を利用する。
+    """
+
+    summary_path = OUTPUT_DIR / f"evaluation_{hotel_tag}_multi.csv"
+    detail_path = OUTPUT_DIR / f"evaluation_{hotel_tag}_detail.csv"
+
+    if not summary_path.exists():
+        raise FileNotFoundError(f"evaluation summary csv not found: {summary_path}")
+
+    # --- 月次サマリ (mean_error_pct / mae_pct) 読み込み ---
+    df_summary = pd.read_csv(summary_path)
+
+    required_summary_cols = ["target_month", "model", "mean_error_pct", "mae_pct"]
+    missing_sum = [c for c in required_summary_cols if c not in df_summary.columns]
+    if missing_sum:
+        raise ValueError(f"{summary_path} に {', '.join(missing_sum)} 列がありません。")
+
+    df_summary = df_summary.copy()
+    df_summary["target_month"] = df_summary["target_month"].astype(str)
+    df_summary["model"] = df_summary["model"].astype(str)
+    df_summary["mean_error_pct"] = pd.to_numeric(
+        df_summary["mean_error_pct"], errors="coerce"
+    )
+    df_summary["mae_pct"] = pd.to_numeric(df_summary["mae_pct"], errors="coerce")
+
+    # --- 明細から rmse_pct / n_samples を計算 ---
+    if detail_path.exists():
+        df_detail = pd.read_csv(detail_path)
+
+        required_detail_cols = ["target_month", "model", "error_pct", "abs_error_pct"]
+        missing_det = [c for c in required_detail_cols if c not in df_detail.columns]
+        if missing_det:
+            raise ValueError(f"{detail_path} に {', '.join(missing_det)} 列がありません。")
+
+        df_detail = df_detail.copy()
+        df_detail["target_month"] = df_detail["target_month"].astype(str)
+        df_detail["model"] = df_detail["model"].astype(str)
+        df_detail["error_pct"] = pd.to_numeric(
+            df_detail["error_pct"], errors="coerce"
+        )
+        df_detail["abs_error_pct"] = pd.to_numeric(
+            df_detail["abs_error_pct"], errors="coerce"
+        )
+
+        def _agg_group(g: pd.DataFrame) -> dict:
+            err = g["error_pct"].dropna()
+            err_abs = g["abs_error_pct"].dropna()
+            n = int(err.count())
+            rmse = err.pow(2).mean() ** 0.5 if not err.empty else float("nan")
+            return {
+                "rmse_pct": rmse,
+                "n_samples": n,
+            }
+
+        # 月別×モデルの rmse_pct / n_samples
+        records = []
+        for (tm, model), g in df_detail.groupby(["target_month", "model"]):
+            agg = _agg_group(g)
+            records.append(
+                {"target_month": tm, "model": model, **agg}
+            )
+
+        df_rmse = pd.DataFrame(
+            records,
+            columns=["target_month", "model", "rmse_pct", "n_samples"],
+        )
+
+        # サマリと結合
+        df_merged = pd.merge(
+            df_summary,
+            df_rmse,
+            on=["target_month", "model"],
+            how="left",
+        )
+
+        # モデル別 TOTAL 行（全期間まとめ）
+        total_records = []
+        for model, g in df_detail.groupby("model"):
+            agg = _agg_group(g)
+            # TOTAL については mean_error_pct / mae_pct も detail から再計算
+            err = g["error_pct"].dropna()
+            err_abs = g["abs_error_pct"].dropna()
+            mean_error = err.mean() if not err.empty else float("nan")
+            mae = err_abs.mean() if not err_abs.empty else float("nan")
+
+            total_records.append(
+                {
+                    "target_month": "TOTAL",
+                    "model": model,
+                    "mean_error_pct": mean_error,
+                    "mae_pct": mae,
+                    "rmse_pct": agg["rmse_pct"],
+                    "n_samples": agg["n_samples"],
+                }
+            )
+
+        df_total = pd.DataFrame(
+            total_records,
+            columns=[
+                "target_month",
+                "model",
+                "mean_error_pct",
+                "mae_pct",
+                "rmse_pct",
+                "n_samples",
+            ],
+        )
+
+        out = pd.concat([df_merged, df_total], ignore_index=True)
+
+    else:
+        # 明細が無い場合は rmse/n_samples は NaN のまま
+        df_summary["rmse_pct"] = float("nan")
+        df_summary["n_samples"] = float("nan")
+        out = df_summary
+
+    # 並び替え
+    def _sort_target_month(value: str) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            # "TOTAL" などは最後に回す
+            return 999999
+
+    out["target_month"] = out["target_month"].astype(str)
+    out["__sort_month"] = out["target_month"].map(_sort_target_month)
+    out.sort_values(by=["model", "__sort_month"], inplace=True)
+    out.drop(columns=["__sort_month"], inplace=True)
+
+    # 列順を固定
+    out = out[
+        [
+            "target_month",
+            "model",
+            "mean_error_pct",
+            "mae_pct",
+            "rmse_pct",
+            "n_samples",
+        ]
+    ]
+
+    return out
+
+
+def _target_month_to_int(value: object) -> int:
+    """target_month を int に正規化する。"""
+
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        raise ValueError(f"Invalid target_month value: {value}")
+
+
+def _filter_by_target_month(
+    df: pd.DataFrame, from_ym: Optional[str], to_ym: Optional[str]
+) -> pd.DataFrame:
+    df = df.copy()
+    df["target_month_int"] = df["target_month"].map(_target_month_to_int)
+
+    mask = pd.Series([True] * len(df))
+    if from_ym is not None:
+        mask &= df["target_month_int"] >= _target_month_to_int(from_ym)
+    if to_ym is not None:
+        mask &= df["target_month_int"] <= _target_month_to_int(to_ym)
+
+    return df.loc[mask].copy()
+
+
+def get_eval_overview_by_asof(
+    hotel_tag: str,
+    from_ym: str | None = None,
+    to_ym: str | None = None,
+) -> pd.DataFrame:
+    """
+    モデル×ASOFタイプ別の期間トータル評価指標を返す。
+
+    - 入力: evaluation_{hotel_tag}_detail.csv
+    - 期間フィルタ:
+        * from_ym, to_ym は "YYYYMM" 形式の文字列または None。
+        * target_month を int 化して between でフィルタする。
+        * None の場合は制限なし。
+    - 出力列:
+        ["model", "asof_type",
+         "mean_error_pct",  # error_pct の平均
+         "mae_pct",         # abs_error_pct の平均
+         "rmse_pct",        # sqrt(mean(error_pct^2))
+         "n_samples"]       # サンプル数
+    - 並び順:
+        model 昇順, asof_type 昇順。
+    """
+
+    csv_path = OUTPUT_DIR / f"evaluation_{hotel_tag}_detail.csv"
+    if not csv_path.exists():
+        raise FileNotFoundError(f"evaluation detail csv not found: {csv_path}")
+
+    df_detail = pd.read_csv(csv_path)
+    df_detail = _filter_by_target_month(df_detail, from_ym=from_ym, to_ym=to_ym)
+
+    df_detail["error_pct"] = pd.to_numeric(df_detail["error_pct"], errors="coerce")
+    df_detail["abs_error_pct"] = pd.to_numeric(
+        df_detail["abs_error_pct"], errors="coerce"
+    )
+
+    records = []
+    for (model, asof_type), g in df_detail.groupby(["model", "asof_type"]):
+        err = g["error_pct"].dropna()
+        err_abs = g["abs_error_pct"].dropna()
+        mean_error = err.mean() if not err.empty else float("nan")
+        mae = err_abs.mean() if not err_abs.empty else float("nan")
+        rmse = err.pow(2).mean() ** 0.5 if not err.empty else float("nan")
+        n = int(err.count())
+
+        records.append(
+            {
+                "model": model,
+                "asof_type": asof_type,
+                "mean_error_pct": mean_error,
+                "mae_pct": mae,
+                "rmse_pct": rmse,
+                "n_samples": n,
+            }
+        )
+
+    out = pd.DataFrame(
+        records,
+        columns=[
+            "model",
+            "asof_type",
+            "mean_error_pct",
+            "mae_pct",
+            "rmse_pct",
+            "n_samples",
+        ],
+    )
+
+    out.sort_values(by=["model", "asof_type"], inplace=True)
+
+    return out
+
+
+def get_eval_monthly_by_asof(
+    hotel_tag: str,
+    from_ym: str | None = None,
+    to_ym: str | None = None,
+    asof_types: list[str] | None = None,
+    models: list[str] | None = None,
+) -> pd.DataFrame:
+    """
+    月別×ASOF×モデルの評価ログを返す（1行=1 target_month×asof_type×model）。
+
+    - 入力: evaluation_{hotel_tag}_detail.csv
+    - 期間フィルタ:
+        from_ym/to_ym は get_eval_overview_by_asof と同じ。
+    - asof_types フィルタ:
+        None の場合は全て、リスト指定時はその asof_type のみ残す。
+    - models フィルタ:
+        None の場合は全て、リスト指定時はその model のみ残す。
+    - 出力列:
+        ["target_month", "asof_type", "model",
+         "error_pct", "abs_error_pct"]
+      必要に応じて GUI 側で mean_error_pct / mae_pct として解釈する。
+    - 並び順:
+        target_month 昇順, asof_type 昇順, model 昇順。
+    """
+
+    csv_path = OUTPUT_DIR / f"evaluation_{hotel_tag}_detail.csv"
+    if not csv_path.exists():
+        raise FileNotFoundError(f"evaluation detail csv not found: {csv_path}")
+
+    df_detail = pd.read_csv(csv_path)
+    df_detail = _filter_by_target_month(df_detail, from_ym=from_ym, to_ym=to_ym)
+
+    if asof_types is not None:
+        df_detail = df_detail[df_detail["asof_type"].isin(asof_types)]
+    if models is not None:
+        df_detail = df_detail[df_detail["model"].isin(models)]
+
+    df_detail["error_pct"] = pd.to_numeric(df_detail["error_pct"], errors="coerce")
+    df_detail["abs_error_pct"] = pd.to_numeric(
+        df_detail["abs_error_pct"], errors="coerce"
+    )
+
+    df_detail.sort_values(
+        by=["target_month_int", "asof_type", "model"], inplace=True
+    )
+
+    return df_detail[
+        ["target_month", "asof_type", "model", "error_pct", "abs_error_pct"]
+    ].reset_index(drop=True)
 
 
 def run_build_lt_data_for_gui(
@@ -535,4 +926,17 @@ def run_build_lt_data_for_gui(
         run_build_lt_csv.run_build_lt_for_gui(target_months)
     except Exception:
         raise
+
+
+def run_full_evaluation_for_gui_range(
+    hotel_tag: str,
+    start_yyyymm: str,
+    end_yyyymm: str,
+) -> tuple[Path, Path]:
+    months = generate_month_range(start_yyyymm, end_yyyymm)
+    detail_path, summary_path = run_full_evaluation_for_gui(
+        hotel_tag=hotel_tag,
+        target_months=months,
+    )
+    return detail_path, summary_path
 

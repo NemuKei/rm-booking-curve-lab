@@ -186,7 +186,7 @@ class BookingCurveApp(tk.Tk):
         self.hotel_combo = ttk.Combobox(
             calendar_frame, textvariable=self.hotel_var, state="readonly"
         )
-        self.hotel_combo["values"] = list(HOTEL_CONFIG.keys())
+        self.hotel_combo["values"] = sorted(HOTEL_CONFIG.keys())
         self.hotel_combo.grid(row=0, column=1, padx=4, pady=2, sticky="w")
         self.hotel_combo.bind("<<ComboboxSelected>>", self._on_hotel_changed)
 
@@ -341,7 +341,7 @@ class BookingCurveApp(tk.Tk):
         ttk.Label(form, text="ホテル:").grid(row=0, column=0, sticky="w")
         self.df_hotel_var = tk.StringVar(value=DEFAULT_HOTEL)
         hotel_combo = ttk.Combobox(form, textvariable=self.df_hotel_var, state="readonly")
-        hotel_combo["values"] = list(HOTEL_CONFIG.keys())
+        hotel_combo["values"] = sorted(HOTEL_CONFIG.keys())
         hotel_combo.grid(row=0, column=1, padx=4, pady=2)
         hotel_combo.bind("<<ComboboxSelected>>", self._on_df_hotel_changed)
 
@@ -866,7 +866,7 @@ class BookingCurveApp(tk.Tk):
         ttk.Label(top, text="ホテル:").grid(row=0, column=0, sticky="w")
         self.me_hotel_var = tk.StringVar(value=DEFAULT_HOTEL)
         hotel_combo = ttk.Combobox(top, textvariable=self.me_hotel_var, state="readonly")
-        hotel_combo["values"] = list(HOTEL_CONFIG.keys())
+        hotel_combo["values"] = sorted(HOTEL_CONFIG.keys())
         hotel_combo.grid(row=0, column=1, padx=4, pady=2)
 
         run_btn = ttk.Button(top, text="評価読み込み", command=self._on_load_model_eval)
@@ -1144,7 +1144,7 @@ class BookingCurveApp(tk.Tk):
         self.asof_hotel_var = tk.StringVar(value=DEFAULT_HOTEL)
         ttk.Label(top, text="ホテル:").grid(row=0, column=0, sticky="w")
         hotel_combo = ttk.Combobox(top, textvariable=self.asof_hotel_var, state="readonly")
-        hotel_combo["values"] = list(HOTEL_CONFIG.keys())
+        hotel_combo["values"] = sorted(HOTEL_CONFIG.keys())
         hotel_combo.grid(row=0, column=1, padx=4, pady=2)
 
         self.asof_from_ym_var = tk.StringVar()
@@ -1451,7 +1451,7 @@ class BookingCurveApp(tk.Tk):
         ttk.Label(form, text="ホテル:").grid(row=0, column=0, sticky="w")
         self.bc_hotel_var = tk.StringVar(value=DEFAULT_HOTEL)
         hotel_combo = ttk.Combobox(form, textvariable=self.bc_hotel_var, state="readonly")
-        hotel_combo["values"] = list(HOTEL_CONFIG.keys())
+        hotel_combo["values"] = sorted(HOTEL_CONFIG.keys())
         hotel_combo.grid(row=0, column=1, padx=4, pady=2)
         hotel_combo.bind("<<ComboboxSelected>>", self._on_bc_hotel_changed)
 
@@ -2220,7 +2220,7 @@ class BookingCurveApp(tk.Tk):
         ttk.Label(form, text="ホテル:").grid(row=0, column=0, sticky="w")
         self.mc_hotel_var = tk.StringVar(value=DEFAULT_HOTEL)
         mc_combo = ttk.Combobox(form, textvariable=self.mc_hotel_var, state="readonly")
-        mc_combo["values"] = list(HOTEL_CONFIG.keys())
+        mc_combo["values"] = sorted(HOTEL_CONFIG.keys())
         mc_combo.grid(row=0, column=1, padx=4, pady=2)
 
         ttk.Label(form, text="対象月 (YYYYMM):").grid(row=0, column=2, sticky="w")

@@ -118,29 +118,18 @@ def generate_month_range(start_yyyymm: str, end_yyyymm: str) -> list[str]:
 
 def build_calendar_for_gui(hotel_tag: str) -> str:
     """
-    GUI からのカレンダー再生成ボタン用ラッパ。
+    GUI からのカレンダー再生成ボタン用ラッパー。
 
-    現状は build_calendar_features.main() が内部で HOTEL_TAG="daikokucho" 固定で
-    calendar_features_daikokucho.csv を出力する前提になっている。
-
-    将来的には hotel_tag ごとに別のカレンダーを生成するように build_calendar_features 側を
-    拡張する想定だが、現時点では hotel_tag はインターフェース上の引数として受け取るだけにする。
-
-    戻り値:
-        生成されたカレンダーファイルの絶対パス文字列。
+    build_calendar_features.build_calendar_for_hotel() を呼び出し、
+    生成された calendar_features_<hotel_tag>.csv のパス文字列を返す。
     """
-
-    # まず既存の main() を呼んでファイル生成を行う。
     try:
-        build_calendar_features.main()
+        out_path = build_calendar_features.build_calendar_for_hotel(hotel_tag=hotel_tag)
     except Exception:
-        # 例外はそのまま呼び出し元(GUI側)に送る
+        # 例外はそのまま GUI 側に投げて、エラーダイアログで表示してもらう
         raise
 
-    # 現状は hotel_tag に関わらず daikokucho 固定ファイルが出力される想定。
-    # OUTPUT_DIR は本モジュール内で定義されている output フォルダへのパスを使う。
-    csv_path = OUTPUT_DIR / f"calendar_features_{hotel_tag}.csv"
-    return str(csv_path)
+    return str(out_path)
 
 
 def get_calendar_coverage(hotel_tag: str) -> Dict[str, Optional[str]]:

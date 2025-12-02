@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pathlib import Path
+import json
 from typing import Dict, List, Optional
 
 import pandas as pd
@@ -12,17 +12,47 @@ from booking_curve.forecast_simple import (
     moving_average_recent_90days_weighted,
     moving_average_3months,
 )
+from booking_curve.config import OUTPUT_DIR, PROJECT_ROOT
 
-# プロジェクトルートから見た output ディレクトリ
-OUTPUT_DIR = Path(__file__).resolve().parents[2] / "output"
+CONFIG_DIR = PROJECT_ROOT / "config"
+HOTEL_CONFIG_PATH = CONFIG_DIR / "hotels.json"
 
-# ホテル別設定 (将来は設定画面や外部ファイルに出してもよい)
-HOTEL_CONFIG: Dict[str, Dict[str, float]] = {
-    "daikokucho": {
-        "capacity": 168.0,
-    },
-    # 他ホテルを追加する場合はここに辞書を増やす
-}
+
+def _load_default_hotel_config() -> Dict[str, Dict[str, float]]:
+    return {"daikokucho": {"capacity": 168.0}}
+
+
+def load_hotel_config() -> Dict[str, Dict[str, float]]:
+    """
+    config/hotels.json からホテル設定を読み込む。
+
+    - ファイルが存在しない場合や読み込みエラー時は、デフォルト設定を返す。
+    - display_name はオプションであり、現時点では使用しない。
+    """
+
+    try:
+        if HOTEL_CONFIG_PATH.exists():
+            with HOTEL_CONFIG_PATH.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                hotel_config: Dict[str, Dict[str, float]] = {}
+                for tag, config in data.items():
+                    if not isinstance(config, dict):
+                        continue
+                    capacity = config.get("capacity")
+                    try:
+                        hotel_config[tag] = {"capacity": float(capacity)}
+                    except Exception:
+                        continue
+                if hotel_config:
+                    return hotel_config
+    except Exception:
+        pass
+
+    return _load_default_hotel_config()
+
+
+HOTEL_CONFIG: Dict[str, Dict[str, float]] = load_hotel_config()
 
 
 def _get_capacity(hotel_tag: str, capacity: Optional[float]) -> float:
@@ -31,7 +61,7 @@ def _get_capacity(hotel_tag: str, capacity: Optional[float]) -> float:
     """
     if capacity is not None:
         return float(capacity)
-    return float(HOTEL_CONFIG.get(hotel_tag, {}).get("capacity", 1.0))
+    return float(HOTEL_CONFIG.get(hotel_tag, {}).get("capacity", 168.0))
 
 
 def get_latest_asof_for_hotel(hotel_tag: str) -> Optional[str]:

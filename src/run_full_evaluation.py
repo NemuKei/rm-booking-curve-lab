@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from booking_curve.config import OUTPUT_DIR
+from booking_curve.config import HOTEL_CONFIG, OUTPUT_DIR
 from booking_curve.plot_booking_curve import filter_by_weekday
 from booking_curve.forecast_simple import (
     moving_average_3months,
@@ -143,9 +143,24 @@ def _infer_target_month(lt_df: pd.DataFrame) -> str:
 def build_monthly_forecast(
     lt_df: pd.DataFrame, model_name: str, as_of_date: str, hotel_tag: str
 ) -> pd.Series:
+    """
+    Build a monthly forecast series (projected rooms per stay_date) for a given hotel.
+
+    Parameters
+    ----------
+    lt_df:
+        LT_DATA for a single target month (index = stay_date).
+    model_name:
+        "avg", "recent90", "recent90_adj", "recent90w", or "recent90w_adj".
+    as_of_date:
+        ASOF date string (YYYYMMDD).
+    hotel_tag:
+        Hotel key such as "daikokucho" or "kansai".
+    """
     as_of_ts = pd.to_datetime(as_of_date)
     target_month = _infer_target_month(lt_df)
 
+    # 1) decide which history months to use
     if model_name == "avg":
         history_months = get_avg_history_months(target_month=target_month, months_back=3)
     else:
@@ -153,6 +168,7 @@ def build_monthly_forecast(
             as_of_ts=as_of_ts, months_back=4, months_forward=4
         )
 
+    # 2) load history LT_DATA for the SAME hotel
     history_raw: dict[str, pd.DataFrame] = {}
     for ym in history_months:
         try:
@@ -163,8 +179,15 @@ def build_monthly_forecast(
             continue
         history_raw[ym] = df_m
 
+    if not history_raw:
+        return pd.Series(dtype=float)
+
+    # 3) resolve per-hotel capacity
+    cap = HOTEL_CONFIG.get(hotel_tag, {}).get("capacity", CAPACITY)
+
     all_forecasts: dict[pd.Timestamp, float] = {}
 
+    # 4) build weekday-wise forecasts
     for weekday in range(7):
         history_dfs = []
         for df_m in history_raw.values():
@@ -200,7 +223,7 @@ def build_monthly_forecast(
             lt_df=df_target_wd,
             avg_curve=avg_curve,
             as_of_date=as_of_ts,
-            capacity=CAPACITY,
+            capacity=cap,
             lt_min=0,
             lt_max=LT_MAX,
         )
@@ -211,12 +234,20 @@ def build_monthly_forecast(
     if not all_forecasts:
         return pd.Series(dtype=float)
 
+    # avg model only needs the projected series
     if model_name == "avg":
-        projected = _build_projected_series(lt_df=lt_df, forecasts=all_forecasts, as_of_ts=as_of_ts)
-        return projected
+        return _build_projected_series(
+            lt_df=lt_df,
+            forecasts=all_forecasts,
+            as_of_ts=as_of_ts,
+        )
 
+    # recent90系は forecast_month_from_recent90 を通す (ホテル別)
     out_df = forecast_month_from_recent90(
-        df_target=lt_df, forecasts=all_forecasts, as_of_ts=as_of_ts, hotel_tag=hotel_tag
+        df_target=lt_df,
+        forecasts=all_forecasts,
+        as_of_ts=as_of_ts,
+        hotel_tag=hotel_tag,
     )
 
     if model_name in {"recent90_adj", "recent90w_adj"}:

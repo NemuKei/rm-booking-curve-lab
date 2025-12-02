@@ -187,7 +187,7 @@ def _get_capacity(hotel_tag: str, capacity: Optional[float]) -> float:
     """
     if capacity is not None:
         return float(capacity)
-    return float(HOTEL_CONFIG.get(hotel_tag, {}).get("capacity", 168.0))
+    return float(HOTEL_CONFIG.get(hotel_tag, {}).get("capacity", 171.0))
 
 
 def get_latest_asof_for_hotel(hotel_tag: str) -> Optional[str]:
@@ -533,11 +533,26 @@ def run_forecast_for_gui(
 
     for ym in target_months:
         if base_model == "avg":
-            run_forecast_batch.run_avg_forecast(ym, asof_tag, capacity=capacity)
+            run_forecast_batch.run_avg_forecast(
+                target_month=ym,
+                as_of_date=asof_tag,
+                capacity=capacity,
+                hotel_tag=hotel_tag,
+            )
         elif base_model == "recent90":
-            run_forecast_batch.run_recent90_forecast(ym, asof_tag, capacity=capacity)
+            run_forecast_batch.run_recent90_forecast(
+                target_month=ym,
+                as_of_date=asof_tag,
+                capacity=capacity,
+                hotel_tag=hotel_tag,
+            )
         elif base_model == "recent90w":
-            run_forecast_batch.run_recent90_weighted_forecast(ym, asof_tag, capacity=capacity)
+            run_forecast_batch.run_recent90_weighted_forecast(
+                target_month=ym,
+                as_of=asof_tag,
+                capacity=capacity,
+                hotel_tag=hotel_tag,
+            )
         else:
             raise ValueError(f"Unsupported gui_model: {gui_model}")
 

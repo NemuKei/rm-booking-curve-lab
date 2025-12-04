@@ -69,7 +69,12 @@ class BookingCurveApp(tk.Tk):
 
         self._settings = self._load_settings()
 
-        self.hotel_var = tk.StringVar(value=DEFAULT_HOTEL)
+        general = self._settings.get("general") or {}
+        initial_hotel = general.get("last_hotel")
+        if initial_hotel not in HOTEL_CONFIG:
+            initial_hotel = DEFAULT_HOTEL
+        self.hotel_var = tk.StringVar(value=initial_hotel)
+        self.hotel_var.trace_add("write", self._on_hotel_var_changed)
 
         # モデル評価タブ用の状態変数
         self.model_eval_df: Optional[pd.DataFrame] = None
@@ -106,6 +111,24 @@ class BookingCurveApp(tk.Tk):
                 json.dump(self._settings, f, ensure_ascii=False, indent=2)
         except Exception:
             pass
+
+    def _on_hotel_var_changed(self, *args) -> None:
+        """
+        hotel_var が変更されたときに呼ばれるトレースコールバック。
+        選択中ホテルを設定ファイル(self._settings)に保存する。
+        """
+        try:
+            hotel_tag = self.hotel_var.get().strip()
+        except Exception:
+            return
+
+        if not hotel_tag or hotel_tag not in HOTEL_CONFIG:
+            return
+
+        general = self._settings.setdefault("general", {})
+        if general.get("last_hotel") != hotel_tag:
+            general["last_hotel"] = hotel_tag
+            self._save_settings()
 
     def _get_daily_caps_for_hotel(self, hotel_tag: str) -> tuple[float, float]:
         """

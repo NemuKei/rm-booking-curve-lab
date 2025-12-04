@@ -119,20 +119,19 @@ def build_calendar_df(start: date, end: date) -> pd.DataFrame:
     return df
 
 
-def build_calendar_for_hotel(
-    hotel_tag: str,
-    start_date: date | None = None,
-    end_date: date | None = None,
-) -> Path:
+def build_calendar_for_hotel(hotel_tag: str, start_date: date, end_date: date) -> Path:
     """
-    指定したホテルタグでカレンダーファイルを生成し、出力先 Path を返す。
-    start_date / end_date を省略した場合はデフォルト設定を使用する。
+    指定ホテル・期間のカレンダーデータを生成し、CSV に保存する。
+
+    Args:
+        hotel_tag: ホテル識別子 (例: "daikokucho", "kansai")
+        start_date: 生成開始日
+        end_date: 生成終了日
+
+    Returns:
+        生成された CSV ファイルのパス。
     """
-
-    start = start_date or START_DATE
-    end = end_date or END_DATE
-
-    df = build_calendar_df(start, end)
+    df = build_calendar_df(start_date, end_date)
     out_dir = Path(OUTPUT_DIR)
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"calendar_features_{hotel_tag}.csv"

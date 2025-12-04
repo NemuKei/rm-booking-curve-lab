@@ -722,7 +722,10 @@ class BookingCurveApp(tk.Tk):
         model_combo.grid(row=1, column=1, padx=4, pady=(4, 2))
 
         # 予測キャップ / 稼働率キャパ
-        fc_cap, occ_cap = self._get_daily_caps_for_hotel(DEFAULT_HOTEL)
+        # 現在選択されているホテルのキャパを取得
+        current_hotel = self.hotel_var.get().strip() or DEFAULT_HOTEL
+        fc_cap, occ_cap = self._get_daily_caps_for_hotel(current_hotel)
+        
 
         ttk.Label(form, text="予測キャップ:").grid(row=1, column=2, sticky="w")
         self.df_forecast_cap_var = tk.StringVar(value=str(fc_cap))
@@ -1899,8 +1902,12 @@ class BookingCurveApp(tk.Tk):
         model_combo["values"] = ["avg", "recent90", "recent90w"]
         model_combo.grid(row=1, column=6, padx=4, pady=(4, 2))
 
-        fc_cap, _ = self._get_daily_caps_for_hotel(DEFAULT_HOTEL)
+         # 現在選択されているホテルのキャパを取得
+        current_hotel = self.hotel_var.get().strip() or DEFAULT_HOTEL
+        fc_cap, _ = self._get_daily_caps_for_hotel(current_hotel)
         self.bc_forecast_cap_var = tk.StringVar(value=str(fc_cap))
+
+        
         ttk.Label(form, text="予測キャップ:").grid(row=1, column=11, sticky="w", pady=(4, 2))
         ttk.Entry(form, textvariable=self.bc_forecast_cap_var, width=6).grid(
             row=1, column=12, padx=2, pady=(4, 2), sticky="w"

@@ -27,6 +27,7 @@ from booking_curve.gui_backend import (
     get_model_evaluation_table,
     get_eval_monthly_by_asof,
     get_eval_overview_by_asof,
+    get_best_model_for_month,
     get_monthly_curve_data,
     OUTPUT_DIR,
     HOTEL_CONFIG,
@@ -471,6 +472,13 @@ class BookingCurveApp(tk.Tk):
             row=0, column=8, padx=4, pady=2, sticky="w"
         )
 
+        # 対象月の最適モデル表示用ラベル
+        self.df_best_model_var = tk.StringVar(value="最適モデル: (評価データなし)")
+        ttk.Label(
+            form,
+            textvariable=self.df_best_model_var,
+        ).grid(row=3, column=0, columnspan=9, sticky="w", padx=4, pady=(4, 2))
+
         # モデル
         ttk.Label(form, text="モデル:").grid(row=1, column=0, sticky="w", pady=(4, 2))
         self.df_model_var = tk.StringVar(value="recent90w")
@@ -619,6 +627,68 @@ class BookingCurveApp(tk.Tk):
                 # 「空 or 今日」の場合だけ最新ASOFで上書きする
                 if (not current) or (current == today_str):
                     self.df_asof_var.set(latest)
+
+        self._update_df_best_model_label()
+
+    def _update_df_best_model_label(self) -> None:
+        """
+        日別フォーキャストタブの「最適モデル」ラベルを更新する。
+        評価CSVが無い/該当月が無い場合は、その旨だけ表示する。
+        """
+        # 対象ホテル・対象月を取得
+        hotel_tag = ""
+        try:
+            hotel_tag = self.df_hotel_var.get().strip()
+        except Exception:
+            hotel_tag = ""
+
+        target_month = ""
+        try:
+            target_month = self.df_month_var.get().strip()
+        except Exception:
+            target_month = ""
+
+        if not hotel_tag or not target_month:
+            self.df_best_model_var.set("最適モデル: (対象月未選択)")
+            return
+
+        # バックエンドからベストモデル情報を取得
+        try:
+            info = get_best_model_for_month(hotel_tag, target_month)
+        except Exception:
+            self.df_best_model_var.set("最適モデル: (評価読み込みエラー)")
+            return
+
+        if not info:
+            self.df_best_model_var.set("最適モデル: (評価データなし)")
+            return
+
+        model = str(info.get("model", ""))
+        mean_err = info.get("mean_error_pct")
+        mae = info.get("mae_pct")
+        rmse = info.get("rmse_pct")
+        n_samples = info.get("n_samples")
+
+        def _fmt_pct(v) -> str:
+            try:
+                return f"{float(v):.1f}%"
+            except Exception:
+                return "n/a"
+
+        def _fmt_int(v) -> str:
+            try:
+                return str(int(v))
+            except Exception:
+                return "0"
+
+        text = (
+            f"最適モデル: {model}  "
+            f"MAE={_fmt_pct(mae)}  "
+            f"RMSE={_fmt_pct(rmse)}  "
+            f"バイアス={_fmt_pct(mean_err)}  "
+            f"n={_fmt_int(n_samples)}"
+        )
+        self.df_best_model_var.set(text)
 
     def _on_df_set_asof_to_latest(self) -> None:
         latest = self.df_latest_asof_var.get().strip()

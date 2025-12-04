@@ -316,6 +316,80 @@ class BookingCurveApp(tk.Tk):
 
         return "\n".join(lines)
 
+    def _get_current_daily_forecast_total(self) -> float | None:
+        df = getattr(self, "df_daily_forecast_df", None)
+        if df is None:
+            return None
+
+        if "forecast_rooms" not in df.columns:
+            return None
+
+        if "stay_date" in df.columns:
+            mask = df["stay_date"] != "TOTAL"
+            subset = df.loc[mask, "forecast_rooms"]
+        else:
+            subset = df["forecast_rooms"]
+
+        try:
+            total = float(subset.fillna(0).sum())
+        except Exception:
+            return None
+
+        return total
+
+    def _update_daily_forecast_scenario_label(
+        self, best_3m: dict | None, total_forecast_rooms: float | None
+    ) -> None:
+        label = getattr(self, "df_scenario_label", None)
+        if label is None:
+            return
+
+        if not best_3m or total_forecast_rooms is None:
+            label.configure(text="")
+            return
+
+        try:
+            n_samples = best_3m.get("n_samples")
+            bias_pct = best_3m.get("mean_error_pct")
+            mae_pct = best_3m.get("mae_pct")
+        except Exception:
+            label.configure(text="")
+            return
+
+        if not n_samples or n_samples <= 0:
+            label.configure(text="")
+            return
+
+        if bias_pct is None or mae_pct is None:
+            label.configure(text="")
+            return
+
+        try:
+            bias = float(bias_pct) / 100.0
+            mape = float(mae_pct) / 100.0
+        except Exception:
+            label.configure(text="")
+            return
+
+        total = float(total_forecast_rooms)
+        denom = 1.0 + bias
+        if abs(denom) < 1e-6:
+            base = total
+        else:
+            base = total / denom
+
+        pessimistic = int(round(base * (1.0 - mape)))
+        optimistic = int(round(base * (1.0 + mape)))
+        base_int = int(round(base))
+        forecast_int = int(round(total))
+
+        text = (
+            f"シナリオ（月次Rooms） "
+            f"悲観={pessimistic:,} / 基準={base_int:,} / 楽観={optimistic:,} "
+            f"（Forecast={forecast_int:,}）"
+        )
+        label.configure(text=text)
+
     def _shift_month_var(self, var: tk.StringVar, delta_months: int) -> None:
         """
         var で参照されている "YYYYMM" 形式の文字列を delta_months だけ
@@ -746,13 +820,26 @@ class BookingCurveApp(tk.Tk):
         table_container.rowconfigure(0, weight=1)
         table_container.columnconfigure(0, weight=1)
 
+        df_label_frame = ttk.Frame(frame)
+        df_label_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 4))
+        df_label_frame.grid_columnconfigure(0, weight=1)
+        df_label_frame.grid_columnconfigure(1, weight=1)
+
         self.df_best_model_label = ttk.Label(
-            frame,
+            df_label_frame,
             text="最適モデル: 評価データなし",
             anchor="w",
             justify="left",
         )
-        self.df_best_model_label.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 4))
+        self.df_best_model_label.grid(row=0, column=0, sticky="w")
+
+        self.df_scenario_label = ttk.Label(
+            df_label_frame,
+            text="",
+            anchor="e",
+            justify="right",
+        )
+        self.df_scenario_label.grid(row=0, column=1, sticky="e")
 
         # セル選択状態
         self._df_cell_anchor = None
@@ -794,6 +881,7 @@ class BookingCurveApp(tk.Tk):
 
         if len(month) != 6 or not month.isdigit():
             self.df_best_model_label.config(text="最適モデル: 対象月が未設定です")
+            self._update_daily_forecast_scenario_label(None, None)
             return
 
         best_month = self._get_best_model_stats_for_month(hotel, month)
@@ -802,6 +890,9 @@ class BookingCurveApp(tk.Tk):
 
         text = self._build_best_model_label_text(month, best_month, best_12, best_3)
         self.df_best_model_label.config(text=text)
+
+        total_forecast_rooms = self._get_current_daily_forecast_total()
+        self._update_daily_forecast_scenario_label(best_3, total_forecast_rooms)
 
     def _on_df_set_asof_to_latest(self) -> None:
         latest = self.df_latest_asof_var.get().strip()
@@ -980,6 +1071,8 @@ class BookingCurveApp(tk.Tk):
 
         self.df_daily_forecast_df = df
         self.df_table_df = df
+
+        self._update_df_best_model_label()
 
     def _df_get_row_col_index(self, row_id: str, col_id: str) -> tuple[int, int]:
         """row_id と '#n' 形式の col_id から (row_index, col_index) を返す。"""

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from typing import Dict, List, Optional
 import json
@@ -118,17 +119,23 @@ def generate_month_range(start_yyyymm: str, end_yyyymm: str) -> list[str]:
 
 def build_calendar_for_gui(hotel_tag: str) -> str:
     """
-    GUI からのカレンダー再生成ボタン用ラッパー。
+    GUI からのカレンダー再生成ボタン用ラッパ。
 
-    build_calendar_features.build_calendar_for_hotel() を呼び出し、
-    生成された calendar_features_<hotel_tag>.csv のパス文字列を返す。
+    当年1月1日〜翌年12月31日までの期間で、指定ホテルのカレンダーCSVを生成する。
+
+    戻り値:
+        生成されたカレンダーファイルの絶対パス文字列。
     """
-    try:
-        out_path = build_calendar_features.build_calendar_for_hotel(hotel_tag=hotel_tag)
-    except Exception:
-        # 例外はそのまま GUI 側に投げて、エラーダイアログで表示してもらう
-        raise
+    today = date.today()
+    start = date(today.year, 1, 1)
+    end = date(today.year + 1, 12, 31)
 
+    # build_calendar_features 側のユーティリティで生成
+    out_path = build_calendar_features.build_calendar_for_hotel(
+        hotel_tag=hotel_tag,
+        start_date=start,
+        end_date=end,
+    )
     return str(out_path)
 
 

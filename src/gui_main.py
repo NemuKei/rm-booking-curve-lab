@@ -27,7 +27,6 @@ from booking_curve.gui_backend import (
     get_model_evaluation_table,
     get_eval_monthly_by_asof,
     get_eval_overview_by_asof,
-    get_best_model_for_month,
     get_monthly_curve_data,
     OUTPUT_DIR,
     HOTEL_CONFIG,
@@ -161,6 +160,162 @@ class BookingCurveApp(tk.Tk):
             return
         self._save_settings()
 
+    def _get_best_model_stats_for_month(self, hotel: str, target_month: str) -> dict | None:
+        try:
+            df = get_model_evaluation_table(hotel)
+        except Exception:
+            return None
+
+        if df is None or df.empty:
+            return None
+
+        df = df.copy()
+        df = df[df["target_month"] != "TOTAL"]
+        df = df[df["mae_pct"].notna()]
+
+        df = df[df["target_month"].astype(str) == str(target_month)]
+        if df.empty:
+            return None
+
+        df = df.sort_values(by=["mae_pct", "rmse_pct"], ascending=[True, True])
+        best = df.iloc[0]
+
+        return {
+            "model": str(best.get("model", "")),
+            "mean_error_pct": float(best.get("mean_error_pct", float("nan"))),
+            "mae_pct": float(best.get("mae_pct", float("nan"))),
+            "rmse_pct": float(best.get("rmse_pct", float("nan"))),
+            "n_samples": int(best.get("n_samples", 0) or 0),
+            "target_month": str(best.get("target_month", "")),
+        }
+
+    def _get_best_model_stats_for_recent_months(
+        self, hotel: str, ref_month: str, window_months: int
+    ) -> dict | None:
+        try:
+            df = get_model_evaluation_table(hotel)
+        except Exception:
+            return None
+
+        if df is None or df.empty:
+            return None
+
+        df = df.copy()
+        df = df[df["target_month"] != "TOTAL"]
+        df = df[df["mae_pct"].notna()]
+        df = df[df["rmse_pct"].notna()]
+        df = df[df["n_samples"].notna()]
+
+        df["target_month_int"] = pd.to_numeric(
+            df["target_month"].astype(str), errors="coerce"
+        ).astype("Int64")
+
+        ref_int = pd.to_numeric(str(ref_month), errors="coerce")
+        if pd.isna(ref_int):
+            return None
+
+        df = df[df["target_month_int"] < int(ref_int)]
+        if df.empty:
+            return None
+
+        unique_months = sorted(df["target_month_int"].dropna().unique())
+        if not unique_months:
+            return None
+
+        selected_months = unique_months[-window_months:]
+        df = df[df["target_month_int"].isin(selected_months)]
+        if df.empty:
+            return None
+
+        candidates = []
+        for model, g in df.groupby("model"):
+            w = g["n_samples"].fillna(0)
+            w_total = float(w.sum())
+            if w_total <= 0:
+                continue
+
+            mean_error = (g["mean_error_pct"] * w).sum() / w_total
+            mae = (g["mae_pct"] * w).sum() / w_total
+            rmse = (g["rmse_pct"] * w).sum() / w_total
+
+            candidates.append(
+                {
+                    "model": str(model),
+                    "mean_error_pct": float(mean_error),
+                    "mae_pct": float(mae),
+                    "rmse_pct": float(rmse),
+                    "n_samples": int(w_total),
+                    "ref_month": str(ref_month),
+                    "window_months": len(set(selected_months)),
+                }
+            )
+
+        if not candidates:
+            return None
+
+        candidates.sort(key=lambda x: (abs(x["mae_pct"]), abs(x["rmse_pct"])))
+        return candidates[0]
+
+    def _build_best_model_label_text(
+        self,
+        target_month: str,
+        best_month: dict | None,
+        best_12: dict | None,
+        best_3: dict | None,
+    ) -> str:
+        def _fmt_pct(v: float | None) -> str:
+            try:
+                return f"{float(v):.1f}%"
+            except Exception:
+                return "n/a"
+
+        def _fmt_int(v: int | None) -> str:
+            try:
+                return str(int(v))
+            except Exception:
+                return "0"
+
+        if not (best_month or best_12 or best_3):
+            return "最適モデル: 評価データなし"
+
+        lines: list[str] = ["最適モデル（評価ベース）"]
+
+        if best_month:
+            lines.append(
+                "対象月 {}: {} MAE={} RMSE={} バイアス={} n={}".format(
+                    target_month,
+                    best_month.get("model", ""),
+                    _fmt_pct(best_month.get("mae_pct")),
+                    _fmt_pct(best_month.get("rmse_pct")),
+                    _fmt_pct(best_month.get("mean_error_pct")),
+                    _fmt_int(best_month.get("n_samples")),
+                )
+            )
+
+        if best_12:
+            lines.append(
+                "最近12ヶ月: {} MAE={} RMSE={} バイアス={} n={}".format(
+                    best_12.get("model", ""),
+                    _fmt_pct(best_12.get("mae_pct")),
+                    _fmt_pct(best_12.get("rmse_pct")),
+                    _fmt_pct(best_12.get("mean_error_pct")),
+                    _fmt_int(best_12.get("n_samples")),
+                )
+            )
+
+        if best_3:
+            lines.append(
+                "最近3ヶ月: {} MAE={} RMSE={} バイアス={} n={}".format(
+                    best_3.get("model", ""),
+                    _fmt_pct(best_3.get("mae_pct")),
+                    _fmt_pct(best_3.get("rmse_pct")),
+                    _fmt_pct(best_3.get("mean_error_pct")),
+                    _fmt_int(best_3.get("n_samples")),
+                )
+            )
+
+        return "\n".join(lines)
+
     def _shift_month_var(self, var: tk.StringVar, delta_months: int) -> None:
         """
         var で参照されている "YYYYMM" 形式の文字列を delta_months だけ
@@ -280,6 +435,7 @@ class BookingCurveApp(tk.Tk):
             self.df_forecast_cap_var.set(str(fc_cap))
             self.df_occ_cap_var.set(str(occ_cap))
             self._update_df_latest_asof_label(update_asof_if_empty=False)
+            self._update_df_best_model_label()
 
             if hasattr(self, "df_tree"):
                 for item in self.df_tree.get_children():
@@ -294,6 +450,7 @@ class BookingCurveApp(tk.Tk):
             fc_cap, _ = self._get_daily_caps_for_hotel(hotel_tag)
             self.bc_forecast_cap_var.set(str(fc_cap))
             self._update_bc_latest_asof_label(update_asof_if_empty=False)
+            self._update_bc_best_model_label()
 
             if hasattr(self, "bc_ax"):
                 self.bc_ax.clear()
@@ -472,13 +629,6 @@ class BookingCurveApp(tk.Tk):
             row=0, column=8, padx=4, pady=2, sticky="w"
         )
 
-        # 対象月の最適モデル表示用ラベル
-        self.df_best_model_var = tk.StringVar(value="最適モデル: (評価データなし)")
-        ttk.Label(
-            form,
-            textvariable=self.df_best_model_var,
-        ).grid(row=3, column=0, columnspan=9, sticky="w", padx=4, pady=(4, 2))
-
         # モデル
         ttk.Label(form, text="モデル:").grid(row=1, column=0, sticky="w", pady=(4, 2))
         self.df_model_var = tk.StringVar(value="recent90w")
@@ -596,6 +746,14 @@ class BookingCurveApp(tk.Tk):
         table_container.rowconfigure(0, weight=1)
         table_container.columnconfigure(0, weight=1)
 
+        self.df_best_model_label = ttk.Label(
+            frame,
+            text="最適モデル: 評価データなし",
+            anchor="w",
+            justify="left",
+        )
+        self.df_best_model_label.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 4))
+
         # セル選択状態
         self._df_cell_anchor = None
         self._df_cell_end = None
@@ -631,64 +789,19 @@ class BookingCurveApp(tk.Tk):
         self._update_df_best_model_label()
 
     def _update_df_best_model_label(self) -> None:
-        """
-        日別フォーキャストタブの「最適モデル」ラベルを更新する。
-        評価CSVが無い/該当月が無い場合は、その旨だけ表示する。
-        """
-        # 対象ホテル・対象月を取得
-        hotel_tag = ""
-        try:
-            hotel_tag = self.df_hotel_var.get().strip()
-        except Exception:
-            hotel_tag = ""
+        hotel = (self.df_hotel_var.get() or "").strip() or DEFAULT_HOTEL
+        month = (self.df_month_var.get() or "").strip()
 
-        target_month = ""
-        try:
-            target_month = self.df_month_var.get().strip()
-        except Exception:
-            target_month = ""
-
-        if not hotel_tag or not target_month:
-            self.df_best_model_var.set("最適モデル: (対象月未選択)")
+        if len(month) != 6 or not month.isdigit():
+            self.df_best_model_label.config(text="最適モデル: 対象月が未設定です")
             return
 
-        # バックエンドからベストモデル情報を取得
-        try:
-            info = get_best_model_for_month(hotel_tag, target_month)
-        except Exception:
-            self.df_best_model_var.set("最適モデル: (評価読み込みエラー)")
-            return
+        best_month = self._get_best_model_stats_for_month(hotel, month)
+        best_12 = self._get_best_model_stats_for_recent_months(hotel, month, 12)
+        best_3 = self._get_best_model_stats_for_recent_months(hotel, month, 3)
 
-        if not info:
-            self.df_best_model_var.set("最適モデル: (評価データなし)")
-            return
-
-        model = str(info.get("model", ""))
-        mean_err = info.get("mean_error_pct")
-        mae = info.get("mae_pct")
-        rmse = info.get("rmse_pct")
-        n_samples = info.get("n_samples")
-
-        def _fmt_pct(v) -> str:
-            try:
-                return f"{float(v):.1f}%"
-            except Exception:
-                return "n/a"
-
-        def _fmt_int(v) -> str:
-            try:
-                return str(int(v))
-            except Exception:
-                return "0"
-
-        text = (
-            f"最適モデル: {model}  "
-            f"MAE={_fmt_pct(mae)}  "
-            f"RMSE={_fmt_pct(rmse)}  "
-            f"バイアス={_fmt_pct(mean_err)}  "
-            f"n={_fmt_int(n_samples)}"
-        )
-        self.df_best_model_var.set(text)
+        text = self._build_best_model_label_text(month, best_month, best_12, best_3)
+        self.df_best_model_label.config(text=text)
 
     def _on_df_set_asof_to_latest(self) -> None:
         latest = self.df_latest_asof_var.get().strip()
@@ -715,6 +828,23 @@ class BookingCurveApp(tk.Tk):
                 # 「空 or 今日」の場合だけ最新ASOFで上書きする
                 if (not current) or (current == today_str):
                     self.bc_asof_var.set(latest)
+
+        self._update_bc_best_model_label()
+
+    def _update_bc_best_model_label(self) -> None:
+        hotel = (self.bc_hotel_var.get() or "").strip() or DEFAULT_HOTEL
+        month = (self.bc_month_var.get() or "").strip()
+
+        if len(month) != 6 or not month.isdigit():
+            self.bc_best_model_label.config(text="最適モデル: 対象月が未設定です")
+            return
+
+        best_month = self._get_best_model_stats_for_month(hotel, month)
+        best_12 = self._get_best_model_stats_for_recent_months(hotel, month, 12)
+        best_3 = self._get_best_model_stats_for_recent_months(hotel, month, 3)
+
+        text = self._build_best_model_label_text(month, best_month, best_12, best_3)
+        self.bc_best_model_label.config(text=text)
 
     def _on_bc_hotel_changed(self, event=None) -> None:
         hotel = self.bc_hotel_var.get().strip()
@@ -1728,6 +1858,14 @@ class BookingCurveApp(tk.Tk):
 
         draw_btn = ttk.Button(nav_right, text="描画", command=self._on_draw_booking_curve)
         draw_btn.pack(side=tk.LEFT, padx=8)
+
+        self.bc_best_model_label = ttk.Label(
+            frame,
+            text="最適モデル: 評価データなし",
+            anchor="w",
+            justify="left",
+        )
+        self.bc_best_model_label.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 4))
 
         plot_frame = ttk.Frame(frame)
         plot_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=8)

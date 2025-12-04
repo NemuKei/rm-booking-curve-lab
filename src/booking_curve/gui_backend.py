@@ -118,29 +118,18 @@ def generate_month_range(start_yyyymm: str, end_yyyymm: str) -> list[str]:
 
 def build_calendar_for_gui(hotel_tag: str) -> str:
     """
-    GUI からのカレンダー再生成ボタン用ラッパ。
+    GUI からのカレンダー再生成ボタン用ラッパー。
 
-    現状は build_calendar_features.main() が内部で HOTEL_TAG="daikokucho" 固定で
-    calendar_features_daikokucho.csv を出力する前提になっている。
-
-    将来的には hotel_tag ごとに別のカレンダーを生成するように build_calendar_features 側を
-    拡張する想定だが、現時点では hotel_tag はインターフェース上の引数として受け取るだけにする。
-
-    戻り値:
-        生成されたカレンダーファイルの絶対パス文字列。
+    build_calendar_features.build_calendar_for_hotel() を呼び出し、
+    生成された calendar_features_<hotel_tag>.csv のパス文字列を返す。
     """
-
-    # まず既存の main() を呼んでファイル生成を行う。
     try:
-        build_calendar_features.main()
+        out_path = build_calendar_features.build_calendar_for_hotel(hotel_tag=hotel_tag)
     except Exception:
-        # 例外はそのまま呼び出し元(GUI側)に送る
+        # 例外はそのまま GUI 側に投げて、エラーダイアログで表示してもらう
         raise
 
-    # 現状は hotel_tag に関わらず daikokucho 固定ファイルが出力される想定。
-    # OUTPUT_DIR は本モジュール内で定義されている output フォルダへのパスを使う。
-    csv_path = OUTPUT_DIR / f"calendar_features_{hotel_tag}.csv"
-    return str(csv_path)
+    return str(out_path)
 
 
 def get_calendar_coverage(hotel_tag: str) -> Dict[str, Optional[str]]:
@@ -187,7 +176,7 @@ def _get_capacity(hotel_tag: str, capacity: Optional[float]) -> float:
     """
     if capacity is not None:
         return float(capacity)
-    return float(HOTEL_CONFIG.get(hotel_tag, {}).get("capacity", 168.0))
+    return float(HOTEL_CONFIG.get(hotel_tag, {}).get("capacity", 171.0))
 
 
 def get_latest_asof_for_hotel(hotel_tag: str) -> Optional[str]:
@@ -533,11 +522,26 @@ def run_forecast_for_gui(
 
     for ym in target_months:
         if base_model == "avg":
-            run_forecast_batch.run_avg_forecast(ym, asof_tag, capacity=capacity)
+            run_forecast_batch.run_avg_forecast(
+                target_month=ym,
+                as_of_date=asof_tag,
+                capacity=capacity,
+                hotel_tag=hotel_tag,
+            )
         elif base_model == "recent90":
-            run_forecast_batch.run_recent90_forecast(ym, asof_tag, capacity=capacity)
+            run_forecast_batch.run_recent90_forecast(
+                target_month=ym,
+                as_of_date=asof_tag,
+                capacity=capacity,
+                hotel_tag=hotel_tag,
+            )
         elif base_model == "recent90w":
-            run_forecast_batch.run_recent90_weighted_forecast(ym, asof_tag, capacity=capacity)
+            run_forecast_batch.run_recent90_weighted_forecast(
+                target_month=ym,
+                as_of=asof_tag,
+                capacity=capacity,
+                hotel_tag=hotel_tag,
+            )
         else:
             raise ValueError(f"Unsupported gui_model: {gui_model}")
 
@@ -966,16 +970,18 @@ def run_build_lt_data_for_gui(
     """
     Tkinter GUI から LT_DATA 生成バッチを実行するための薄いラッパー。
 
-    現状は単一ホテル前提のため hotel_tag は将来拡張用のダミー引数だが、
-    インターフェースとして受け取っておく。
-    target_months には "YYYYMM" 形式の宿泊月を渡す。
+    hotel_tag ごとに config.HOTEL_CONFIG で定義された時系列Excelを読み込み、
+    run_build_lt_csv.run_build_lt_for_gui() を呼び出す。
     """
 
     if not target_months:
         return
 
     try:
-        run_build_lt_csv.run_build_lt_for_gui(target_months)
+        run_build_lt_csv.run_build_lt_for_gui(
+            hotel_tag=hotel_tag,
+            target_months=target_months,
+        )
     except Exception:
         raise
 

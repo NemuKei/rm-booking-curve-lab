@@ -127,8 +127,8 @@ def get_asof_dates_for_month(target_month: str) -> list[str]:
     ]
 
 
-def load_lt_csv(month: str) -> pd.DataFrame:
-    file_name = f"lt_data_{month}_{HOTEL_TAG}.csv"
+def load_lt_csv(month: str, hotel_tag: str) -> pd.DataFrame:
+    file_name = f"lt_data_{month}_{hotel_tag}.csv"
     file_path = Path(OUTPUT_DIR) / file_name
     return pd.read_csv(file_path, index_col=0)
 
@@ -173,14 +173,19 @@ def _prepare_output(df_target: pd.DataFrame, forecast: dict[pd.Timestamp, float]
     return out_df
 
 
-def run_avg_forecast(target_month: str, as_of_date: str, capacity: float | None = None) -> None:
+def run_avg_forecast(
+    target_month: str,
+    as_of_date: str,
+    capacity: float | None = None,
+    hotel_tag: str = HOTEL_TAG,
+) -> None:
     """
     avgモデル(3ヶ月平均)で target_month を as_of_date 時点で予測し、
     run_forecast_from_avg.py と同じ形式の CSV を OUTPUT_DIR に出力する。
     """
     cap = _resolve_capacity(capacity)
 
-    df_target = load_lt_csv(target_month)
+    df_target = load_lt_csv(target_month, hotel_tag=hotel_tag)
 
     # avgモデル用の履歴: target_month から見た直近3ヶ月 (M-1〜M-3)
     history_months = get_avg_history_months(target_month=target_month, months_back=3)
@@ -188,7 +193,7 @@ def run_avg_forecast(target_month: str, as_of_date: str, capacity: float | None 
     history_raw: dict[str, pd.DataFrame] = {}
     for ym in history_months:
         try:
-            df_m = load_lt_csv(ym)
+            df_m = load_lt_csv(ym, hotel_tag=hotel_tag)
         except FileNotFoundError:
             continue
         if df_m.empty:
@@ -234,14 +239,19 @@ def run_avg_forecast(target_month: str, as_of_date: str, capacity: float | None 
     out_df = _prepare_output(df_target, all_forecasts, as_of_ts)
 
     asof_tag = as_of_date.replace("-", "")
-    out_name = f"forecast_{target_month}_{HOTEL_TAG}_asof_{asof_tag}.csv"
+    out_name = f"forecast_{target_month}_{hotel_tag}_asof_{asof_tag}.csv"
     out_path = Path(OUTPUT_DIR) / out_name
 
     out_df.to_csv(out_path, index=True)
     print(f"[OK] Forecast exported to {out_path}")
 
 
-def run_recent90_forecast(target_month: str, as_of_date: str, capacity: float | None = None) -> None:
+def run_recent90_forecast(
+    target_month: str,
+    as_of_date: str,
+    capacity: float | None = None,
+    hotel_tag: str = HOTEL_TAG,
+) -> None:
     """
     recent90モデル(観測日から遡る90日平均)で target_month を as_of_date 時点で予測し、
     run_forecast_from_recent90.py と同じ形式の CSV を OUTPUT_DIR に出力する。
@@ -258,7 +268,7 @@ def run_recent90_forecast(target_month: str, as_of_date: str, capacity: float | 
     history_raw: dict[str, pd.DataFrame] = {}
     for ym in history_months:
         try:
-            df_m = load_lt_csv(ym)
+            df_m = load_lt_csv(ym, hotel_tag=hotel_tag)
         except FileNotFoundError:
             continue
         if df_m.empty:
@@ -269,7 +279,7 @@ def run_recent90_forecast(target_month: str, as_of_date: str, capacity: float | 
         print(f"[recent90] No history LT_DATA for as_of={as_of_date}")
         return
 
-    df_target = load_lt_csv(target_month)
+    df_target = load_lt_csv(target_month, hotel_tag=hotel_tag)
 
     all_forecasts: dict[pd.Timestamp, float] = {}
 
@@ -317,11 +327,11 @@ def run_recent90_forecast(target_month: str, as_of_date: str, capacity: float | 
         df_target=df_target,
         forecasts=all_forecasts,
         as_of_ts=as_of_ts,
-        hotel_tag=HOTEL_TAG,
+        hotel_tag=hotel_tag,
     )
 
     asof_tag = as_of_date.replace("-", "")
-    out_name = f"forecast_recent90_{target_month}_{HOTEL_TAG}_asof_{asof_tag}.csv"
+    out_name = f"forecast_recent90_{target_month}_{hotel_tag}_asof_{asof_tag}.csv"
     out_path = Path(OUTPUT_DIR) / out_name
 
     out_df.to_csv(out_path, index=True)
@@ -329,14 +339,17 @@ def run_recent90_forecast(target_month: str, as_of_date: str, capacity: float | 
 
 
 def run_recent90_weighted_forecast(
-    target_month: str, as_of: str, capacity: float | None = None
+    target_month: str,
+    as_of: str,
+    capacity: float | None = None,
+    hotel_tag: str = HOTEL_TAG,
 ) -> None:
     """
     recent90_weightedモデル(観測日から遡る90日平均・重み付き)で
     target_month の予測CSVを出力する。
 
     出力ファイル名:
-      forecast_recent90w_{target_month}_{HOTEL_TAG}_asof_{as_of}.csv
+      forecast_recent90w_{target_month}_{hotel_tag}_asof_{as_of}.csv
     """
     cap = _resolve_capacity(capacity)
 
@@ -351,7 +364,7 @@ def run_recent90_weighted_forecast(
     history_raw: dict[str, pd.DataFrame] = {}
     for ym in history_months:
         try:
-            df_m = load_lt_csv(ym)
+            df_m = load_lt_csv(ym, hotel_tag=hotel_tag)
         except FileNotFoundError:
             continue
         if df_m.empty:
@@ -362,7 +375,7 @@ def run_recent90_weighted_forecast(
         print(f"[recent90_weighted] No history LT_DATA for as_of={as_of}")
         return
 
-    df_target = load_lt_csv(target_month)
+    df_target = load_lt_csv(target_month, hotel_tag=hotel_tag)
 
     all_forecasts: dict[pd.Timestamp, float] = {}
 
@@ -413,10 +426,10 @@ def run_recent90_weighted_forecast(
         df_target=df_target,
         forecasts=all_forecasts,
         as_of_ts=as_of_ts,
-        hotel_tag=HOTEL_TAG,
+        hotel_tag=hotel_tag,
     )
 
-    out_name = f"forecast_recent90w_{target_month}_{HOTEL_TAG}_asof_{as_of}.csv"
+    out_name = f"forecast_recent90w_{target_month}_{hotel_tag}_asof_{as_of}.csv"
     out_path = Path(OUTPUT_DIR) / out_name
     out_df.to_csv(out_path, index=True)
     print(f"[recent90_weighted][OK] {out_path}")

@@ -86,6 +86,7 @@ class BookingCurveApp(tk.Tk):
         self._init_booking_curve_tab()
         self._init_monthly_curve_tab()
         self._create_master_settings_tab()
+        self.hotel_var.trace_add("write", self._on_global_hotel_changed)
 
     def _load_settings(self) -> dict:
         try:
@@ -237,6 +238,73 @@ class BookingCurveApp(tk.Tk):
         self._refresh_calendar_coverage()
         self._refresh_master_daily_caps()
 
+    def _on_global_hotel_changed(self, *args) -> None:
+        """
+        ホテル選択がどのタブから変更されても呼ばれるグローバルハンドラ。
+        - マスタ設定のカレンダー範囲 & キャパ表示を更新
+        - 日別フォーキャスト / ブッキングカーブ / 月次カーブ / 評価系の表示をクリア
+        - 日別FC/ブッキングのキャパと最新ASOFラベルを更新
+        """
+
+        hotel_tag = self.hotel_var.get().strip()
+
+        self._refresh_calendar_coverage()
+        self._refresh_master_daily_caps()
+
+        if hasattr(self, "df_hotel_var"):
+            fc_cap, occ_cap = self._get_daily_caps_for_hotel(hotel_tag)
+            self.df_forecast_cap_var.set(str(fc_cap))
+            self.df_occ_cap_var.set(str(occ_cap))
+            self._update_df_latest_asof_label(update_asof_if_empty=False)
+
+            if hasattr(self, "df_tree"):
+                for item in self.df_tree.get_children():
+                    self.df_tree.delete(item)
+            self.df_daily_forecast_df = None
+            self.df_table_df = None
+            self._df_cell_anchor = None
+            self._df_cell_end = None
+            self._clear_df_selection_rect()
+
+        if hasattr(self, "bc_hotel_var"):
+            fc_cap, _ = self._get_daily_caps_for_hotel(hotel_tag)
+            self.bc_forecast_cap_var.set(str(fc_cap))
+            self._update_bc_latest_asof_label(update_asof_if_empty=False)
+
+            if hasattr(self, "bc_ax"):
+                self.bc_ax.clear()
+                self.bc_ax.set_axis_off()
+                if hasattr(self, "bc_canvas"):
+                    self.bc_canvas.draw()
+            if hasattr(self, "bc_tree"):
+                for item in self.bc_tree.get_children():
+                    self.bc_tree.delete(item)
+                self.bc_tree["columns"] = ()
+
+        if hasattr(self, "mc_ax"):
+            self.mc_ax.clear()
+            self.mc_ax.set_axis_off()
+            if hasattr(self, "mc_canvas"):
+                self.mc_canvas.draw()
+
+        if hasattr(self, "me_tree"):
+            for item in self.me_tree.get_children():
+                self.me_tree.delete(item)
+        self.model_eval_df = None
+        self.model_eval_view_df = None
+        self.model_eval_best_idx = set()
+
+        if hasattr(self, "asof_overview_tree"):
+            for item in self.asof_overview_tree.get_children():
+                self.asof_overview_tree.delete(item)
+        if hasattr(self, "asof_detail_tree"):
+            for item in self.asof_detail_tree.get_children():
+                self.asof_detail_tree.delete(item)
+        self._asof_overview_df = None
+        self._asof_detail_df = None
+        self._asof_overview_view_df = None
+        self._asof_detail_view_df = None
+
     def _on_build_calendar_clicked(self) -> None:
         hotel_tag = self.hotel_var.get()
         if not hotel_tag:
@@ -339,7 +407,7 @@ class BookingCurveApp(tk.Tk):
 
         # ホテル
         ttk.Label(form, text="ホテル:").grid(row=0, column=0, sticky="w")
-        self.df_hotel_var = tk.StringVar(value=DEFAULT_HOTEL)
+        self.df_hotel_var = self.hotel_var
         hotel_combo = ttk.Combobox(form, textvariable=self.df_hotel_var, state="readonly")
         hotel_combo["values"] = sorted(HOTEL_CONFIG.keys())
         hotel_combo.grid(row=0, column=1, padx=4, pady=2)
@@ -599,31 +667,19 @@ class BookingCurveApp(tk.Tk):
             return
 
         latest = self.df_latest_asof_var.get().strip()
-        if latest:
+        if latest and latest not in ("なし", "(未取得)"):
             try:
                 latest_ts = pd.to_datetime(latest)
             except Exception:
                 latest_ts = None
 
-            if latest_ts is not None:
-                if asof_ts > latest_ts:
-                    messagebox.showerror(
-                        "エラー",
-                        f"AS OF が最新データ ({latest}) を超えています。\n"
-                        f"{latest} 以前の日付を指定してください。",
-                    )
-                    return
-                elif asof_ts < latest_ts:
-                    use_latest = messagebox.askyesno(
-                        "確認",
-                        f"最新ASOF は {latest} です。\n"
-                        f"選択中の ASOF ({asof}) で Forecast を実行しますか？\n\n"
-                        f"最新ASOFで実行する場合は『はい』を選択してください。",
-                    )
-                    if use_latest:
-                        asof_ts = latest_ts
-                        asof = latest_ts.strftime("%Y-%m-%d")
-                        self.df_asof_var.set(asof)
+            if latest_ts is not None and asof_ts > latest_ts:
+                messagebox.showerror(
+                    "エラー",
+                    f"AS OF が最新データ ({latest}) を超えています。\n"
+                    f"{latest} 以前の日付を指定してください。",
+                )
+                return
 
         # 現時点では「1ヶ月のみ」実行。将来的に複数月対応する場合は
         # ここで month 周辺のリストを組み立てて渡す。
@@ -864,7 +920,7 @@ class BookingCurveApp(tk.Tk):
         top.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
 
         ttk.Label(top, text="ホテル:").grid(row=0, column=0, sticky="w")
-        self.me_hotel_var = tk.StringVar(value=DEFAULT_HOTEL)
+        self.me_hotel_var = self.hotel_var
         hotel_combo = ttk.Combobox(top, textvariable=self.me_hotel_var, state="readonly")
         hotel_combo["values"] = sorted(HOTEL_CONFIG.keys())
         hotel_combo.grid(row=0, column=1, padx=4, pady=2)
@@ -1141,7 +1197,7 @@ class BookingCurveApp(tk.Tk):
         top = ttk.Frame(frame)
         top.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
 
-        self.asof_hotel_var = tk.StringVar(value=DEFAULT_HOTEL)
+        self.asof_hotel_var = self.hotel_var
         ttk.Label(top, text="ホテル:").grid(row=0, column=0, sticky="w")
         hotel_combo = ttk.Combobox(top, textvariable=self.asof_hotel_var, state="readonly")
         hotel_combo["values"] = sorted(HOTEL_CONFIG.keys())
@@ -1449,7 +1505,7 @@ class BookingCurveApp(tk.Tk):
         form.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
 
         ttk.Label(form, text="ホテル:").grid(row=0, column=0, sticky="w")
-        self.bc_hotel_var = tk.StringVar(value=DEFAULT_HOTEL)
+        self.bc_hotel_var = self.hotel_var
         hotel_combo = ttk.Combobox(form, textvariable=self.bc_hotel_var, state="readonly")
         hotel_combo["values"] = sorted(HOTEL_CONFIG.keys())
         hotel_combo.grid(row=0, column=1, padx=4, pady=2)
@@ -2218,7 +2274,7 @@ class BookingCurveApp(tk.Tk):
         form.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
 
         ttk.Label(form, text="ホテル:").grid(row=0, column=0, sticky="w")
-        self.mc_hotel_var = tk.StringVar(value=DEFAULT_HOTEL)
+        self.mc_hotel_var = self.hotel_var
         mc_combo = ttk.Combobox(form, textvariable=self.mc_hotel_var, state="readonly")
         mc_combo["values"] = sorted(HOTEL_CONFIG.keys())
         mc_combo.grid(row=0, column=1, padx=4, pady=2)

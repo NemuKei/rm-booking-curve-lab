@@ -816,6 +816,68 @@ def get_model_evaluation_table(hotel_tag: str) -> pd.DataFrame:
     return out
 
 
+def get_best_model_for_month(hotel_tag: str, target_month: str) -> Optional[dict]:
+    """
+    指定ホテル・対象月について、評価テーブルから MAE が最小のモデル情報を返す。
+
+    戻り値の例:
+        {
+            "model": "recent90w",
+            "mean_error_pct": 1.23,
+            "mae_pct": 8.76,
+            "rmse_pct": 10.11,
+            "n_samples": 24,
+        }
+
+    評価CSVが存在しない / 対象月の行が無い / mae_pct がすべてNaN の場合は None を返す。
+    """
+    # 1. 評価テーブル読み込み
+    try:
+        df = get_model_evaluation_table(hotel_tag)
+    except FileNotFoundError:
+        return None
+
+    if df.empty:
+        return None
+
+    # 2. 対象月でフィルタ
+    tm = str(target_month)
+    df_month = df[df["target_month"] == tm].copy()
+    if df_month.empty:
+        return None
+
+    # 3. mae_pct を数値化して、NaN を落とす
+    df_month["mae_pct"] = pd.to_numeric(df_month["mae_pct"], errors="coerce")
+    df_month = df_month.dropna(subset=["mae_pct"])
+    if df_month.empty:
+        return None
+
+    # 4. MAE 最小の行を取得
+    best_row = df_month.loc[df_month["mae_pct"].idxmin()]
+
+    def _to_float(value) -> float:
+        try:
+            v = float(value)
+        except Exception:
+            return float("nan")
+        return v
+
+    def _to_int(value) -> int:
+        try:
+            v = int(value)
+        except Exception:
+            return 0
+        return v
+
+    return {
+        "model": str(best_row.get("model", "")),
+        "mean_error_pct": _to_float(best_row.get("mean_error_pct")),
+        "mae_pct": _to_float(best_row.get("mae_pct")),
+        "rmse_pct": _to_float(best_row.get("rmse_pct")),
+        "n_samples": _to_int(best_row.get("n_samples")),
+    }
+
+
 def _target_month_to_int(value: object) -> int:
     """target_month を int に正規化する。"""
 

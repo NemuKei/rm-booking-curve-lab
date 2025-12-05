@@ -482,43 +482,41 @@ def get_monthly_curve_data(
     target_month : str
         対象となる宿泊月 (YYYYMM)。
     as_of_date : Optional[str]
-        現在は無視される。呼び出し元互換性のために残しているだけ。
+        ASOF ベースの月次カーブを作る場合の ASOF 日付 (YYYY-MM-DD)。None の場合は
+        LT_DATA の全期間を対象とする。
     """
 
-    lt_path = OUTPUT_DIR / f"lt_data_{target_month}_{hotel_tag}.csv"
-    if not lt_path.exists():
-        raise FileNotFoundError(f"lt_data csv not found: {lt_path}")
+    lt_df = _load_lt_data(hotel_tag=hotel_tag, target_month=target_month)
 
-    df_raw = pd.read_csv(lt_path, index_col=0)
-    df_raw.index = pd.to_datetime(df_raw.index, errors="coerce")
-    df_raw = df_raw.dropna()
-    df_raw = df_raw[~df_raw.index.isna()]
-
-    lt_cols: list[str] = []
-    for col in df_raw.columns:
-        try:
-            int(col)
-        except Exception:
-            continue
-        lt_cols.append(col)
-
-    if not lt_cols:
-        raise ValueError("LT 列が見つかりませんでした。")
-
-    df_lt = df_raw[lt_cols].copy()
-    df_lt.columns = [int(c) for c in lt_cols]
-
-    year = int(target_month[:4])
-    month = int(target_month[4:])
-    df_lt = df_lt[(df_lt.index.year == year) & (df_lt.index.month == month)]
-
-    if df_lt.empty:
+    if lt_df.empty:
         raise ValueError("指定月の宿泊日がありません。")
 
-    df_lt = df_lt.reindex(sorted(df_lt.columns), axis=1)
+    # as_of_date が None の場合は素の LT_DATA をそのまま集計
+    if as_of_date is None:
+        df_work = lt_df.copy()
+        df_work = df_work.reindex(sorted(df_work.columns), axis=1)
+        curve = df_work.sum(axis=0, skipna=True)
+        result = pd.DataFrame({"rooms_total": curve})
+        result.index = result.index.astype(int)
+        return result
 
-    curve = df_lt.sum(axis=0, skipna=True)
+    asof_ts = pd.to_datetime(as_of_date)
+    df_work = lt_df.copy()
+    has_act = -1 in df_work.columns
+    asof_normalized = asof_ts.normalize()
 
+    for stay_date in df_work.index:
+        delta_days = (stay_date.normalize() - asof_ts).days
+        if delta_days > 0:
+            for lt in df_work.columns:
+                if isinstance(lt, (int, float)) and lt >= 0 and lt < delta_days:
+                    df_work.at[stay_date, lt] = pd.NA
+
+        if has_act and stay_date.normalize() >= asof_normalized:
+            df_work.at[stay_date, -1] = pd.NA
+
+    df_work = df_work.reindex(sorted(df_work.columns), axis=1)
+    curve = df_work.sum(axis=0, skipna=True)
     result = pd.DataFrame({"rooms_total": curve})
     result.index = result.index.astype(int)
 

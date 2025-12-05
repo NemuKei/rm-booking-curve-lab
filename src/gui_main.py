@@ -1420,6 +1420,18 @@ class BookingCurveApp(tk.Tk):
         except Exception:
             pass
 
+        # 日別フォーキャストタブの最適モデル・シナリオを最新化
+        try:
+            self._update_df_best_model_label()
+        except Exception:
+            pass
+
+        # ブッキングカーブタブの最適モデルラベルを最新化
+        try:
+            self._update_bc_best_model_label()
+        except Exception:
+            pass
+
         messagebox.showinfo(
             "完了",
             "評価CSVを再計算しました。\n"
@@ -2143,6 +2155,18 @@ class BookingCurveApp(tk.Tk):
             )
             return
 
+        try:
+            # ブッキングカーブタブ用の最新ASOFラベルを更新
+            self._update_bc_latest_asof_label(update_asof_if_empty=False)
+        except Exception:
+            pass
+
+        try:
+            # 日別フォーキャストタブ用の最新ASOFラベルを更新
+            self._update_df_latest_asof_label(update_asof_if_empty=False)
+        except Exception:
+            pass
+
         messagebox.showinfo(
             "LT_DATA生成",
             "LT_DATA CSV の生成が完了しました。\n"
@@ -2271,6 +2295,18 @@ class BookingCurveApp(tk.Tk):
                 f"LT_DATA生成でエラーが発生しました。\n{e}",
             )
             return
+
+        try:
+            # ブッキングカーブタブ用の最新ASOFラベルを更新
+            self._update_bc_latest_asof_label(update_asof_if_empty=False)
+        except Exception:
+            pass
+
+        try:
+            # 日別フォーキャストタブ用の最新ASOFラベルを更新
+            self._update_df_latest_asof_label(update_asof_if_empty=False)
+        except Exception:
+            pass
 
         messagebox.showinfo(
             "LT_DATA生成",

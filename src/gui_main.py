@@ -325,8 +325,7 @@ class BookingCurveApp(tk.Tk):
             return None
 
         if "stay_date" in df.columns:
-            mask = df["stay_date"] != "TOTAL"
-            subset = df.loc[mask, "forecast_rooms"]
+            subset = df.loc[df["stay_date"].notna(), "forecast_rooms"]
         else:
             subset = df["forecast_rooms"]
 

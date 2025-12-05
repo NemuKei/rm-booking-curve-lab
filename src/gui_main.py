@@ -169,7 +169,102 @@ class BookingCurveApp(tk.Tk):
     def _get_best_model_stats_for_recent_months(
         self, hotel: str, ref_month: str, window_months: int
     ) -> dict | None:
-        return get_best_model_stats_for_recent_months(hotel, ref_month, window_months)
+        try:
+            df = get_model_evaluation_table(hotel)
+        except Exception:
+            return None
+
+        if df is None or df.empty:
+            return None
+
+        df = df.copy()
+        df = df[df["target_month"] != "TOTAL"]
+        df = df[df["mae_pct"].notna()]
+        df = df[df["rmse_pct"].notna()]
+        df = df[df["n_samples"].notna()]
+
+        df["target_month_int"] = pd.to_numeric(df["target_month"].astype(str), errors="coerce").astype(
+            "Int64"
+        )
+
+        latest_eval_month_int: int | None
+        try:
+            latest_eval_month_int = int(df["target_month_int"].dropna().max())
+        except Exception:
+            latest_eval_month_int = None
+
+        today = date.today()
+        y, m = today.year, today.month
+        if m == 1:
+            y -= 1
+            m = 12
+        else:
+            m -= 1
+        expected_latest_month_int = int(f"{y}{m:02d}")
+
+        ref_int = pd.to_numeric(str(ref_month), errors="coerce")
+        if pd.isna(ref_int):
+            return None
+
+        df = df[df["target_month_int"] < int(ref_int)]
+        if df.empty:
+            return None
+
+        try:
+            period = pd.Period(str(ref_month), freq="M")
+            recent_months = [
+                f"{(period - offset).year}{(period - offset).month:02d}"
+                for offset in range(1, window_months + 1)
+            ]
+        except Exception:
+            recent_months = []
+        if not recent_months:
+            return None
+
+        df = df[df["target_month"].isin(recent_months)]
+        if df.empty:
+            return None
+
+        selected_months = [int(v) for v in df["target_month_int"].dropna().astype(int).unique()]
+
+        candidates = []
+        for model, g in df.groupby("model"):
+            w = g["n_samples"].fillna(0)
+            w_total = float(w.sum())
+            if w_total <= 0:
+                continue
+
+            mean_error = (g["mean_error_pct"] * w).sum() / w_total
+            mae = (g["mae_pct"] * w).sum() / w_total
+            rmse = (g["rmse_pct"] * w).sum() / w_total
+
+            has_missing_latest = False
+            try:
+                if latest_eval_month_int and expected_latest_month_int:
+                    has_missing_latest = int(latest_eval_month_int) < int(expected_latest_month_int)
+            except Exception:
+                has_missing_latest = False
+
+            candidates.append(
+                {
+                    "model": str(model),
+                    "mean_error_pct": float(mean_error),
+                    "mae_pct": float(mae),
+                    "rmse_pct": float(rmse),
+                    "n_samples": int(w_total),
+                    "ref_month": str(ref_month),
+                    "window_months": len(set(selected_months)),
+                    "latest_eval_month_int": latest_eval_month_int,
+                    "expected_latest_month_int": expected_latest_month_int,
+                    "has_missing_latest": has_missing_latest,
+                }
+            )
+
+        if not candidates:
+            return None
+
+        candidates.sort(key=lambda x: (abs(x["mae_pct"]), abs(x["rmse_pct"])))
+        return candidates[0]
 
     def _build_best_model_label_text(
         self,
@@ -190,6 +285,20 @@ class BookingCurveApp(tk.Tk):
             except Exception:
                 return "0"
 
+        def _fmt_ym_int(v: int | None) -> str:
+            try:
+                s = f"{int(v):06d}"
+                return f"{s[:4]}-{s[4:]}"
+            except Exception:
+                return ""
+
+        def _resolve_months(v: int | None, default: int) -> int:
+            try:
+                iv = int(v)
+                return iv if iv > 0 else default
+            except Exception:
+                return default
+
         if not (best_month or best_12 or best_3):
             return "最適モデル: 評価データなし"
 
@@ -208,8 +317,10 @@ class BookingCurveApp(tk.Tk):
             )
 
         if best_12:
+            months_12 = _resolve_months(best_12.get("window_months"), 12)
             lines.append(
-                "最近12ヶ月: {} MAE={} RMSE={} バイアス={} n={}".format(
+                "最近{}ヶ月: {} MAE={} RMSE={} バイアス={} n={}".format(
+                    months_12,
                     best_12.get("model", ""),
                     _fmt_pct(best_12.get("mae_pct")),
                     _fmt_pct(best_12.get("rmse_pct")),
@@ -219,8 +330,10 @@ class BookingCurveApp(tk.Tk):
             )
 
         if best_3:
+            months_3 = _resolve_months(best_3.get("window_months"), 3)
             lines.append(
-                "最近3ヶ月: {} MAE={} RMSE={} バイアス={} n={}".format(
+                "最近{}ヶ月: {} MAE={} RMSE={} バイアス={} n={}".format(
+                    months_3,
                     best_3.get("model", ""),
                     _fmt_pct(best_3.get("mae_pct")),
                     _fmt_pct(best_3.get("rmse_pct")),
@@ -228,6 +341,16 @@ class BookingCurveApp(tk.Tk):
                     _fmt_int(best_3.get("n_samples")),
                 )
             )
+
+        info = best_12 or best_3
+        if info:
+            latest_eval = info.get("latest_eval_month_int") if isinstance(info, dict) else None
+            expected_latest = info.get("expected_latest_month_int") if isinstance(info, dict) else None
+            has_missing = bool(info.get("has_missing_latest")) if isinstance(info, dict) else False
+            if has_missing and latest_eval and expected_latest:
+                lines.append(
+                    f"※評価データは {_fmt_ym_int(latest_eval)} まで（最新着地月 {_fmt_ym_int(expected_latest)} は未評価）"
+                )
 
         return "\n".join(lines)
 
@@ -1152,6 +1275,38 @@ class BookingCurveApp(tk.Tk):
 
         messagebox.showinfo("保存完了", f"CSV を保存しました:\n{out_path}")
 
+    def _get_last_month_int(self) -> int:
+        today = date.today()
+        y, m = today.year, today.month
+        if m == 1:
+            y -= 1
+            m = 12
+        else:
+            m -= 1
+        return int(f"{y}{m:02d}")
+
+    def _shift_yyyymm_int(self, ym_int: int, delta_months: int) -> int:
+        s = f"{ym_int:06d}"
+        y = int(s[:4])
+        m = int(s[4:])
+        total = y * 12 + (m - 1) + delta_months
+        y2 = total // 12
+        m2 = total % 12 + 1
+        return int(f"{y2}{m2:02d}")
+
+    def _on_me_prev_month_clicked(self) -> None:
+        last = self._get_last_month_int()
+        self.me_from_var.set(f"{last:06d}")
+        self.me_to_var.set(f"{last:06d}")
+        self._refresh_model_eval_table()
+
+    def _on_me_last3_clicked(self) -> None:
+        last = self._get_last_month_int()
+        start = self._shift_yyyymm_int(last, -2)
+        self.me_from_var.set(f"{start:06d}")
+        self.me_to_var.set(f"{last:06d}")
+        self._refresh_model_eval_table()
+
     # =========================
     # 4) モデル評価タブ
     # =========================
@@ -1176,14 +1331,20 @@ class BookingCurveApp(tk.Tk):
         ttk.Label(top, text="終了月(YYYYMM):").grid(row=0, column=5, sticky="w", padx=(8, 4))
         ttk.Entry(top, textvariable=self.me_to_var, width=8).grid(row=0, column=6, padx=4, pady=2)
 
-        ttk.Button(top, text="直近12ヶ月", command=self._on_me_last12_clicked).grid(
+        ttk.Button(top, text="前月", command=self._on_me_prev_month_clicked).grid(
             row=0, column=7, padx=4, pady=2
         )
-        ttk.Button(top, text="CSV出力", command=self._on_export_model_eval_csv).grid(
+        ttk.Button(top, text="直近3ヶ月", command=self._on_me_last3_clicked).grid(
             row=0, column=8, padx=4, pady=2
         )
-        ttk.Button(top, text="評価再計算", command=self._on_rebuild_evaluation_csv).grid(
+        ttk.Button(top, text="直近12ヶ月", command=self._on_me_last12_clicked).grid(
             row=0, column=9, padx=4, pady=2
+        )
+        ttk.Button(top, text="CSV出力", command=self._on_export_model_eval_csv).grid(
+            row=0, column=10, padx=4, pady=2
+        )
+        ttk.Button(top, text="評価再計算", command=self._on_rebuild_evaluation_csv).grid(
+            row=0, column=11, padx=4, pady=2
         )
 
         columns = [
@@ -1228,7 +1389,8 @@ class BookingCurveApp(tk.Tk):
         if not start or not end:
             messagebox.showerror(
                 "エラー",
-                "評価CSVを再計算するには、開始月と終了月(YYYYMM)を指定するか、直近12ヶ月ボタンで設定してください。",
+                "評価CSVを再計算するには、開始月と終了月(YYYYMM)を指定するか、\n"
+                "前月／直近3ヶ月／直近12ヶ月ボタンのいずれかで期間を設定してください。",
             )
             return
 
@@ -1266,19 +1428,30 @@ class BookingCurveApp(tk.Tk):
         )
 
     def _on_load_model_eval(self) -> None:
+        hotel = (self.me_hotel_var.get() or "").strip() or DEFAULT_HOTEL
         try:
-            hotel = self.me_hotel_var.get()
             df = get_model_evaluation_table(hotel)
-            best_idx = set()
-            tmp = df[df["target_month"] != "TOTAL"].dropna(subset=["mae_pct"])
-            for _, grp in tmp.groupby("target_month", sort=False):
-                row = grp.loc[grp["mae_pct"].idxmin()]
-                best_idx.add(row.name)
-            self.model_eval_df = df
-            self.model_eval_best_idx = best_idx
+        except FileNotFoundError:
+            self.model_eval_df = None
+            self.model_eval_best_idx = set()
+            self._refresh_model_eval_table()
+            messagebox.showinfo(
+                "情報",
+                "このホテルのモデル評価CSVが見つかりません。\n"
+                "必要に応じて「評価再計算」を実行してください。",
+            )
+            return
         except Exception as e:
             messagebox.showerror("エラー", f"モデル評価読み込みに失敗しました:\n{e}")
             return
+
+        best_idx = set()
+        tmp = df[df["target_month"] != "TOTAL"].dropna(subset=["mae_pct"])
+        for _, grp in tmp.groupby("target_month", sort=False):
+            row = grp.loc[grp["mae_pct"].idxmin()]
+            best_idx.add(row.name)
+        self.model_eval_df = df
+        self.model_eval_best_idx = best_idx
 
         self._refresh_model_eval_table()
 
@@ -1388,39 +1561,10 @@ class BookingCurveApp(tk.Tk):
         messagebox.showinfo("保存完了", f"CSV を保存しました。\n{out_path}")
 
     def _on_me_last12_clicked(self) -> None:
-        if self.model_eval_df is None:
-            self._on_load_model_eval()
-
-        if self.model_eval_df is None or self.model_eval_df.empty:
-            return
-
-        df_body = self.model_eval_df[self.model_eval_df["target_month"] != "TOTAL"].copy()
-
-        def _to_int_ym(val):
-            try:
-                return int(val)
-            except Exception:
-                return None
-
-        df_body["target_month_int"] = df_body["target_month"].map(_to_int_ym)
-        df_body = df_body[~df_body["target_month_int"].isna()]
-        if df_body.empty:
-            return
-
-        latest_int = int(df_body["target_month_int"].max())
-
-        def _add_months(ym_int: int, offset: int) -> int:
-            s = f"{ym_int:06d}"
-            y = int(s[:4])
-            m = int(s[4:])
-            total = y * 12 + (m - 1) + offset
-            y2 = total // 12
-            m2 = total % 12 + 1
-            return int(f"{y2}{m2:02d}")
-
-        start_int = _add_months(latest_int, -11)
-        self.me_from_var.set(f"{start_int:06d}")
-        self.me_to_var.set(f"{latest_int:06d}")
+        last = self._get_last_month_int()
+        start = self._shift_yyyymm_int(last, -11)
+        self.me_from_var.set(f"{start:06d}")
+        self.me_to_var.set(f"{last:06d}")
 
         self._refresh_model_eval_table()
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 import json
@@ -9,7 +9,7 @@ import pandas as pd
 import build_calendar_features
 import run_forecast_batch
 import run_build_lt_csv
-from run_full_evaluation import run_full_evaluation_for_gui
+from run_full_evaluation import run_full_evaluation_for_gui, resolve_asof_dates_for_month
 
 from booking_curve.forecast_simple import (
     moving_average_recent_90days,
@@ -22,6 +22,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 OUTPUT_DIR = PROJECT_ROOT / "output"
 CONFIG_DIR = PROJECT_ROOT / "config"
 HOTEL_CONFIG_PATH = CONFIG_DIR / "hotels.json"
+
+_evaluation_detail_cache: dict[str, pd.DataFrame] = {}
 
 
 def _load_default_hotel_config() -> Dict[str, Dict[str, float]]:
@@ -175,6 +177,30 @@ def get_calendar_coverage(hotel_tag: str) -> Dict[str, Optional[str]]:
     max_str = pd.to_datetime(max_dt).normalize().strftime("%Y-%m-%d")
 
     return {"min_date": min_str, "max_date": max_str}
+
+
+def _get_evaluation_detail_df(hotel_tag: str) -> pd.DataFrame:
+    if hotel_tag in _evaluation_detail_cache:
+        return _evaluation_detail_cache[hotel_tag].copy()
+
+    csv_path = OUTPUT_DIR / f"evaluation_{hotel_tag}_detail.csv"
+    if not csv_path.exists():
+        raise FileNotFoundError(f"evaluation detail csv not found: {csv_path}")
+
+    df_detail = pd.read_csv(csv_path)
+    df_detail = df_detail.copy()
+    df_detail["target_month"] = df_detail["target_month"].astype(str)
+    df_detail["model"] = df_detail["model"].astype(str)
+    if "asof_type" in df_detail.columns:
+        df_detail["asof_type"] = df_detail["asof_type"].astype(str)
+
+    df_detail["error_pct"] = pd.to_numeric(df_detail["error_pct"], errors="coerce")
+    df_detail["abs_error_pct"] = pd.to_numeric(
+        df_detail["abs_error_pct"], errors="coerce"
+    )
+
+    _evaluation_detail_cache[hotel_tag] = df_detail
+    return df_detail.copy()
 
 
 def _get_capacity(hotel_tag: str, capacity: Optional[float]) -> float:
@@ -885,6 +911,86 @@ def get_best_model_for_month(hotel_tag: str, target_month: str) -> Optional[dict
     }
 
 
+def _get_recent_months_before(target_month: str, window_months: int) -> list[str]:
+    try:
+        period = pd.Period(str(target_month), freq="M")
+    except Exception:
+        return []
+
+    months: list[str] = []
+    for offset in range(1, window_months + 1):
+        p = period - offset
+        months.append(f"{p.year}{p.month:02d}")
+    return months
+
+
+def get_best_model_stats_for_recent_months(
+    hotel: str, ref_month: str, window_months: int
+) -> dict | None:
+    try:
+        df = get_model_evaluation_table(hotel)
+    except Exception:
+        return None
+
+    if df is None or df.empty:
+        return None
+
+    df = df.copy()
+    df = df[df["target_month"] != "TOTAL"]
+    df = df[df["mae_pct"].notna()]
+    df = df[df["rmse_pct"].notna()]
+    df = df[df["n_samples"].notna()]
+
+    df["target_month_int"] = pd.to_numeric(df["target_month"].astype(str), errors="coerce").astype(
+        "Int64"
+    )
+
+    ref_int = pd.to_numeric(str(ref_month), errors="coerce")
+    if pd.isna(ref_int):
+        return None
+
+    df = df[df["target_month_int"] < int(ref_int)]
+    if df.empty:
+        return None
+
+    recent_months = _get_recent_months_before(str(ref_month), window_months)
+    if not recent_months:
+        return None
+
+    df = df[df["target_month"].isin(recent_months)]
+    if df.empty:
+        return None
+
+    candidates = []
+    for model, g in df.groupby("model"):
+        w = g["n_samples"].fillna(0)
+        w_total = float(w.sum())
+        if w_total <= 0:
+            continue
+
+        mean_error = (g["mean_error_pct"] * w).sum() / w_total
+        mae = (g["mae_pct"] * w).sum() / w_total
+        rmse = (g["rmse_pct"] * w).sum() / w_total
+
+        candidates.append(
+            {
+                "model": str(model),
+                "mean_error_pct": float(mean_error),
+                "mae_pct": float(mae),
+                "rmse_pct": float(rmse),
+                "n_samples": int(w_total),
+                "ref_month": str(ref_month),
+                "window_months": len(set(recent_months)),
+            }
+        )
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda x: (abs(x["mae_pct"]), abs(x["rmse_pct"])))
+    return candidates[0]
+
+
 def _target_month_to_int(value: object) -> int:
     """target_month を int に正規化する。"""
 
@@ -932,17 +1038,8 @@ def get_eval_overview_by_asof(
         model 昇順, asof_type 昇順。
     """
 
-    csv_path = OUTPUT_DIR / f"evaluation_{hotel_tag}_detail.csv"
-    if not csv_path.exists():
-        raise FileNotFoundError(f"evaluation detail csv not found: {csv_path}")
-
-    df_detail = pd.read_csv(csv_path)
+    df_detail = _get_evaluation_detail_df(hotel_tag)
     df_detail = _filter_by_target_month(df_detail, from_ym=from_ym, to_ym=to_ym)
-
-    df_detail["error_pct"] = pd.to_numeric(df_detail["error_pct"], errors="coerce")
-    df_detail["abs_error_pct"] = pd.to_numeric(
-        df_detail["abs_error_pct"], errors="coerce"
-    )
 
     records = []
     for (model, asof_type), g in df_detail.groupby(["model", "asof_type"]):
@@ -1006,22 +1103,13 @@ def get_eval_monthly_by_asof(
         target_month 昇順, asof_type 昇順, model 昇順。
     """
 
-    csv_path = OUTPUT_DIR / f"evaluation_{hotel_tag}_detail.csv"
-    if not csv_path.exists():
-        raise FileNotFoundError(f"evaluation detail csv not found: {csv_path}")
-
-    df_detail = pd.read_csv(csv_path)
+    df_detail = _get_evaluation_detail_df(hotel_tag)
     df_detail = _filter_by_target_month(df_detail, from_ym=from_ym, to_ym=to_ym)
 
     if asof_types is not None:
         df_detail = df_detail[df_detail["asof_type"].isin(asof_types)]
     if models is not None:
         df_detail = df_detail[df_detail["model"].isin(models)]
-
-    df_detail["error_pct"] = pd.to_numeric(df_detail["error_pct"], errors="coerce")
-    df_detail["abs_error_pct"] = pd.to_numeric(
-        df_detail["abs_error_pct"], errors="coerce"
-    )
 
     df_detail.sort_values(
         by=["target_month_int", "asof_type", "model"], inplace=True
@@ -1066,4 +1154,166 @@ def run_full_evaluation_for_gui_range(
         target_months=months,
     )
     return detail_path, summary_path
+
+
+def get_nearest_asof_type_for_gui(
+    target_month: str, asof_date_str: str, calendar_df: pd.DataFrame | None = None
+) -> str | None:
+    if not asof_date_str:
+        return None
+
+    try:
+        asof_date = datetime.strptime(asof_date_str, "%Y-%m-%d").date()
+    except ValueError:
+        try:
+            asof_date = datetime.strptime(asof_date_str, "%Y%m%d").date()
+        except ValueError:
+            return None
+
+    try:
+        asof_info_list = resolve_asof_dates_for_month(target_month, calendar_df)
+    except TypeError:
+        asof_info_list = resolve_asof_dates_for_month(target_month)
+
+    nearest_type = None
+    nearest_delta = None
+
+    for asof_type, asof_str in asof_info_list:
+        parsed_date = None
+        for fmt in ("%Y-%m-%d", "%Y%m%d"):
+            try:
+                parsed_date = datetime.strptime(asof_str, fmt).date()
+                break
+            except ValueError:
+                continue
+        if parsed_date is None:
+            continue
+
+        delta = abs((parsed_date - asof_date).days)
+        if nearest_delta is None or delta < nearest_delta:
+            nearest_delta = delta
+            nearest_type = asof_type
+
+    return nearest_type
+
+
+def _calculate_scenario_from_stats(
+    forecast_total_rooms: float, stats: dict | None
+) -> dict | None:
+    if not stats:
+        return None
+
+    bias_pct = stats.get("mean_error_pct")
+    mape_pct = stats.get("mae_pct")
+    n_samples = stats.get("n_samples")
+
+    try:
+        if n_samples is None or int(n_samples) <= 0:
+            return None
+        bias = float(bias_pct) / 100.0
+        mape = float(mape_pct) / 100.0
+    except Exception:
+        return None
+
+    if pd.isna(bias) or pd.isna(mape):
+        return None
+
+    total = float(forecast_total_rooms)
+    denom = 1.0 + bias
+    base = total if abs(denom) < 1e-6 else total / denom
+
+    pessimistic = int(round(base * (1.0 - mape)))
+    optimistic = int(round(base * (1.0 + mape)))
+    base_int = int(round(base))
+    forecast_int = int(round(total))
+
+    return {
+        "base": base_int,
+        "pessimistic": pessimistic,
+        "optimistic": optimistic,
+        "forecast": forecast_int,
+        "bias_pct": float(bias_pct),
+        "mape_pct": float(mape_pct),
+        "n": int(n_samples),
+    }
+
+
+def _compute_error_stats_for_window(
+    hotel_key: str,
+    target_month: str,
+    window_months: int,
+    model: str | None = None,
+    asof_types: list[str] | None = None,
+) -> dict | None:
+    try:
+        df_detail = _get_evaluation_detail_df(hotel_key)
+    except Exception:
+        return None
+
+    months = _get_recent_months_before(str(target_month), window_months)
+    if not months:
+        return None
+
+    df_detail = df_detail[df_detail["target_month"].isin(months)]
+    if model:
+        df_detail = df_detail[df_detail["model"] == model]
+    if asof_types:
+        if "asof_type" not in df_detail.columns:
+            return None
+        df_detail = df_detail[df_detail["asof_type"].isin(asof_types)]
+
+    if df_detail.empty:
+        return None
+
+    err = df_detail["error_pct"].dropna()
+    err_abs = df_detail["abs_error_pct"].dropna()
+    if err.empty:
+        return None
+
+    mean_error = err.mean()
+    mae = err_abs.mean() if not err_abs.empty else float("nan")
+    n = int(err.count())
+
+    if pd.isna(mean_error) or pd.isna(mae):
+        return None
+
+    return {"mean_error_pct": float(mean_error), "mae_pct": float(mae), "n_samples": n}
+
+
+def get_monthly_forecast_scenarios(
+    hotel_key: str,
+    target_month: str,
+    forecast_total_rooms: int,
+    asof_date_str: str | None = None,
+    best_model_stats: dict | None = None,
+) -> dict:
+    window_months = int(best_model_stats.get("window_months", 3)) if best_model_stats else 3
+
+    best_recent = best_model_stats or get_best_model_stats_for_recent_months(
+        hotel_key, target_month, window_months
+    )
+    model_name = best_recent.get("model") if best_recent else None
+
+    avg_scenario = _calculate_scenario_from_stats(
+        forecast_total_rooms,
+        best_recent,
+    )
+
+    nearest_type = get_nearest_asof_type_for_gui(target_month, asof_date_str or "")
+    if nearest_type:
+        nearest_stats = _compute_error_stats_for_window(
+            hotel_key,
+            target_month,
+            window_months,
+            model=model_name,
+            asof_types=[nearest_type],
+        )
+    else:
+        nearest_stats = None
+
+    nearest_scenario = _calculate_scenario_from_stats(
+        forecast_total_rooms, nearest_stats
+    )
+
+    return {"avg_asof": avg_scenario, "nearest_asof": nearest_scenario}
 

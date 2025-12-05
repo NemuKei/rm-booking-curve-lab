@@ -28,8 +28,11 @@ from booking_curve.gui_backend import (
     get_eval_monthly_by_asof,
     get_eval_overview_by_asof,
     get_monthly_curve_data,
+    get_monthly_forecast_scenarios,
     OUTPUT_DIR,
     HOTEL_CONFIG,
+    get_best_model_for_month,
+    get_best_model_stats_for_recent_months,
     run_build_lt_data_for_gui,
     run_forecast_for_gui,
     build_calendar_for_gui,
@@ -161,100 +164,12 @@ class BookingCurveApp(tk.Tk):
         self._save_settings()
 
     def _get_best_model_stats_for_month(self, hotel: str, target_month: str) -> dict | None:
-        try:
-            df = get_model_evaluation_table(hotel)
-        except Exception:
-            return None
-
-        if df is None or df.empty:
-            return None
-
-        df = df.copy()
-        df = df[df["target_month"] != "TOTAL"]
-        df = df[df["mae_pct"].notna()]
-
-        df = df[df["target_month"].astype(str) == str(target_month)]
-        if df.empty:
-            return None
-
-        df = df.sort_values(by=["mae_pct", "rmse_pct"], ascending=[True, True])
-        best = df.iloc[0]
-
-        return {
-            "model": str(best.get("model", "")),
-            "mean_error_pct": float(best.get("mean_error_pct", float("nan"))),
-            "mae_pct": float(best.get("mae_pct", float("nan"))),
-            "rmse_pct": float(best.get("rmse_pct", float("nan"))),
-            "n_samples": int(best.get("n_samples", 0) or 0),
-            "target_month": str(best.get("target_month", "")),
-        }
+        return get_best_model_for_month(hotel, target_month)
 
     def _get_best_model_stats_for_recent_months(
         self, hotel: str, ref_month: str, window_months: int
     ) -> dict | None:
-        try:
-            df = get_model_evaluation_table(hotel)
-        except Exception:
-            return None
-
-        if df is None or df.empty:
-            return None
-
-        df = df.copy()
-        df = df[df["target_month"] != "TOTAL"]
-        df = df[df["mae_pct"].notna()]
-        df = df[df["rmse_pct"].notna()]
-        df = df[df["n_samples"].notna()]
-
-        df["target_month_int"] = pd.to_numeric(
-            df["target_month"].astype(str), errors="coerce"
-        ).astype("Int64")
-
-        ref_int = pd.to_numeric(str(ref_month), errors="coerce")
-        if pd.isna(ref_int):
-            return None
-
-        df = df[df["target_month_int"] < int(ref_int)]
-        if df.empty:
-            return None
-
-        unique_months = sorted(df["target_month_int"].dropna().unique())
-        if not unique_months:
-            return None
-
-        selected_months = unique_months[-window_months:]
-        df = df[df["target_month_int"].isin(selected_months)]
-        if df.empty:
-            return None
-
-        candidates = []
-        for model, g in df.groupby("model"):
-            w = g["n_samples"].fillna(0)
-            w_total = float(w.sum())
-            if w_total <= 0:
-                continue
-
-            mean_error = (g["mean_error_pct"] * w).sum() / w_total
-            mae = (g["mae_pct"] * w).sum() / w_total
-            rmse = (g["rmse_pct"] * w).sum() / w_total
-
-            candidates.append(
-                {
-                    "model": str(model),
-                    "mean_error_pct": float(mean_error),
-                    "mae_pct": float(mae),
-                    "rmse_pct": float(rmse),
-                    "n_samples": int(w_total),
-                    "ref_month": str(ref_month),
-                    "window_months": len(set(selected_months)),
-                }
-            )
-
-        if not candidates:
-            return None
-
-        candidates.sort(key=lambda x: (abs(x["mae_pct"]), abs(x["rmse_pct"])))
-        return candidates[0]
+        return get_best_model_stats_for_recent_months(hotel, ref_month, window_months)
 
     def _build_best_model_label_text(
         self,
@@ -337,57 +252,62 @@ class BookingCurveApp(tk.Tk):
         return total
 
     def _update_daily_forecast_scenario_label(
-        self, best_3m: dict | None, total_forecast_rooms: float | None
+        self,
+        best_3m: dict | None,
+        total_forecast_rooms: float | None,
+        hotel: str | None,
+        target_month: str | None,
+        asof_date: str | None,
     ) -> None:
         label = getattr(self, "df_scenario_label", None)
         if label is None:
             return
 
-        if not best_3m or total_forecast_rooms is None:
+        if (
+            total_forecast_rooms is None
+            or not hotel
+            or not target_month
+            or len(str(target_month)) != 6
+        ):
             label.configure(text="")
             return
 
         try:
-            n_samples = best_3m.get("n_samples")
-            bias_pct = best_3m.get("mean_error_pct")
-            mae_pct = best_3m.get("mae_pct")
+            forecast_total = int(round(float(total_forecast_rooms)))
         except Exception:
             label.configure(text="")
             return
 
-        if not n_samples or n_samples <= 0:
-            label.configure(text="")
-            return
-
-        if bias_pct is None or mae_pct is None:
-            label.configure(text="")
-            return
-
-        try:
-            bias = float(bias_pct) / 100.0
-            mape = float(mae_pct) / 100.0
-        except Exception:
-            label.configure(text="")
-            return
-
-        total = float(total_forecast_rooms)
-        denom = 1.0 + bias
-        if abs(denom) < 1e-6:
-            base = total
-        else:
-            base = total / denom
-
-        pessimistic = int(round(base * (1.0 - mape)))
-        optimistic = int(round(base * (1.0 + mape)))
-        base_int = int(round(base))
-        forecast_int = int(round(total))
-
-        text = (
-            f"シナリオ（月次Rooms） "
-            f"悲観={pessimistic:,} / 基準={base_int:,} / 楽観={optimistic:,} "
-            f"（Forecast={forecast_int:,}）"
+        scenarios = get_monthly_forecast_scenarios(
+            hotel_key=hotel,
+            target_month=str(target_month),
+            forecast_total_rooms=forecast_total,
+            asof_date_str=asof_date or None,
+            best_model_stats=best_3m,
         )
-        label.configure(text=text)
+
+        avg = scenarios.get("avg_asof")
+        nearest = scenarios.get("nearest_asof")
+
+        lines: list[str] = []
+
+        if avg is not None:
+            lines.append(
+                f"ASOF平均シナリオ（月次Rooms） "
+                f"悲観={avg['pessimistic']:,} / 基準={avg['base']:,} / 楽観={avg['optimistic']:,} "
+                f"(Forecast={avg['forecast']:,})"
+            )
+
+        if nearest is not None:
+            lines.append(
+                f"近似ASOFシナリオ（月次Rooms） "
+                f"悲観={nearest['pessimistic']:,} / 基準={nearest['base']:,} / 楽観={nearest['optimistic']:,} "
+                f"(Forecast={nearest['forecast']:,})"
+            )
+        else:
+            lines.append("近似ASOFシナリオ（月次Rooms） 対象データなし")
+
+        label.configure(text="\n".join(lines))
 
     def _shift_month_var(self, var: tk.StringVar, delta_months: int) -> None:
         """
@@ -883,7 +803,9 @@ class BookingCurveApp(tk.Tk):
 
         if len(month) != 6 or not month.isdigit():
             self.df_best_model_label.config(text="最適モデル: 対象月が未設定です")
-            self._update_daily_forecast_scenario_label(None, None)
+            self._update_daily_forecast_scenario_label(
+                None, None, hotel, month, self.df_asof_var.get().strip()
+            )
             return
 
         best_month = self._get_best_model_stats_for_month(hotel, month)
@@ -894,7 +816,9 @@ class BookingCurveApp(tk.Tk):
         self.df_best_model_label.config(text=text)
 
         total_forecast_rooms = self._get_current_daily_forecast_total()
-        self._update_daily_forecast_scenario_label(best_3, total_forecast_rooms)
+        self._update_daily_forecast_scenario_label(
+            best_3, total_forecast_rooms, hotel, month, self.df_asof_var.get().strip()
+        )
 
     def _on_df_set_asof_to_latest(self) -> None:
         latest = self.df_latest_asof_var.get().strip()

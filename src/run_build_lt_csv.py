@@ -10,7 +10,11 @@ from pathlib import Path
 import pandas as pd
 
 from booking_curve.data_loader import load_time_series_excel
-from booking_curve.lt_builder import build_lt_data, extract_asof_dates_from_timeseries
+from booking_curve.lt_builder import (
+    build_lt_data,
+    build_monthly_curve_from_lt,
+    extract_asof_dates_from_timeseries,
+)
 from booking_curve.config import DATA_DIR, OUTPUT_DIR, HOTEL_CONFIG
 
 
@@ -72,6 +76,21 @@ def build_lt_for_month(
 
     lt_df.to_csv(out_path, index=True)
     print(f"[OK] 出力: {out_path}")
+
+    try:
+        monthly_df = build_monthly_curve_from_lt(
+            lt_df,
+            target_month=sheet_name,
+        )
+    except ValueError as exc:
+        print(
+            f"[run_build_lt_csv] Skip monthly_curve for {hotel_tag} {sheet_name}: {exc}"
+        )
+    else:
+        monthly_out_name = f"monthly_curve_{sheet_name}_{hotel_tag}.csv"
+        monthly_out_path = OUTPUT_DIR / monthly_out_name
+        monthly_df.to_csv(monthly_out_path)
+        print(f"[run_build_lt_csv] Saved monthly_curve csv: {monthly_out_path}")
 
     return [pd.Timestamp(d) for d in asof_dates]
 

@@ -12,7 +12,7 @@ import pandas as pd
 from booking_curve.data_loader import load_time_series_excel
 from booking_curve.lt_builder import (
     build_lt_data,
-    build_monthly_curve_from_lt,
+    build_monthly_curve_from_timeseries,
     extract_asof_dates_from_timeseries,
 )
 from booking_curve.config import DATA_DIR, OUTPUT_DIR, HOTEL_CONFIG
@@ -77,14 +77,10 @@ def build_lt_for_month(
     lt_df.to_csv(out_path, index=True)
     print(f"[OK] 出力: {out_path}")
 
-    try:
-        monthly_df = build_monthly_curve_from_lt(
-            lt_df,
-            target_month=sheet_name,
-        )
-    except ValueError as exc:
+    monthly_df = build_monthly_curve_from_timeseries(df_ts, max_lt=MAX_LT)
+    if monthly_df.empty:
         print(
-            f"[run_build_lt_csv] Skip monthly_curve for {hotel_tag} {sheet_name}: {exc}"
+            f"[run_build_lt_csv] Skip monthly_curve for {hotel_tag} {sheet_name}: no data"
         )
     else:
         monthly_out_name = f"monthly_curve_{sheet_name}_{hotel_tag}.csv"

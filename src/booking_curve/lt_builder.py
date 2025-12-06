@@ -131,54 +131,85 @@ def build_lt_data(df: pd.DataFrame, max_lt: int = 120) -> pd.DataFrame:
     return lt_final
 
 
-def build_monthly_curve_from_lt(lt_df: pd.DataFrame, target_month: str) -> pd.DataFrame:
+def build_monthly_curve_from_timeseries(
+    df: pd.DataFrame,
+    max_lt: int = 120,
+) -> pd.DataFrame:
     """
-    LT形式の DataFrame から「月次ブッキングカーブ」用の集計を行うヘルパー。
+    PMSの時系列データ（宿泊日×取得日）から、月次ブッキングカーブ用の
+    「LT別・月次累計Rooms」を集計する。
 
     パラメータ
     ----------
-    lt_df : pd.DataFrame
-        build_lt_data() で生成された LT_DATA 相当の DataFrame
-        index: DatetimeIndex(stay_date), columns: int or str の LT 列（-1, 0, 1, ..., maxLT）
-    target_month : str
-        対象となる宿泊月 (YYYYMM)。主にログメッセージ用で、集計ロジック自体には必須ではない。
+    df : pd.DataFrame
+        load_time_series_excel() で読み込んだ1シート分の時系列データ。
+        先頭行に取得日のExcelシリアル、先頭列に宿泊日のExcelシリアル or 日付が入っている前提。
+    max_lt : int
+        集計対象とする最大LT（日数）。例: 120。
 
     戻り値
     ------
     pd.DataFrame
-        index: int 型の LT（昇順ソート、例: 0, 1, ..., maxLT, -1）
-        columns: 1列のみ "rooms_total"
-        各 LT 位置で、その月内の全宿泊日の Rooms 合計値を表す。
+        index: int 型の LT（例: max_lt, ..., 0, -1）
+        columns: 1列 "rooms_total"
+        各 LT 位置で、「そのLTに属する全セルのRooms合計」を表す。
+        補間は行わず、生データのセルだけを合計する。
     """
 
-    if lt_df is None or lt_df.empty:
-        raise ValueError(f"LT_DATA is empty for target_month={target_month}")
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["rooms_total"], dtype="float")
 
-    lt_columns = []
-    for col in lt_df.columns:
-        try:
-            lt_columns.append(int(col))
-        except Exception:
+    booking_date_serials = df.iloc[0, 1:]
+    booking_dates: List[datetime] = []
+    for serial in booking_date_serials:
+        if pd.isna(serial):
+            booking_dates.append(pd.NaT)
+        elif isinstance(serial, (int, float)):
+            booking_dates.append(_excel_serial_to_datetime(serial))
+        else:
+            booking_dates.append(pd.to_datetime(serial))
+
+    stay_date_serials = df.iloc[1:, 0]
+    stay_dates: List[datetime] = []
+    for serial in stay_date_serials:
+        if pd.isna(serial):
+            stay_dates.append(pd.NaT)
+        elif isinstance(serial, (int, float)):
+            stay_dates.append(_excel_serial_to_datetime(serial))
+        else:
+            stay_dates.append(pd.to_datetime(serial))
+
+    value_block = df.iloc[1:, 1:]
+    value_block = value_block.apply(pd.to_numeric, errors="coerce")
+    value_block.index = pd.to_datetime(stay_dates)
+
+    monthly_totals: dict[int, float] = {}
+
+    for row_idx, stay_dt in enumerate(value_block.index):
+        if pd.isna(stay_dt):
             continue
+        row = value_block.iloc[row_idx, :]
+        for col_idx, val in enumerate(row):
+            if pd.isna(val):
+                continue
+            booking_dt = booking_dates[col_idx]
+            if pd.isna(booking_dt):
+                continue
+            lt = (stay_dt.date() - booking_dt.date()).days
 
-    if not lt_columns:
-        raise ValueError("No valid LT columns in LT_DATA")
+            if lt > max_lt:
+                continue
+            if lt < 0:
+                lt = -1
 
-    lt_df = lt_df[sorted(lt_columns)]
+            monthly_totals[lt] = monthly_totals.get(lt, 0.0) + float(val)
 
-    ym = int(target_month)
-    year = ym // 100
-    month = ym % 100
-    mask = (lt_df.index.year == year) & (lt_df.index.month == month)
-    lt_month = lt_df.loc[mask]
+    if not monthly_totals:
+        return pd.DataFrame(columns=["rooms_total"], dtype="float")
 
-    if lt_month.empty:
-        raise ValueError(f"No stay dates for target_month={target_month}")
-
-    agg = lt_month.sum(axis=0, skipna=True)
-
-    result = pd.DataFrame({"rooms_total": agg})
-    result.index = result.index.astype(int)
-    result = result.sort_index()
-
+    lts = sorted(monthly_totals.keys(), reverse=True)
+    result = pd.DataFrame(
+        {"rooms_total": [monthly_totals[lt] for lt in lts]},
+        index=pd.Index(lts, name="lt"),
+    )
     return result

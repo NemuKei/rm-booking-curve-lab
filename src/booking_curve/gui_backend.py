@@ -473,66 +473,63 @@ def get_monthly_curve_data(
     target_month: str,
     as_of_date: Optional[str] = None,
 ) -> pd.DataFrame:
-    """月次ブッキングカーブ画面向けに LT_DATA から集計した DataFrame を返す。
+    """月次ブッキングカーブ画面向けの DataFrame を返す。
 
-    Parameters
-    ----------
-    hotel_tag : str
-        ホテルのタグ。
-    target_month : str
-        対象となる宿泊月 (YYYYMM)。
-    as_of_date : Optional[str]
-        "YYYY-MM-DD" 形式で指定した場合、その ASOF 日付までに観測された情報だけを使って
-        月次ブッキングカーブを構築する。None の場合は LT_DATA の履歴全体を合算する。
+    monthly_curve_{target_month}_{hotel_tag}.csv が存在する場合はそれを読み込み、
+    無い場合は LT_DATA から月次合計カーブをオンザフライで集計する。
+    as_of_date 引数は現時点では未使用（将来的な拡張用に残している）。
     """
-    lt_df = _load_lt_data(hotel_tag=hotel_tag, target_month=target_month)
+    csv_path = OUTPUT_DIR / f"monthly_curve_{target_month}_{hotel_tag}.csv"
+    if csv_path.exists():
+        df = pd.read_csv(csv_path, index_col=0)
+        if df.empty:
+            raise ValueError(f"Monthly curve csv is empty: {csv_path}")
 
-    if lt_df.empty:
-        raise ValueError("指定月の宿泊日がありません。")
-
-    if as_of_date is None:
-        lt_df = lt_df.reindex(sorted(lt_df.columns), axis=1)
-        curve = lt_df.sum(axis=0, skipna=True)
-        result = pd.DataFrame({"rooms_total": curve})
-        result.index = result.index.astype(int)
-        return result
-
-    try:
-        asof_ts = pd.to_datetime(as_of_date).normalize()
-    except Exception:
-        lt_df = lt_df.reindex(sorted(lt_df.columns), axis=1)
-        curve = lt_df.sum(axis=0, skipna=True)
-        result = pd.DataFrame({"rooms_total": curve})
-        result.index = result.index.astype(int)
-        return result
-
-    lt_values = sorted(int(c) for c in lt_df.columns)
-    agg = pd.Series(0.0, index=lt_values, dtype="float64")
-
-    for stay_dt, row in lt_df.iterrows():
         try:
-            stay_ts = pd.to_datetime(stay_dt).normalize()
+            df.index = df.index.astype(int)
+        except Exception:
+            raise ValueError(f"Invalid LT index in monthly curve csv: {csv_path}")
+
+        df = df.sort_index()
+
+        if "rooms_total" in df.columns:
+            df = df[["rooms_total"]]
+        elif len(df.columns) == 1:
+            df.columns = ["rooms_total"]
+        else:
+            raise ValueError(f"Unexpected columns in monthly curve csv: {df.columns}")
+
+        return df
+
+    lt_df = _load_lt_data(hotel_tag=hotel_tag, target_month=target_month)
+    if lt_df.empty:
+        raise ValueError(f"LT_DATA is empty for {hotel_tag}, {target_month}")
+
+    lt_columns: dict[str, int] = {}
+    for col in lt_df.columns:
+        try:
+            lt_columns[col] = int(col)
         except Exception:
             continue
 
-        for lt in lt_values:
-            val = row.get(lt)
-            if pd.isna(val):
-                continue
+    if not lt_columns:
+        raise ValueError(f"No valid LT columns in LT_DATA for {hotel_tag}, {target_month}")
 
-            if lt == -1:
-                asof_for_cell = stay_ts
-            else:
-                asof_for_cell = stay_ts - pd.Timedelta(days=int(lt))
+    ym = int(target_month)
+    year = ym // 100
+    month = ym % 100
+    mask = (lt_df.index.year == year) & (lt_df.index.month == month)
+    lt_month = lt_df.loc[mask, list(lt_columns.keys())]
+    if lt_month.empty:
+        raise ValueError(f"No stay dates for {hotel_tag}, {target_month} in LT_DATA")
 
-            if asof_for_cell > asof_ts:
-                continue
+    ordered_cols = [col for col, _ in sorted(lt_columns.items(), key=lambda kv: kv[1])]
+    lt_month = lt_month[ordered_cols]
+    agg = lt_month.sum(axis=0, skipna=True)
 
-            agg[lt] += float(val)
-
-    agg = agg.reindex(sorted(agg.index))
     result = pd.DataFrame({"rooms_total": agg})
-    result.index = result.index.astype(int)
+    result.index = result.index.map(lambda c: lt_columns[c]).astype(int)
+    result = result.sort_index()
     return result
 
 

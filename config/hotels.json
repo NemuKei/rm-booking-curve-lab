@@ -10,5 +10,11 @@
     "capacity": 434,
     "data_subdir": "hotel_kansai",
     "timeseries_file": "ホテル関西_時系列データ.xlsx"
+  },
+  "domemae": {
+    "display_name": "ソビアル大阪ドーム前",
+    "capacity": 158,
+    "data_subdir": "domemae",
+    "timeseries_file": "ドーム前_時系列データ.xlsx"
   }
 }

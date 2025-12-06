@@ -473,55 +473,88 @@ def get_monthly_curve_data(
     target_month: str,
     as_of_date: Optional[str] = None,
 ) -> pd.DataFrame:
-    """月次ブッキングカーブ画面向けに LT_DATA から集計した DataFrame を返す。
+    """月次ブッキングカーブ画面向けに、月次カーブ用の DataFrame を返す。
 
-    Parameters
-    ----------
-    hotel_tag : str
-        ホテルのタグ。
-    target_month : str
-        対象となる宿泊月 (YYYYMM)。
-    as_of_date : Optional[str]
-        現在は無視される。呼び出し元互換性のために残しているだけ。
+    優先順位:
+    1. monthly_curve_{target_month}_{hotel_tag}.csv が存在すればそれを読み込む。
+    2. 無い場合は LT_DATA から月次合計カーブをオンザフライで集計する。
+
+    as_of_date 引数は現在は使用しない（互換性＆将来拡張のために残している）。
     """
 
-    lt_path = OUTPUT_DIR / f"lt_data_{target_month}_{hotel_tag}.csv"
-    if not lt_path.exists():
-        raise FileNotFoundError(f"lt_data csv not found: {lt_path}")
+    # 1) monthly_curve CSV を優先して読み込む
+    csv_path = OUTPUT_DIR / f"monthly_curve_{target_month}_{hotel_tag}.csv"
+    if csv_path.exists():
+        df = pd.read_csv(csv_path)
+        if df.empty:
+            raise ValueError(f"Monthly curve csv is empty: {csv_path}")
 
-    df_raw = pd.read_csv(lt_path, index_col=0)
-    df_raw.index = pd.to_datetime(df_raw.index, errors="coerce")
-    df_raw = df_raw.dropna()
-    df_raw = df_raw[~df_raw.index.isna()]
+        # 列/インデックス整形
+        if "lt" in df.columns:
+            df = df.set_index("lt")
+        elif df.columns[0] != "lt":
+            # 最初の列が LT の場合はそれを index にする
+            df = df.set_index(df.columns[0])
 
-    lt_cols: list[str] = []
-    for col in df_raw.columns:
         try:
-            int(col)
+            df.index = df.index.astype(int)
+        except Exception as exc:
+            raise ValueError(
+                f"Invalid LT index in monthly curve csv: {csv_path}"
+            ) from exc
+
+        # 列は "rooms_total" 一列に揃える
+        if "rooms_total" in df.columns:
+            df = df[["rooms_total"]]
+        elif len(df.columns) == 1:
+            df.columns = ["rooms_total"]
+        else:
+            raise ValueError(
+                f"Unexpected columns in monthly curve csv: {list(df.columns)}"
+            )
+
+        df = df.sort_index()
+        return df
+
+    # 2) フォールバック: LT_DATA から月次合計カーブを集計する（旧ロジック）
+    lt_df = _load_lt_data(hotel_tag=hotel_tag, target_month=target_month)
+    if lt_df is None or lt_df.empty:
+        raise ValueError(
+            f"No monthly curve csv and LT_DATA is empty for {hotel_tag}, {target_month}"
+        )
+
+    # 列ラベルを int に変換できるものだけに限定
+    lt_columns: dict[str, int] = {}
+    for col in lt_df.columns:
+        try:
+            lt_columns[col] = int(col)
         except Exception:
             continue
-        lt_cols.append(col)
 
-    if not lt_cols:
-        raise ValueError("LT 列が見つかりませんでした。")
+    if not lt_columns:
+        raise ValueError(
+            f"No valid LT columns in LT_DATA for {hotel_tag}, {target_month}"
+        )
 
-    df_lt = df_raw[lt_cols].copy()
-    df_lt.columns = [int(c) for c in lt_cols]
+    # 対象月の宿泊日のみに念のためフィルタ
+    ym = int(target_month)
+    year = ym // 100
+    month = ym % 100
+    mask = (lt_df.index.year == year) & (lt_df.index.month == month)
+    lt_month = lt_df.loc[mask, list(lt_columns.keys())]
+    if lt_month.empty:
+        raise ValueError(
+            f"No stay dates for {hotel_tag}, {target_month} in LT_DATA"
+        )
 
-    year = int(target_month[:4])
-    month = int(target_month[4:])
-    df_lt = df_lt[(df_lt.index.year == year) & (df_lt.index.month == month)]
+    # LT昇順で列を並べ替え、列合計を取る
+    ordered_cols = [c for c, _ in sorted(lt_columns.items(), key=lambda kv: kv[1])]
+    lt_month = lt_month[ordered_cols]
+    agg = lt_month.sum(axis=0, skipna=True)
 
-    if df_lt.empty:
-        raise ValueError("指定月の宿泊日がありません。")
-
-    df_lt = df_lt.reindex(sorted(df_lt.columns), axis=1)
-
-    curve = df_lt.sum(axis=0, skipna=True)
-
-    result = pd.DataFrame({"rooms_total": curve})
-    result.index = result.index.astype(int)
-
+    result = pd.DataFrame({"rooms_total": agg})
+    result.index = result.index.map(lambda c: lt_columns[c]).astype(int)
+    result = result.sort_index()
     return result
 
 

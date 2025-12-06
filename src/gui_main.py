@@ -2813,7 +2813,6 @@ class BookingCurveApp(tk.Tk):
         main_months = [p.strftime("%Y%m") for p in main_periods]
 
         latest_asof = get_latest_asof_for_month(hotel_tag, ym)
-
         try:
             asof_ts = pd.to_datetime(latest_asof) if latest_asof is not None else None
         except Exception:
@@ -2839,7 +2838,7 @@ class BookingCurveApp(tk.Tk):
             df = get_monthly_curve_data(
                 hotel_tag=hotel_tag,
                 target_month=month_str,
-                as_of_date=None,  # ASOF trimming is now done at plotting time
+                as_of_date=latest_asof,  # バックエンド側でASOFトリミングを実施
             )
 
             # インデックスを int LT に統一して昇順ソート
@@ -2932,36 +2931,6 @@ class BookingCurveApp(tk.Tk):
             # 定義した lt_order に合わせて並び替え
             y_ordered = y.reindex(lt_order)
 
-            # --- ASOF-based line cut for not-yet-landed months ---
-            # Use the first 6 characters of the label as YYYYMM (e.g. "202512").
-            if asof_ts is not None:
-                month_tag = label[:6]
-                try:
-                    p = pd.Period(month_tag, freq="M")
-                except Exception:
-                    p = None
-
-                if p is not None:
-                    month_end = p.to_timestamp(how="end").normalize()
-                    delta_days = (month_end - asof_ts).days
-
-                    # If delta_days > 0, ASOF is before the end of this month,
-                    # so we should hide LT < delta_days and ACT(-1).
-                    if delta_days > 0:
-                        mask_index = []
-                        for lt in lt_order:
-                            if lt == -1:
-                                # Always hide ACT for not-yet-landed months
-                                mask_index.append(True)
-                            else:
-                                # Hide LT positions that correspond to dates
-                                # after the ASOF for the month-end side.
-                                mask_index.append(lt < delta_days)
-
-                        # Apply the mask: positions with True become NaN.
-                        y_ordered = y_ordered.copy()
-                        y_ordered = y_ordered.mask(mask_index)
-
             self.mc_ax.plot(
                 x_positions,
                 y_ordered.values,
@@ -3004,7 +2973,11 @@ class BookingCurveApp(tk.Tk):
 
         self.mc_ax.set_xlabel("Lead Time (days)")
         self.mc_ax.set_ylabel("Rooms (monthly cumulative)")
-        self.mc_ax.set_title(f"Monthly booking curve {ym[:4]}-{ym[4:]} (all)")
+        if asof_ts is not None:
+            title = f"Monthly booking curve {ym[:4]}-{ym[4:]} (all, ASOF {latest_asof})"
+        else:
+            title = f"Monthly booking curve {ym[:4]}-{ym[4:]} (all)"
+        self.mc_ax.set_title(title)
 
         self.mc_ax.grid(True, linestyle=":", linewidth=0.5)
         self.mc_ax.legend()

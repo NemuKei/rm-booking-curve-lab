@@ -129,3 +129,87 @@ def build_lt_data(df: pd.DataFrame, max_lt: int = 120) -> pd.DataFrame:
     lt_final = lt_rounded.reindex(columns=lt_desc_columns)
 
     return lt_final
+
+
+def build_monthly_curve_from_timeseries(
+    df: pd.DataFrame,
+    max_lt: int = 120,
+) -> pd.DataFrame:
+    """
+    PMSの時系列データ（宿泊日×取得日）から、月次ブッキングカーブ用の
+    「LT別・月次累計Rooms」を集計する。
+
+    パラメータ
+    ----------
+    df : pd.DataFrame
+        load_time_series_excel() で読み込んだ1シート分の時系列データ。
+        先頭行に取得日のExcelシリアル、先頭列に宿泊日のExcelシリアル or 日付が入っている前提。
+    max_lt : int
+        集計対象とする最大LT（日数）。例: 120。
+
+    戻り値
+    ------
+    pd.DataFrame
+        index: int 型の LT（例: max_lt, ..., 0, -1）
+        columns: 1列 "rooms_total"
+        各 LT 位置で、「そのLTに属する全セルのRooms合計」を表す。
+        補間は行わず、生データのセルだけを合計する。
+    """
+
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["rooms_total"], dtype="float")
+
+    booking_date_serials = df.iloc[0, 1:]
+    booking_dates: List[datetime] = []
+    for serial in booking_date_serials:
+        if pd.isna(serial):
+            booking_dates.append(pd.NaT)
+        elif isinstance(serial, (int, float)):
+            booking_dates.append(_excel_serial_to_datetime(serial))
+        else:
+            booking_dates.append(pd.to_datetime(serial))
+
+    stay_date_serials = df.iloc[1:, 0]
+    stay_dates: List[datetime] = []
+    for serial in stay_date_serials:
+        if pd.isna(serial):
+            stay_dates.append(pd.NaT)
+        elif isinstance(serial, (int, float)):
+            stay_dates.append(_excel_serial_to_datetime(serial))
+        else:
+            stay_dates.append(pd.to_datetime(serial))
+
+    value_block = df.iloc[1:, 1:]
+    value_block = value_block.apply(pd.to_numeric, errors="coerce")
+    value_block.index = pd.to_datetime(stay_dates)
+
+    monthly_totals: dict[int, float] = {}
+
+    for row_idx, stay_dt in enumerate(value_block.index):
+        if pd.isna(stay_dt):
+            continue
+        row = value_block.iloc[row_idx, :]
+        for col_idx, val in enumerate(row):
+            if pd.isna(val):
+                continue
+            booking_dt = booking_dates[col_idx]
+            if pd.isna(booking_dt):
+                continue
+            lt = (stay_dt.date() - booking_dt.date()).days
+
+            if lt > max_lt:
+                continue
+            if lt < 0:
+                lt = -1
+
+            monthly_totals[lt] = monthly_totals.get(lt, 0.0) + float(val)
+
+    if not monthly_totals:
+        return pd.DataFrame(columns=["rooms_total"], dtype="float")
+
+    lts = sorted(monthly_totals.keys(), reverse=True)
+    result = pd.DataFrame(
+        {"rooms_total": [monthly_totals[lt] for lt in lts]},
+        index=pd.Index(lts, name="lt"),
+    )
+    return result

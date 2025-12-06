@@ -129,3 +129,56 @@ def build_lt_data(df: pd.DataFrame, max_lt: int = 120) -> pd.DataFrame:
     lt_final = lt_rounded.reindex(columns=lt_desc_columns)
 
     return lt_final
+
+
+def build_monthly_curve_from_lt(lt_df: pd.DataFrame, target_month: str) -> pd.DataFrame:
+    """
+    LT形式の DataFrame から「月次ブッキングカーブ」用の集計を行うヘルパー。
+
+    パラメータ
+    ----------
+    lt_df : pd.DataFrame
+        build_lt_data() で生成された LT_DATA 相当の DataFrame
+        index: DatetimeIndex(stay_date), columns: int or str の LT 列（-1, 0, 1, ..., maxLT）
+    target_month : str
+        対象となる宿泊月 (YYYYMM)。主にログメッセージ用で、集計ロジック自体には必須ではない。
+
+    戻り値
+    ------
+    pd.DataFrame
+        index: int 型の LT（昇順ソート、例: 0, 1, ..., maxLT, -1）
+        columns: 1列のみ "rooms_total"
+        各 LT 位置で、その月内の全宿泊日の Rooms 合計値を表す。
+    """
+
+    if lt_df is None or lt_df.empty:
+        raise ValueError(f"LT_DATA is empty for target_month={target_month}")
+
+    lt_columns = []
+    for col in lt_df.columns:
+        try:
+            lt_columns.append(int(col))
+        except Exception:
+            continue
+
+    if not lt_columns:
+        raise ValueError("No valid LT columns in LT_DATA")
+
+    lt_df = lt_df[sorted(lt_columns)]
+
+    ym = int(target_month)
+    year = ym // 100
+    month = ym % 100
+    mask = (lt_df.index.year == year) & (lt_df.index.month == month)
+    lt_month = lt_df.loc[mask]
+
+    if lt_month.empty:
+        raise ValueError(f"No stay dates for target_month={target_month}")
+
+    agg = lt_month.sum(axis=0, skipna=True)
+
+    result = pd.DataFrame({"rooms_total": agg})
+    result.index = result.index.astype(int)
+    result = result.sort_index()
+
+    return result

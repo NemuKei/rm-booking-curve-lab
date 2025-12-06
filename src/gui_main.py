@@ -2813,6 +2813,10 @@ class BookingCurveApp(tk.Tk):
         main_months = [p.strftime("%Y%m") for p in main_periods]
 
         latest_asof = get_latest_asof_for_month(hotel_tag, ym)
+        try:
+            asof_ts = pd.to_datetime(latest_asof) if latest_asof is not None else None
+        except Exception:
+            asof_ts = None
 
         # 日次ブッキングカーブと同系統のカラーパレット
         line_colors = [
@@ -2969,7 +2973,11 @@ class BookingCurveApp(tk.Tk):
 
         self.mc_ax.set_xlabel("Lead Time (days)")
         self.mc_ax.set_ylabel("Rooms (monthly cumulative)")
-        self.mc_ax.set_title(f"Monthly booking curve {ym[:4]}-{ym[4:]} (all)")
+        if asof_ts is not None:
+            title = f"Monthly booking curve {ym[:4]}-{ym[4:]} (all, ASOF {latest_asof})"
+        else:
+            title = f"Monthly booking curve {ym[:4]}-{ym[4:]} (all)"
+        self.mc_ax.set_title(title)
 
         self.mc_ax.grid(True, linestyle=":", linewidth=0.5)
         self.mc_ax.legend()

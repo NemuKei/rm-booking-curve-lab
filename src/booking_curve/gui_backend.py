@@ -482,8 +482,8 @@ def get_monthly_curve_data(
     target_month : str
         対象となる宿泊月 (YYYYMM)。
     as_of_date : Optional[str]
-        ASOF ベースの月次カーブを作る場合の ASOF 日付 (YYYY-MM-DD)。None の場合は
-        LT_DATA の全期間を対象とする。
+        ASOF ベースの月次カーブを作る場合に "YYYY-MM-DD" 形式で指定する。
+        None の場合は LT_DATA の履歴全体を合算する。
     """
 
     lt_df = _load_lt_data(hotel_tag=hotel_tag, target_month=target_month)
@@ -491,33 +491,52 @@ def get_monthly_curve_data(
     if lt_df.empty:
         raise ValueError("指定月の宿泊日がありません。")
 
-    # as_of_date が None の場合は素の LT_DATA をそのまま集計
-    if as_of_date is None:
-        df_work = lt_df.copy()
+    def _aggregate_full_history(df: pd.DataFrame) -> pd.DataFrame:
+        df_work = df.copy()
         df_work = df_work.reindex(sorted(df_work.columns), axis=1)
         curve = df_work.sum(axis=0, skipna=True)
         result = pd.DataFrame({"rooms_total": curve})
         result.index = result.index.astype(int)
         return result
 
-    asof_ts = pd.to_datetime(as_of_date)
-    df_work = lt_df.copy()
-    has_act = -1 in df_work.columns
-    asof_normalized = asof_ts.normalize()
+    if as_of_date is None:
+        return _aggregate_full_history(lt_df)
 
-    for stay_date in df_work.index:
-        delta_days = (stay_date.normalize() - asof_ts).days
-        if delta_days > 0:
-            for lt in df_work.columns:
-                if isinstance(lt, (int, float)) and lt >= 0 and lt < delta_days:
-                    df_work.at[stay_date, lt] = pd.NA
+    try:
+        asof_ts = pd.to_datetime(as_of_date).normalize()
+    except Exception:
+        return _aggregate_full_history(lt_df)
 
-        if has_act and stay_date.normalize() >= asof_normalized:
-            df_work.at[stay_date, -1] = pd.NA
+    lt_values = sorted(set(int(c) for c in lt_df.columns))
+    agg = pd.Series(0.0, index=lt_values, dtype="float64")
 
-    df_work = df_work.reindex(sorted(df_work.columns), axis=1)
-    curve = df_work.sum(axis=0, skipna=True)
-    result = pd.DataFrame({"rooms_total": curve})
+    for stay_dt, row in lt_df.iterrows():
+        if pd.isna(stay_dt):
+            continue
+        stay_ts = pd.to_datetime(stay_dt).normalize()
+        if pd.isna(stay_ts):
+            continue
+
+        delta_days = int((stay_ts - asof_ts).days)
+
+        target_lt: Optional[int] = None
+        if delta_days < 0:
+            if -1 in row and not pd.isna(row.get(-1)):
+                target_lt = -1
+        else:
+            if delta_days in agg.index:
+                target_lt = delta_days
+
+        if target_lt is None:
+            continue
+
+        val = row.get(target_lt)
+        if pd.isna(val):
+            continue
+
+        agg[target_lt] += float(val)
+
+    result = pd.DataFrame({"rooms_total": agg})
     result.index = result.index.astype(int)
 
     return result

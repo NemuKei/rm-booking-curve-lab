@@ -77,10 +77,11 @@ def build_lt_for_month(
     lt_df.to_csv(out_path, index=True)
     print(f"[OK] 出力: {out_path}")
 
-    monthly_df = build_monthly_curve_from_timeseries(df_ts, max_lt=MAX_LT)
-    if monthly_df.empty:
+    try:
+        monthly_df = build_monthly_curve_from_timeseries(df_ts, max_lt=MAX_LT)
+    except Exception as exc:  # noqa: BLE001
         print(
-            f"[run_build_lt_csv] Skip monthly_curve for {hotel_tag} {sheet_name}: no data"
+            f"[run_build_lt_csv] Skip monthly_curve for {hotel_tag} {sheet_name}: {exc}"
         )
     else:
         monthly_out_name = f"monthly_curve_{sheet_name}_{hotel_tag}.csv"

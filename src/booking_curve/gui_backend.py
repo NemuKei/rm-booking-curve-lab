@@ -482,63 +482,57 @@ def get_monthly_curve_data(
     target_month : str
         対象となる宿泊月 (YYYYMM)。
     as_of_date : Optional[str]
-        ASOF ベースの月次カーブを作る場合に "YYYY-MM-DD" 形式で指定する。
-        None の場合は LT_DATA の履歴全体を合算する。
+        "YYYY-MM-DD" 形式で指定した場合、その ASOF 日付までに観測された情報だけを使って
+        月次ブッキングカーブを構築する。None の場合は LT_DATA の履歴全体を合算する。
     """
-
     lt_df = _load_lt_data(hotel_tag=hotel_tag, target_month=target_month)
 
     if lt_df.empty:
         raise ValueError("指定月の宿泊日がありません。")
 
-    def _aggregate_full_history(df: pd.DataFrame) -> pd.DataFrame:
-        df_work = df.copy()
-        df_work = df_work.reindex(sorted(df_work.columns), axis=1)
-        curve = df_work.sum(axis=0, skipna=True)
+    if as_of_date is None:
+        lt_df = lt_df.reindex(sorted(lt_df.columns), axis=1)
+        curve = lt_df.sum(axis=0, skipna=True)
         result = pd.DataFrame({"rooms_total": curve})
         result.index = result.index.astype(int)
         return result
 
-    if as_of_date is None:
-        return _aggregate_full_history(lt_df)
-
     try:
         asof_ts = pd.to_datetime(as_of_date).normalize()
     except Exception:
-        return _aggregate_full_history(lt_df)
+        lt_df = lt_df.reindex(sorted(lt_df.columns), axis=1)
+        curve = lt_df.sum(axis=0, skipna=True)
+        result = pd.DataFrame({"rooms_total": curve})
+        result.index = result.index.astype(int)
+        return result
 
-    lt_values = sorted(set(int(c) for c in lt_df.columns))
+    lt_values = sorted(int(c) for c in lt_df.columns)
     agg = pd.Series(0.0, index=lt_values, dtype="float64")
 
     for stay_dt, row in lt_df.iterrows():
-        if pd.isna(stay_dt):
-            continue
-        stay_ts = pd.to_datetime(stay_dt).normalize()
-        if pd.isna(stay_ts):
-            continue
-
-        delta_days = int((stay_ts - asof_ts).days)
-
-        target_lt: Optional[int] = None
-        if delta_days < 0:
-            if -1 in row and not pd.isna(row.get(-1)):
-                target_lt = -1
-        else:
-            if delta_days in agg.index:
-                target_lt = delta_days
-
-        if target_lt is None:
+        try:
+            stay_ts = pd.to_datetime(stay_dt).normalize()
+        except Exception:
             continue
 
-        val = row.get(target_lt)
-        if pd.isna(val):
-            continue
+        for lt in lt_values:
+            val = row.get(lt)
+            if pd.isna(val):
+                continue
 
-        agg[target_lt] += float(val)
+            if lt == -1:
+                asof_for_cell = stay_ts
+            else:
+                asof_for_cell = stay_ts - pd.Timedelta(days=int(lt))
 
+            if asof_for_cell > asof_ts:
+                continue
+
+            agg[lt] += float(val)
+
+    agg = agg.reindex(sorted(agg.index))
     result = pd.DataFrame({"rooms_total": agg})
     result.index = result.index.astype(int)
-
     return result
 
 

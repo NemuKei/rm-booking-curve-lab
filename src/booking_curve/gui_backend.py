@@ -473,38 +473,57 @@ def get_monthly_curve_data(
     target_month: str,
     as_of_date: Optional[str] = None,
 ) -> pd.DataFrame:
-    """月次ブッキングカーブ画面向けの DataFrame を返す。
+    """月次ブッキングカーブ画面向けに、月次カーブ用の DataFrame を返す。
 
-    monthly_curve_{target_month}_{hotel_tag}.csv が存在する場合はそれを読み込み、
-    無い場合は LT_DATA から月次合計カーブをオンザフライで集計する。
-    as_of_date 引数は現時点では未使用（将来的な拡張用に残している）。
+    優先順位:
+    1. monthly_curve_{target_month}_{hotel_tag}.csv が存在すればそれを読み込む。
+    2. 無い場合は LT_DATA から月次合計カーブをオンザフライで集計する。
+
+    as_of_date 引数は現在は使用しない（互換性＆将来拡張のために残している）。
     """
+
+    # 1) monthly_curve CSV を優先して読み込む
     csv_path = OUTPUT_DIR / f"monthly_curve_{target_month}_{hotel_tag}.csv"
     if csv_path.exists():
-        df = pd.read_csv(csv_path, index_col=0)
+        df = pd.read_csv(csv_path)
         if df.empty:
             raise ValueError(f"Monthly curve csv is empty: {csv_path}")
 
+        # 列/インデックス整形
+        if "lt" in df.columns:
+            df = df.set_index("lt")
+        elif df.columns[0] != "lt":
+            # 最初の列が LT の場合はそれを index にする
+            df = df.set_index(df.columns[0])
+
         try:
             df.index = df.index.astype(int)
-        except Exception:
-            raise ValueError(f"Invalid LT index in monthly curve csv: {csv_path}")
+        except Exception as exc:
+            raise ValueError(
+                f"Invalid LT index in monthly curve csv: {csv_path}"
+            ) from exc
 
-        df = df.sort_index()
-
+        # 列は "rooms_total" 一列に揃える
         if "rooms_total" in df.columns:
             df = df[["rooms_total"]]
         elif len(df.columns) == 1:
             df.columns = ["rooms_total"]
         else:
-            raise ValueError(f"Unexpected columns in monthly curve csv: {df.columns}")
+            raise ValueError(
+                f"Unexpected columns in monthly curve csv: {list(df.columns)}"
+            )
 
+        df = df.sort_index()
         return df
 
+    # 2) フォールバック: LT_DATA から月次合計カーブを集計する（旧ロジック）
     lt_df = _load_lt_data(hotel_tag=hotel_tag, target_month=target_month)
-    if lt_df.empty:
-        raise ValueError(f"LT_DATA is empty for {hotel_tag}, {target_month}")
+    if lt_df is None or lt_df.empty:
+        raise ValueError(
+            f"No monthly curve csv and LT_DATA is empty for {hotel_tag}, {target_month}"
+        )
 
+    # 列ラベルを int に変換できるものだけに限定
     lt_columns: dict[str, int] = {}
     for col in lt_df.columns:
         try:
@@ -513,17 +532,23 @@ def get_monthly_curve_data(
             continue
 
     if not lt_columns:
-        raise ValueError(f"No valid LT columns in LT_DATA for {hotel_tag}, {target_month}")
+        raise ValueError(
+            f"No valid LT columns in LT_DATA for {hotel_tag}, {target_month}"
+        )
 
+    # 対象月の宿泊日のみに念のためフィルタ
     ym = int(target_month)
     year = ym // 100
     month = ym % 100
     mask = (lt_df.index.year == year) & (lt_df.index.month == month)
     lt_month = lt_df.loc[mask, list(lt_columns.keys())]
     if lt_month.empty:
-        raise ValueError(f"No stay dates for {hotel_tag}, {target_month} in LT_DATA")
+        raise ValueError(
+            f"No stay dates for {hotel_tag}, {target_month} in LT_DATA"
+        )
 
-    ordered_cols = [col for col, _ in sorted(lt_columns.items(), key=lambda kv: kv[1])]
+    # LT昇順で列を並べ替え、列合計を取る
+    ordered_cols = [c for c, _ in sorted(lt_columns.items(), key=lambda kv: kv[1])]
     lt_month = lt_month[ordered_cols]
     agg = lt_month.sum(axis=0, skipna=True)
 

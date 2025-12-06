@@ -5,16 +5,13 @@ GUI からは run_build_lt_for_gui(hotel_tag, target_months) を呼び出す。
 CLI 実行時は HOTELS_CONFIG の先頭に定義された hotel_tag（現在は daikokucho）を処理する。
 """
 
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
 
 from booking_curve.data_loader import load_time_series_excel
-from booking_curve.lt_builder import (
-    build_lt_data,
-    build_monthly_curve_from_timeseries,
-    extract_asof_dates_from_timeseries,
-)
+from booking_curve.lt_builder import build_lt_data, extract_asof_dates_from_timeseries
 from booking_curve.config import DATA_DIR, OUTPUT_DIR, HOTEL_CONFIG
 
 
@@ -30,6 +27,66 @@ TARGET_MONTHS = [
 
 # 最大リードタイム
 MAX_LT = 120
+
+
+def build_monthly_curve_from_timeseries(
+    df_ts: pd.DataFrame, max_lt: int
+) -> pd.DataFrame:
+    """
+    時系列Excelから月次ブッキングカーブ用の「LT別・月次Rooms合計」を生成する。
+    """
+
+    if df_ts is None or df_ts.empty:
+        return pd.DataFrame(columns=["lt", "rooms_total"])
+
+    booking_serials = df_ts.iloc[0, 1:]
+    excel_base = datetime(1899, 12, 30)
+    as_of_dates: list[pd.Timestamp] = []
+
+    for serial in booking_serials:
+        if pd.isna(serial):
+            as_of_dates.append(pd.NaT)
+            continue
+        as_of = excel_base + timedelta(days=float(serial))
+        as_of_dates.append(pd.to_datetime(as_of))
+
+    stay_dates_raw = df_ts.iloc[1:, 0]
+    stay_dates = pd.to_datetime(stay_dates_raw, errors="coerce").dropna()
+    if stay_dates.empty:
+        return pd.DataFrame(columns=["lt", "rooms_total"])
+
+    month_end = stay_dates.max().normalize()
+
+    monthly_by_lt: dict[int, float] = {}
+
+    for col_idx in range(1, df_ts.shape[1]):
+        as_of_date = as_of_dates[col_idx - 1]
+        if pd.isna(as_of_date):
+            continue
+
+        rooms_col = df_ts.iloc[1:, col_idx]
+        if rooms_col.isna().all():
+            continue
+
+        total = rooms_col.sum(skipna=True)
+
+        lt_raw = (month_end.date() - as_of_date.date()).days
+        if lt_raw < 0:
+            lt = -1
+        elif lt_raw > max_lt:
+            continue
+        else:
+            lt = int(lt_raw)
+
+        monthly_by_lt[lt] = float(total)
+
+    if not monthly_by_lt:
+        return pd.DataFrame(columns=["lt", "rooms_total"])
+
+    rows = sorted(monthly_by_lt.items(), key=lambda x: x[0])
+    df_out = pd.DataFrame(rows, columns=["lt", "rooms_total"])
+    df_out["lt"] = df_out["lt"].astype(int)
+    return df_out
 
 
 def _get_hotel_io_config(hotel_tag: str) -> tuple[Path, str]:
@@ -84,10 +141,13 @@ def build_lt_for_month(
             f"[run_build_lt_csv] Skip monthly_curve for {hotel_tag} {sheet_name}: {exc}"
         )
     else:
-        monthly_out_name = f"monthly_curve_{sheet_name}_{hotel_tag}.csv"
-        monthly_out_path = OUTPUT_DIR / monthly_out_name
-        monthly_df.to_csv(monthly_out_path)
-        print(f"[run_build_lt_csv] Saved monthly_curve csv: {monthly_out_path}")
+        if monthly_df.empty:
+            print(f"[WARN] 月次カーブ用データが取得できませんでした: {sheet_name}")
+        else:
+            monthly_out_name = f"monthly_curve_{sheet_name}_{hotel_tag}.csv"
+            monthly_out_path = OUTPUT_DIR / monthly_out_name
+            monthly_df.to_csv(monthly_out_path, index=False)
+            print(f"[OK] 月次カーブ出力: {monthly_out_path}")
 
     return [pd.Timestamp(d) for d in asof_dates]
 

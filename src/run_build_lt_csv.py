@@ -11,7 +11,11 @@ from pathlib import Path
 import pandas as pd
 
 from booking_curve.data_loader import load_time_series_excel
-from booking_curve.lt_builder import build_lt_data, extract_asof_dates_from_timeseries
+from booking_curve.lt_builder import (
+    build_lt_data,
+    build_lt_data_from_daily_snapshots_for_month,
+    extract_asof_dates_from_timeseries,
+)
 from booking_curve.config import DATA_DIR, OUTPUT_DIR, HOTEL_CONFIG
 
 
@@ -155,6 +159,7 @@ def build_lt_for_month(
 def run_build_lt_for_gui(
     hotel_tag: str,
     target_months: list[str],
+    source: str = "timeseries",
 ) -> None:
     """
     GUI から呼び出すための薄いラッパー。
@@ -175,12 +180,28 @@ def run_build_lt_for_gui(
     all_asof_dates: list[pd.Timestamp] = []
 
     for ym in target_months:
-        month_asofs = build_lt_for_month(
-            ym,
-            hotel_tag=hotel_tag,
-            excel_path=excel_path,
-        )
-        all_asof_dates.extend(pd.Timestamp(d).normalize() for d in month_asofs)
+        if source == "timeseries":
+            month_asofs = build_lt_for_month(
+                ym,
+                hotel_tag=hotel_tag,
+                excel_path=excel_path,
+            )
+            all_asof_dates.extend(pd.Timestamp(d).normalize() for d in month_asofs)
+        elif source == "daily_snapshots":
+            print(f"[daily_snapshots] building LT_DATA for {hotel_tag} {ym}")
+            lt_df = build_lt_data_from_daily_snapshots_for_month(
+                hotel_id=hotel_tag,
+                target_month=ym,
+                max_lt=MAX_LT,
+            )
+            out_path = OUTPUT_DIR / f"lt_data_{ym}_{hotel_tag}.csv"
+            lt_df.to_csv(out_path, index=True)
+            print(f"[OK] 出力: {out_path}")
+        else:
+            raise ValueError(f"Unknown source: {source}")
+
+    if source != "timeseries":
+        return
 
     if not all_asof_dates:
         print("[WARN] 取得日が1件も検出されませんでした (asof_dates CSV は出力されません)。")

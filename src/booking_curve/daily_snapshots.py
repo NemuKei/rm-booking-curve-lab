@@ -76,9 +76,9 @@ def append_daily_snapshots(
     if not hotel_id:
         raise ValueError("hotel_id must be a non-empty string")
 
-    output_root = output_dir or OUTPUT_DIR
-    output_root.mkdir(parents=True, exist_ok=True)
-    path = output_root / f"daily_snapshots_{hotel_id}.csv"
+    base_dir = OUTPUT_DIR if output_dir is None else Path(output_dir)
+    base_dir.mkdir(parents=True, exist_ok=True)
+    path = base_dir / f"daily_snapshots_{hotel_id}.csv"
 
     df_new_norm = normalize_daily_snapshots_df(df_new, hotel_id=hotel_id, as_of_date=None)
 
@@ -133,8 +133,8 @@ def read_daily_snapshots(
     if not hotel_id:
         raise ValueError("hotel_id must be a non-empty string")
 
-    output_root = output_dir or OUTPUT_DIR
-    path = output_root / f"daily_snapshots_{hotel_id}.csv"
+    base_dir = OUTPUT_DIR if output_dir is None else Path(output_dir)
+    path = base_dir / f"daily_snapshots_{hotel_id}.csv"
 
     if not path.exists():
         return pd.DataFrame(columns=STANDARD_COLUMNS)

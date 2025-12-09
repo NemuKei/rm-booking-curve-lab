@@ -13,7 +13,7 @@ from booking_curve.daily_snapshots import (
     append_daily_snapshots,
 )
 
-PatternType = Literal["raw", "A", "B", "C"]
+LayoutType = Literal["shifted", "inline"]
 
 logger = logging.getLogger(__name__)
 
@@ -66,11 +66,11 @@ def _iter_stay_rows(df: pd.DataFrame) -> list[tuple[int, pd.Timestamp]]:
 def _extract_oh_values_for_row(
     df: pd.DataFrame,
     row_idx: int,
-    pattern: PatternType,
+    layout: LayoutType,
     file_path: Path,
 ) -> tuple[object, object, object]:
-    """Extract OH values for a stay row according to the pattern."""
-    if pattern in {"raw", "A", "B"}:
+    """宿泊日行から OH 値を抽出する。"""
+    if layout == "shifted":
         oh_idx = row_idx + 1
         if oh_idx >= df.shape[0]:
             logger.warning("%s: OH行がシート末尾を超えています (row=%s)", file_path, row_idx)
@@ -79,10 +79,12 @@ def _extract_oh_values_for_row(
             rooms_oh = df.iloc[oh_idx, 4] if df.shape[1] > 4 else pd.NA
             pax_oh = df.iloc[oh_idx, 5] if df.shape[1] > 5 else pd.NA
             revenue_oh = df.iloc[oh_idx, 6] if df.shape[1] > 6 else pd.NA
-    else:  # pattern == "C"
+    elif layout == "inline":
         rooms_oh = df.iloc[row_idx, 4] if df.shape[1] > 4 else pd.NA
         pax_oh = df.iloc[row_idx, 5] if df.shape[1] > 5 else pd.NA
         revenue_oh = df.iloc[row_idx, 6] if df.shape[1] > 6 else pd.NA
+    else:
+        raise ValueError(f"Unknown layout: {layout!r}")
 
     values = [rooms_oh, pax_oh, revenue_oh]
     if all(pd.isna(v) or v == 0 for v in values):
@@ -94,23 +96,26 @@ def _extract_oh_values_for_row(
 def parse_nface_file(
     file_path: str | Path,
     hotel_id: str,
-    pattern: PatternType,
+    layout: LayoutType,
     output_dir: Optional[Path] = None,
     save: bool = True,
 ) -> pd.DataFrame:
     """Parse a N@FACE Excel file into standard daily snapshots format.
 
     Args:
-        file_path: Path to the Excel file.
-        hotel_id: Hotel identifier to populate in the output.
-        pattern: Excel layout pattern ("raw", "A", "B", or "C").
-        output_dir: Optional output directory for saving appended CSV.
-        save: When True, append results to the standard CSV.
+        file_path: Excel ファイルのパス。
+        hotel_id: 出力に付与するホテルID。
+        layout: OH が宿泊日行の1行下にある("shifted")か同一行にある("inline")か。
+        output_dir: 標準CSVを保存する出力ディレクトリ。
+        save: True の場合は標準CSVに追記する。
 
     Returns:
         Normalized dataframe of daily snapshots extracted from the file.
     """
     path = Path(file_path)
+    if layout not in ("shifted", "inline"):
+        raise ValueError(f"Unknown layout: {layout!r}")
+
     df_raw = pd.read_excel(path, header=None)
 
     target_month = _parse_target_month(df_raw, path)
@@ -136,7 +141,7 @@ def parse_nface_file(
             continue
 
         rooms_oh, pax_oh, revenue_oh = _extract_oh_values_for_row(
-            df_raw, row_idx, pattern, path
+            df_raw, row_idx, layout, path
         )
         records.append(
             {
@@ -182,13 +187,20 @@ def parse_nface_file(
 def build_daily_snapshots_from_folder(
     input_dir: str | Path,
     hotel_id: str,
-    pattern: PatternType,
+    layout: LayoutType,
     output_dir: Optional[Path] = None,
-    glob: str = "*.xlsx",
+    glob: str = "*.xls*",
 ) -> None:
     """Process all Excel files in a folder and append to standard CSV."""
     input_path = Path(input_dir)
-    files = sorted(input_path.glob(glob))
+    if not input_path.exists() or not input_path.is_dir():
+        logger.error("%s が存在しないかディレクトリではありません", input_path)
+        return
+
+    candidates = list(input_path.glob(glob))
+    files = sorted(
+        p for p in candidates if p.is_file() and p.suffix.lower() in {".xls", ".xlsx"}
+    )
 
     if not files:
         logger.warning("%s 配下に対象ファイルが見つかりません", input_path)
@@ -197,7 +209,7 @@ def build_daily_snapshots_from_folder(
     for file in files:
         try:
             parse_nface_file(
-                file, hotel_id=hotel_id, pattern=pattern, output_dir=output_dir, save=True
+                file, hotel_id=hotel_id, layout=layout, output_dir=output_dir, save=True
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("%s の処理中にエラーが発生しました: %s", file, exc)

@@ -13,7 +13,11 @@ from booking_curve.daily_snapshots import (
     append_daily_snapshots,
 )
 
-LayoutType = Literal["shifted", "inline"]
+# layout="auto" 時は A列の日付行の間隔から自動判定する
+# "shifted": 宿泊日行(row_idx)の1行下(row_idx+1)に OH があるレイアウト (無加工/A/B)
+# "inline" : 宿泊日行(row_idx)と同じ行に OH があるレイアウト (加工C)
+# "auto"   : A列の日付行の間隔から自動判定
+LayoutType = Literal["shifted", "inline", "auto"]
 
 logger = logging.getLogger(__name__)
 
@@ -93,10 +97,47 @@ def _extract_oh_values_for_row(
     return rooms_oh, pax_oh, revenue_oh
 
 
+def _detect_layout(df: pd.DataFrame, file_path: Path) -> Literal["shifted", "inline"]:
+    """A列の日付行インデックス間隔から 'shifted' / 'inline' を判定する。"""
+
+    col = df.iloc[:, 0]
+    dates = pd.to_datetime(col, errors="coerce")
+    date_idxs = dates[dates.notna()].index.to_numpy()
+
+    if len(date_idxs) < 3:
+        logger.error("%s: 日付行が少なすぎるためレイアウトを自動判定できません", file_path)
+        raise ValueError("日付行が少なすぎるためレイアウトを自動判定できません")
+
+    diffs = date_idxs[1:] - date_idxs[:-1]
+    inline_votes = (diffs == 1).sum()
+    shifted_votes = (diffs >= 2).sum()
+    total_votes = inline_votes + shifted_votes
+
+    if total_votes == 0:
+        logger.error("%s: 日付行の間隔からレイアウトを判定できません", file_path)
+        raise ValueError("日付行の間隔からレイアウトを判定できません")
+
+    inline_ratio = inline_votes / total_votes
+    if inline_ratio >= 0.8:
+        layout = "inline"
+    elif inline_ratio <= 0.2:
+        layout = "shifted"
+    else:
+        logger.error(
+            "%s: レイアウトを自動判定できません (inline_ratio=%.2f)",
+            file_path,
+            inline_ratio,
+        )
+        raise ValueError(f"レイアウトを自動判定できません (inline_ratio={inline_ratio:.2f})")
+
+    logger.info("%s: layout を自動判定しました -> %s", file_path, layout)
+    return layout
+
+
 def parse_nface_file(
     file_path: str | Path,
     hotel_id: str,
-    layout: LayoutType,
+    layout: LayoutType = "auto",
     output_dir: Optional[Path] = None,
     save: bool = True,
 ) -> pd.DataFrame:
@@ -105,7 +146,7 @@ def parse_nface_file(
     Args:
         file_path: Excel ファイルのパス。
         hotel_id: 出力に付与するホテルID。
-        layout: OH が宿泊日行の1行下にある("shifted")か同一行にある("inline")か。
+        layout: OH 行の配置を指定する。"shifted" は宿泊日行の1行下、"inline" は宿泊日行と同じ行、"auto" はA列の日付間隔から自動判定。
         output_dir: 標準CSVを保存する出力ディレクトリ。
         save: True の場合は標準CSVに追記する。
 
@@ -113,10 +154,14 @@ def parse_nface_file(
         Normalized dataframe of daily snapshots extracted from the file.
     """
     path = Path(file_path)
-    if layout not in ("shifted", "inline"):
-        raise ValueError(f"Unknown layout: {layout!r}")
-
     df_raw = pd.read_excel(path, header=None)
+
+    if layout == "auto":
+        resolved_layout = _detect_layout(df_raw, path)
+    elif layout in ("shifted", "inline"):
+        resolved_layout = layout
+    else:
+        raise ValueError(f"Unknown layout: {layout!r}")
 
     target_month = _parse_target_month(df_raw, path)
     if target_month is None:
@@ -141,7 +186,7 @@ def parse_nface_file(
             continue
 
         rooms_oh, pax_oh, revenue_oh = _extract_oh_values_for_row(
-            df_raw, row_idx, layout, path
+            df_raw, row_idx, resolved_layout, path
         )
         records.append(
             {
@@ -187,11 +232,15 @@ def parse_nface_file(
 def build_daily_snapshots_from_folder(
     input_dir: str | Path,
     hotel_id: str,
-    layout: LayoutType,
+    layout: LayoutType = "auto",
     output_dir: Optional[Path] = None,
     glob: str = "*.xls*",
 ) -> None:
-    """Process all Excel files in a folder and append to standard CSV."""
+    """Process all Excel files in a folder and append to standard CSV.
+
+    デフォルトでは layout="auto" としてファイルごとにレイアウトを自動判定する。必要に応じて
+    "shifted" / "inline" を明示指定することもできる。
+    """
     input_path = Path(input_dir)
     if not input_path.exists() or not input_path.is_dir():
         logger.error("%s が存在しないかディレクトリではありません", input_path)

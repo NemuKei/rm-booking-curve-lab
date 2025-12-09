@@ -11,6 +11,8 @@ from typing import List
 
 import pandas as pd
 
+from booking_curve.daily_snapshots import read_daily_snapshots_for_month
+
 EXCEL_BASE_DATE = datetime(1899, 12, 30)
 
 
@@ -131,6 +133,52 @@ def build_lt_data(df: pd.DataFrame, max_lt: int = 120) -> pd.DataFrame:
     return lt_final
 
 
+def build_lt_data_from_daily_snapshots_for_month(
+    hotel_id: str,
+    target_month: str,
+    max_lt: int = 120,
+) -> pd.DataFrame:
+    """日別スナップショットCSVから、指定月の宿泊日×LTのテーブルを構築する。"""
+
+    lt_desc_columns = list(range(max_lt, -2, -1))
+
+    df = read_daily_snapshots_for_month(
+        hotel_id=hotel_id, target_month=target_month, output_dir=None
+    )
+
+    if df is None or df.empty:
+        return pd.DataFrame(columns=lt_desc_columns, dtype="Int64")
+
+    df = df.copy()
+    df["stay_date"] = pd.to_datetime(df.get("stay_date"), errors="coerce").dt.normalize()
+    df["as_of_date"] = pd.to_datetime(df.get("as_of_date"), errors="coerce").dt.normalize()
+
+    df = df.dropna(subset=["stay_date", "as_of_date"])
+    if df.empty:
+        return pd.DataFrame(columns=lt_desc_columns, dtype="Int64")
+
+    df["lt"] = (df["stay_date"] - df["as_of_date"]).dt.days
+    df = df[df["lt"] <= max_lt]
+    df.loc[df["lt"] < 0, "lt"] = -1
+
+    grouped = df.groupby(["stay_date", "lt"], as_index=False)["rooms_oh"].sum()
+    if grouped.empty:
+        return pd.DataFrame(columns=lt_desc_columns, dtype="Int64")
+
+    pivot_df = grouped.pivot(index="stay_date", columns="lt", values="rooms_oh")
+    pivot_df = pivot_df.sort_index().sort_index(axis=1)
+
+    expected_lts = list(range(-1, max_lt + 1))
+    pivot_df = pivot_df.reindex(columns=expected_lts, fill_value=0.0)
+
+    pivot_df.index = pd.to_datetime(pivot_df.index).normalize()
+    pivot_df.index.name = "stay_date"
+    pivot_df.columns = pivot_df.columns.astype(int)
+    pivot_df.columns.name = "lt"
+
+    return pivot_df.astype(float)
+
+
 def build_monthly_curve_from_timeseries(
     df: pd.DataFrame,
     max_lt: int = 120,
@@ -213,3 +261,11 @@ def build_monthly_curve_from_timeseries(
         index=pd.Index(lts, name="lt"),
     )
     return result
+
+
+__all__ = [
+    "extract_asof_dates_from_timeseries",
+    "build_lt_data",
+    "build_lt_data_from_daily_snapshots_for_month",
+    "build_monthly_curve_from_timeseries",
+]

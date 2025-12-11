@@ -134,13 +134,7 @@ def build_lt_data(df: pd.DataFrame, max_lt: int = 120) -> pd.DataFrame:
 
 
 def build_lt_table_from_daily_snapshots(df: pd.DataFrame, max_lt: int = 120) -> pd.DataFrame:
-    """日別スナップショットから LT テーブルを生成する（非補完版）。
-
-    -1 列は「LT>=0 で観測された中で最小の LT の rooms_oh（最新のオンハンド）」とし、
-    stay_date >= max(as_of_date) の行については未着地のため NaN となる。
-    ASOF 日より前日までの宿泊日（stay_date < max_asof）にだけ ACT(-1) が入り、
-    ASOF 当日以降（stay_date >= max_asof）は未着地扱いで NaN となる。
-    """
+    """日別スナップショットから LT テーブルを生成する（非補完版）。"""
 
     df = df.copy()
 
@@ -159,7 +153,7 @@ def build_lt_table_from_daily_snapshots(df: pd.DataFrame, max_lt: int = 120) -> 
     if df_lt.empty:
         # 対象LTが何もなければ空テーブルを返す
         index = pd.Index([], name="stay_date")
-        cols = list(range(0, max_lt + 1)) + [-1]
+        cols = list(range(0, max_lt + 1))
         return pd.DataFrame(index=index, columns=cols, dtype=float)
 
     df_lt = df_lt.sort_values(["stay_date", "as_of_date"])
@@ -168,36 +162,12 @@ def build_lt_table_from_daily_snapshots(df: pd.DataFrame, max_lt: int = 120) -> 
     lt_table = df_last.pivot(index="stay_date", columns="lt", values="rooms_oh")
     lt_table = lt_table.reindex(columns=range(0, max_lt + 1))
 
-    # --- ② ACT(-1) は行内で LT>=0 の最小 LT 値を採用 ---
-    def _pick_act_from_row(row: pd.Series) -> float:
-        non_null = row.dropna()
-        if non_null.empty:
-            return float("nan")
-        lt_min = non_null.index.min()
-        return non_null.loc[lt_min]
-
-    if lt_table.empty:
-        lt_table[-1] = float("nan")
-    else:
-        lt_table[-1] = lt_table.apply(_pick_act_from_row, axis=1)
-
-    # --- ③ 未来日の ACT(-1) は NaN とする（未着地のため） ---
-    max_asof = df["as_of_date"].max()
-    if pd.notna(max_asof):
-        mask_future = lt_table.index >= max_asof
-        if mask_future.any():
-            lt_table.loc[mask_future, -1] = np.nan
-
     # index/columns を整える
     lt_table = lt_table.sort_index()
     lt_table.index.name = "stay_date"
 
     int_cols = sorted(c for c in lt_table.columns if isinstance(c, (int, np.integer)))
-    if -1 in int_cols:
-        int_cols.remove(-1)
-        lt_table = lt_table.reindex(columns=[-1] + int_cols)
-    else:
-        lt_table = lt_table.reindex(columns=int_cols)
+    lt_table = lt_table.reindex(columns=int_cols)
 
     return lt_table
 
@@ -210,22 +180,58 @@ def build_lt_data_from_daily_snapshots_for_month(
 ) -> pd.DataFrame:
     """日別スナップショットCSVから、指定月の宿泊日×LTのテーブルを構築する。
 
-    daily_snapshots 由来の ACT(-1) は、未着地の宿泊日（stay_date > max(as_of_date)）では NaN になる。
+    daily_snapshots 由来の ACT(-1) は、D+ スナップショット（as_of_date > stay_date）
+    が存在する宿泊日にだけ rooms_oh を設定し、それ以外は NaN となる。
     """
 
     lt_desc_columns = list(range(0, max_lt + 1)) + [-1]
 
-    df = read_daily_snapshots_for_month(
+    df_month = read_daily_snapshots_for_month(
         hotel_id=hotel_id, target_month=target_month, output_dir=output_dir
     )
 
-    if df is None or df.empty:
+    if df_month is None or df_month.empty:
         return pd.DataFrame(columns=lt_desc_columns, dtype="float")
 
-    if "hotel_id" in df.columns:
-        df = df[df["hotel_id"] == hotel_id]
+    if "hotel_id" in df_month.columns:
+        df_month = df_month[df_month["hotel_id"] == hotel_id]
 
-    lt_table = build_lt_table_from_daily_snapshots(df, max_lt=max_lt)
+    lt_table = build_lt_table_from_daily_snapshots(df_month, max_lt=max_lt)
+
+    # --- ACT(-1) を daily_snapshots から再計算して上書き ---
+    if df_month is not None and not df_month.empty:
+        df_act_src = df_month.copy()
+        df_act_src["stay_date"] = pd.to_datetime(
+            df_act_src["stay_date"], errors="coerce"
+        ).dt.normalize()
+        df_act_src["as_of_date"] = pd.to_datetime(
+            df_act_src["as_of_date"], errors="coerce"
+        ).dt.normalize()
+
+        # stay_date, as_of_date, rooms_oh が揃っている行だけを対象にする
+        df_act_src = df_act_src.dropna(subset=["stay_date", "as_of_date", "rooms_oh"])
+
+        if not df_act_src.empty:
+            # D+ スナップショットだけに絞る（as_of_date > stay_date）
+            mask_dplus = df_act_src["as_of_date"] > df_act_src["stay_date"]
+            df_act_src = df_act_src.loc[mask_dplus].copy()
+
+            if not df_act_src.empty:
+                # 各 stay_date について「一番新しい as_of_date」の行を1つだけ採用
+                df_act_src = df_act_src.sort_values(["stay_date", "as_of_date"])
+                df_act_last = df_act_src.groupby("stay_date").tail(1)
+                s_act = df_act_last.set_index("stay_date")["rooms_oh"]
+
+                # -1 列を用意して、いったん NaN にリセット
+                if -1 not in lt_table.columns:
+                    lt_table[-1] = np.nan
+                else:
+                    lt_table.loc[:, -1] = np.nan
+
+                # D+ が存在する宿泊日のみ ACT(-1) を埋める
+                lt_table.loc[s_act.index, -1] = s_act
+
+    lt_table = lt_table.reindex(columns=lt_desc_columns)
 
     if lt_table.empty:
         return lt_table

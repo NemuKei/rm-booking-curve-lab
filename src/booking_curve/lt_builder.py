@@ -137,7 +137,9 @@ def build_lt_table_from_daily_snapshots(df: pd.DataFrame, max_lt: int = 120) -> 
     """日別スナップショットから LT テーブルを生成する（非補完版）。
 
     -1 列は「LT>=0 で観測された中で最小の LT の rooms_oh（最新のオンハンド）」とし、
-    stay_date > max(as_of_date) の行については未着地のため NaN となる。
+    stay_date >= max(as_of_date) の行については未着地のため NaN となる。
+    ASOF 日より前日までの宿泊日（stay_date < max_asof）にだけ ACT(-1) が入り、
+    ASOF 当日以降（stay_date >= max_asof）は未着地扱いで NaN となる。
     """
 
     df = df.copy()
@@ -182,7 +184,7 @@ def build_lt_table_from_daily_snapshots(df: pd.DataFrame, max_lt: int = 120) -> 
     # --- ③ 未来日の ACT(-1) は NaN とする（未着地のため） ---
     max_asof = df["as_of_date"].max()
     if pd.notna(max_asof):
-        mask_future = lt_table.index > max_asof
+        mask_future = lt_table.index >= max_asof
         if mask_future.any():
             lt_table.loc[mask_future, -1] = np.nan
 

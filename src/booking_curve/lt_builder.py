@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List
 
+import numpy as np
 import pandas as pd
 
 from booking_curve.daily_snapshots import read_daily_snapshots_for_month
@@ -133,6 +134,11 @@ def build_lt_data(df: pd.DataFrame, max_lt: int = 120) -> pd.DataFrame:
 
 
 def build_lt_table_from_daily_snapshots(df: pd.DataFrame, max_lt: int = 120) -> pd.DataFrame:
+    """日別スナップショットから LT テーブルを生成する（非補完版）。
+
+    ACT(-1) は、その宿泊日について LT>=0 のうち最小の LT の rooms_oh を採用する。
+    """
+
     df = df.copy()
 
     # 日付を整形
@@ -159,25 +165,29 @@ def build_lt_table_from_daily_snapshots(df: pd.DataFrame, max_lt: int = 120) -> 
     lt_table = df_last.pivot(index="stay_date", columns="lt", values="rooms_oh")
     lt_table = lt_table.reindex(columns=range(0, max_lt + 1))
 
-    # --- ② ACT(-1) 用テーブル（df_act は「元 df」から） ---
-    df_act = df[df["as_of_date"] > df["stay_date"]].copy()
-    if not df_act.empty:
-        # stay_date ごとに最後の as_of_date の rooms_oh を取る
-        s_act = (
-            df_act.sort_values(["stay_date", "as_of_date"])
-                  .groupby("stay_date")["rooms_oh"]
-                  .last()
-        )
-        lt_table[-1] = s_act
-    else:
+    # --- ② ACT(-1) は行内で LT>=0 の最小 LT 値を採用 ---
+    def _pick_act_from_row(row: pd.Series) -> float:
+        non_null = row.dropna()
+        if non_null.empty:
+            return float("nan")
+        lt_min = non_null.index.min()
+        return non_null.loc[lt_min]
+
+    if lt_table.empty:
         lt_table[-1] = float("nan")
+    else:
+        lt_table[-1] = lt_table.apply(_pick_act_from_row, axis=1)
 
     # index/columns を整える
     lt_table = lt_table.sort_index()
     lt_table.index.name = "stay_date"
 
-    cols = list(range(0, max_lt + 1)) + [-1]
-    lt_table = lt_table.reindex(columns=cols)
+    int_cols = sorted(c for c in lt_table.columns if isinstance(c, (int, np.integer)))
+    if -1 in int_cols:
+        int_cols.remove(-1)
+        lt_table = lt_table.reindex(columns=[-1] + int_cols)
+    else:
+        lt_table = lt_table.reindex(columns=int_cols)
 
     return lt_table
 

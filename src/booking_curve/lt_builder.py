@@ -133,50 +133,53 @@ def build_lt_data(df: pd.DataFrame, max_lt: int = 120) -> pd.DataFrame:
 
 
 def build_lt_table_from_daily_snapshots(df: pd.DataFrame, max_lt: int = 120) -> pd.DataFrame:
-    """日別スナップショットから LT テーブルを構築する。
+    df = df.copy()
 
-    この関数では観測値のみを利用し、補完は行わない。
-    """
+    # 日付を整形
+    df["stay_date"] = pd.to_datetime(df["stay_date"])
+    df["as_of_date"] = pd.to_datetime(df["as_of_date"])
 
-    if df is None or df.empty:
-        return pd.DataFrame(columns=list(range(0, max_lt + 1)) + [-1], dtype="float")
+    # rooms_oh が NaN の行は落とす（0 は残す）
+    df = df[~df["rooms_oh"].isna()].copy()
 
-    lt_df = df.copy()
-    lt_df["stay_date"] = pd.to_datetime(lt_df.get("stay_date"), errors="coerce").dt.normalize()
-    lt_df["as_of_date"] = pd.to_datetime(lt_df.get("as_of_date"), errors="coerce").dt.normalize()
+    # LT を計算（ここは「元 df」に対してやる）
+    df["lt"] = (df["stay_date"] - df["as_of_date"]).dt.days
 
-    lt_df = lt_df.dropna(subset=["stay_date", "as_of_date", "rooms_oh"])
-    if lt_df.empty:
-        return pd.DataFrame(columns=list(range(0, max_lt + 1)) + [-1], dtype="float")
+    # --- ① LT 0..max_lt 用テーブル（lt_df） ---
+    df_lt = df[(df["lt"] >= 0) & (df["lt"] <= max_lt)].copy()
+    if df_lt.empty:
+        # 対象LTが何もなければ空テーブルを返す
+        index = pd.Index([], name="stay_date")
+        cols = list(range(0, max_lt + 1)) + [-1]
+        return pd.DataFrame(index=index, columns=cols, dtype=float)
 
-    lt_df["lt"] = (lt_df["stay_date"] - lt_df["as_of_date"]).dt.days
-    lt_df_valid = lt_df[(lt_df["lt"] >= 0) & (lt_df["lt"] <= max_lt)]
-    if lt_df_valid.empty:
-        lt_table = pd.DataFrame(index=pd.Index([], name="stay_date"), columns=range(0, max_lt + 1))
-    else:
-        lt_df_valid = lt_df_valid.sort_values(["stay_date", "lt", "as_of_date"])
-        latest_lt = lt_df_valid.groupby(["stay_date", "lt"], as_index=False).tail(1)
-        lt_table = latest_lt.pivot(index="stay_date", columns="lt", values="rooms_oh")
-        lt_table = lt_table.reindex(columns=range(0, max_lt + 1))
+    df_lt = df_lt.sort_values(["stay_date", "as_of_date"])
+    df_last = df_lt.groupby(["stay_date", "lt"]).tail(1)
 
-    lt_table.index = pd.to_datetime(lt_table.index)
-    lt_table.index.name = "stay_date"
+    lt_table = df_last.pivot(index="stay_date", columns="lt", values="rooms_oh")
+    lt_table = lt_table.reindex(columns=range(0, max_lt + 1))
 
-    df_act = lt_df[lt_df["as_of_date"] > lt_df["stay_date"]]
+    # --- ② ACT(-1) 用テーブル（df_act は「元 df」から） ---
+    df_act = df[df["as_of_date"] > df["stay_date"]].copy()
     if not df_act.empty:
-        df_act = df_act.sort_values(["stay_date", "as_of_date"])
-        s_act = df_act.groupby("stay_date")["rooms_oh"].tail(1)
+        # stay_date ごとに最後の as_of_date の rooms_oh を取る
+        s_act = (
+            df_act.sort_values(["stay_date", "as_of_date"])
+                  .groupby("stay_date")["rooms_oh"]
+                  .last()
+        )
         lt_table[-1] = s_act
     else:
         lt_table[-1] = float("nan")
 
+    # index/columns を整える
     lt_table = lt_table.sort_index()
     lt_table.index.name = "stay_date"
 
     cols = list(range(0, max_lt + 1)) + [-1]
     lt_table = lt_table.reindex(columns=cols)
 
-    return lt_table.astype(float)
+    return lt_table
 
 
 def build_lt_data_from_daily_snapshots_for_month(

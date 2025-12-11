@@ -5,6 +5,7 @@ form of DataFrames (index = stay dates, columns = LT).  The functions defined
 here are intentionally UI-agnostic so that the plotting layer can import and
 reuse them.
 """
+
 from __future__ import annotations
 
 from typing import Iterable
@@ -98,9 +99,7 @@ def moving_average_3months(
     if not lt_df_list:
         raise ValueError("lt_df_list must contain at least one DataFrame")
 
-    normalized_list = [
-        normalize_lt_columns(df, lt_min=lt_min, lt_max=lt_max) for df in lt_df_list
-    ]
+    normalized_list = [normalize_lt_columns(df, lt_min=lt_min, lt_max=lt_max) for df in lt_df_list]
 
     combined = pd.concat(normalized_list, axis=0)
     avg_curve = combined.mean(axis=0, skipna=True)

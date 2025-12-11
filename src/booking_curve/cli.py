@@ -1,7 +1,9 @@
 import argparse
+
+from .config import OUTPUT_DIR
 from .data_loader import load_time_series_excel
 from .lt_builder import build_lt_data
-from .config import OUTPUT_DIR
+
 
 def main():
     parser = argparse.ArgumentParser(description="Booking Curve LT_DATA generator")
@@ -16,6 +18,7 @@ def main():
     out_path = OUTPUT_DIR / args.out
     lt_df.to_csv(out_path, index=True)
     print(f"LT_DATA を出力しました: {out_path}")
+
 
 if __name__ == "__main__":
     main()

@@ -1,6 +1,9 @@
-import pandas as pd
 from pathlib import Path
+
+import pandas as pd
+
 from .config import DATA_DIR
+
 
 def load_time_series_excel(
     filename: str,

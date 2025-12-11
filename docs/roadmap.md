@@ -24,7 +24,7 @@
 ---
 
 ## 1. フェーズ1：LT_DATA を daily_snapshots ベースに移行
-将来的に各タスクには P1-01 形式のIDを付与し、docs/tasks_backlog.md と同期して管理する。
+※ 将来的に各タスクには P1-01 形式のIDを付与し、docs/tasks_backlog.md と同期して管理する。
 
 **ブランチ：`feature/lt-from-daily-snapshots`（次に着手）**
 

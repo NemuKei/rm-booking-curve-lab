@@ -107,9 +107,7 @@ def build_lt_data(df: pd.DataFrame, max_lt: int = 120) -> pd.DataFrame:
 
     records_df = pd.DataFrame(records)
     lt_table = (
-        records_df.pivot_table(
-            index="stay_date", columns="lt", values="rooms", aggfunc="last"
-        )
+        records_df.pivot_table(index="stay_date", columns="lt", values="rooms", aggfunc="last")
         .reindex(columns=range(-1, max_lt + 1))
         .sort_index()
     )

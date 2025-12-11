@@ -51,13 +51,9 @@ def normalize_daily_snapshots_df(
         df_normalized["as_of_date"] = as_of_ts
 
     if "stay_date" in df_normalized.columns:
-        df_normalized["stay_date"] = pd.to_datetime(
-            df_normalized["stay_date"], errors="coerce"
-        )
+        df_normalized["stay_date"] = pd.to_datetime(df_normalized["stay_date"], errors="coerce")
     if "as_of_date" in df_normalized.columns:
-        df_normalized["as_of_date"] = pd.to_datetime(
-            df_normalized["as_of_date"], errors="coerce"
-        )
+        df_normalized["as_of_date"] = pd.to_datetime(df_normalized["as_of_date"], errors="coerce")
 
     remaining_columns = [
         column for column in df_normalized.columns if column not in STANDARD_COLUMNS
@@ -90,13 +86,9 @@ def append_daily_snapshots(
     if path.exists():
         df_existing = pd.read_csv(path)
         if "stay_date" in df_existing.columns:
-            df_existing["stay_date"] = pd.to_datetime(
-                df_existing["stay_date"], errors="coerce"
-            )
+            df_existing["stay_date"] = pd.to_datetime(df_existing["stay_date"], errors="coerce")
         if "as_of_date" in df_existing.columns:
-            df_existing["as_of_date"] = pd.to_datetime(
-                df_existing["as_of_date"], errors="coerce"
-            )
+            df_existing["as_of_date"] = pd.to_datetime(df_existing["as_of_date"], errors="coerce")
         df_existing = _ensure_standard_columns(df_existing)
         df_combined = pd.concat([df_existing, df_new_norm], ignore_index=True)
         df_combined = df_combined.drop_duplicates(
@@ -106,13 +98,9 @@ def append_daily_snapshots(
         df_combined = df_new_norm
 
     if "stay_date" in df_combined.columns:
-        df_combined["stay_date"] = pd.to_datetime(
-            df_combined["stay_date"], errors="coerce"
-        )
+        df_combined["stay_date"] = pd.to_datetime(df_combined["stay_date"], errors="coerce")
     if "as_of_date" in df_combined.columns:
-        df_combined["as_of_date"] = pd.to_datetime(
-            df_combined["as_of_date"], errors="coerce"
-        )
+        df_combined["as_of_date"] = pd.to_datetime(df_combined["as_of_date"], errors="coerce")
 
     df_combined = df_combined.sort_values(["hotel_id", "as_of_date", "stay_date"])
 

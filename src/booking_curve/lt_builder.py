@@ -7,6 +7,7 @@ PMSから取得した宿泊日×取得日の時系列データを、宿泊日×L
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import List
 
 import pandas as pd
@@ -131,50 +132,92 @@ def build_lt_data(df: pd.DataFrame, max_lt: int = 120) -> pd.DataFrame:
     return lt_final
 
 
+def build_lt_table_from_daily_snapshots(df: pd.DataFrame, max_lt: int = 120) -> pd.DataFrame:
+    """日別スナップショットから LT テーブルを構築する。
+
+    この関数では観測値のみを利用し、補完は行わない。
+    """
+
+    if df is None or df.empty:
+        return pd.DataFrame(columns=list(range(0, max_lt + 1)) + [-1], dtype="float")
+
+    lt_df = df.copy()
+    lt_df["stay_date"] = pd.to_datetime(lt_df.get("stay_date"), errors="coerce").dt.normalize()
+    lt_df["as_of_date"] = pd.to_datetime(lt_df.get("as_of_date"), errors="coerce").dt.normalize()
+
+    lt_df = lt_df.dropna(subset=["stay_date", "as_of_date", "rooms_oh"])
+    if lt_df.empty:
+        return pd.DataFrame(columns=list(range(0, max_lt + 1)) + [-1], dtype="float")
+
+    lt_df["lt"] = (lt_df["stay_date"] - lt_df["as_of_date"]).dt.days
+    lt_df_valid = lt_df[(lt_df["lt"] >= 0) & (lt_df["lt"] <= max_lt)]
+    if lt_df_valid.empty:
+        lt_table = pd.DataFrame(index=pd.Index([], name="stay_date"), columns=range(0, max_lt + 1))
+    else:
+        lt_df_valid = lt_df_valid.sort_values(["stay_date", "lt", "as_of_date"])
+        latest_lt = lt_df_valid.groupby(["stay_date", "lt"], as_index=False).tail(1)
+        lt_table = latest_lt.pivot(index="stay_date", columns="lt", values="rooms_oh")
+        lt_table = lt_table.reindex(columns=range(0, max_lt + 1))
+
+    lt_table.index = pd.to_datetime(lt_table.index)
+    lt_table.index.name = "stay_date"
+
+    df_act = lt_df[lt_df["as_of_date"] > lt_df["stay_date"]]
+    if not df_act.empty:
+        df_act = df_act.sort_values(["stay_date", "as_of_date"])
+        s_act = df_act.groupby("stay_date")["rooms_oh"].tail(1)
+        lt_table[-1] = s_act
+    else:
+        lt_table[-1] = float("nan")
+
+    lt_table = lt_table.sort_index()
+    lt_table.index.name = "stay_date"
+
+    cols = list(range(0, max_lt + 1)) + [-1]
+    lt_table = lt_table.reindex(columns=cols)
+
+    return lt_table.astype(float)
+
+
 def build_lt_data_from_daily_snapshots_for_month(
     hotel_id: str,
     target_month: str,
     max_lt: int = 120,
+    output_dir: str | Path | None = None,
 ) -> pd.DataFrame:
     """日別スナップショットCSVから、指定月の宿泊日×LTのテーブルを構築する。"""
 
-    lt_desc_columns = list(range(max_lt, -2, -1))
+    lt_desc_columns = list(range(0, max_lt + 1)) + [-1]
 
     df = read_daily_snapshots_for_month(
-        hotel_id=hotel_id, target_month=target_month, output_dir=None
+        hotel_id=hotel_id, target_month=target_month, output_dir=output_dir
     )
 
     if df is None or df.empty:
-        return pd.DataFrame(columns=lt_desc_columns, dtype="Int64")
+        return pd.DataFrame(columns=lt_desc_columns, dtype="float")
 
-    df = df.copy()
-    df["stay_date"] = pd.to_datetime(df.get("stay_date"), errors="coerce").dt.normalize()
-    df["as_of_date"] = pd.to_datetime(df.get("as_of_date"), errors="coerce").dt.normalize()
+    if "hotel_id" in df.columns:
+        df = df[df["hotel_id"] == hotel_id]
 
-    df = df.dropna(subset=["stay_date", "as_of_date"])
-    if df.empty:
-        return pd.DataFrame(columns=lt_desc_columns, dtype="Int64")
+    lt_table = build_lt_table_from_daily_snapshots(df, max_lt=max_lt)
 
-    df["lt"] = (df["stay_date"] - df["as_of_date"]).dt.days
-    df = df[df["lt"] <= max_lt]
-    df.loc[df["lt"] < 0, "lt"] = -1
+    if lt_table.empty:
+        return lt_table
 
-    grouped = df.groupby(["stay_date", "lt"], as_index=False)["rooms_oh"].sum()
-    if grouped.empty:
-        return pd.DataFrame(columns=lt_desc_columns, dtype="Int64")
+    if output_dir is None:
+        from booking_curve.config import OUTPUT_DIR
 
-    pivot_df = grouped.pivot(index="stay_date", columns="lt", values="rooms_oh")
-    pivot_df = pivot_df.sort_index().sort_index(axis=1)
+        output_path = Path(OUTPUT_DIR)
+    else:
+        output_path = Path(output_dir)
 
-    expected_lts = list(range(-1, max_lt + 1))
-    pivot_df = pivot_df.reindex(columns=expected_lts, fill_value=0.0)
+    output_path.mkdir(parents=True, exist_ok=True)
+    csv_path = output_path / f"lt_data_{target_month}_{hotel_id}.csv"
+    lt_table.to_csv(csv_path, index_label="stay_date")
 
-    pivot_df.index = pd.to_datetime(pivot_df.index).normalize()
-    pivot_df.index.name = "stay_date"
-    pivot_df.columns = pivot_df.columns.astype(int)
-    pivot_df.columns.name = "lt"
+    print(f"[lt_builder] LT table saved to {csv_path}")
 
-    return pivot_df.astype(float)
+    return lt_table
 
 
 def build_monthly_curve_from_timeseries(
@@ -264,6 +307,7 @@ def build_monthly_curve_from_timeseries(
 __all__ = [
     "extract_asof_dates_from_timeseries",
     "build_lt_data",
+    "build_lt_table_from_daily_snapshots",
     "build_lt_data_from_daily_snapshots_for_month",
     "build_monthly_curve_from_timeseries",
 ]

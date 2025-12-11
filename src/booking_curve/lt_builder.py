@@ -136,7 +136,8 @@ def build_lt_data(df: pd.DataFrame, max_lt: int = 120) -> pd.DataFrame:
 def build_lt_table_from_daily_snapshots(df: pd.DataFrame, max_lt: int = 120) -> pd.DataFrame:
     """日別スナップショットから LT テーブルを生成する（非補完版）。
 
-    ACT(-1) は、その宿泊日について LT>=0 のうち最小の LT の rooms_oh を採用する。
+    -1 列は「LT>=0 で観測された中で最小の LT の rooms_oh（最新のオンハンド）」とし、
+    stay_date > max(as_of_date) の行については未着地のため NaN となる。
     """
 
     df = df.copy()
@@ -178,6 +179,13 @@ def build_lt_table_from_daily_snapshots(df: pd.DataFrame, max_lt: int = 120) -> 
     else:
         lt_table[-1] = lt_table.apply(_pick_act_from_row, axis=1)
 
+    # --- ③ 未来日の ACT(-1) は NaN とする（未着地のため） ---
+    max_asof = df["as_of_date"].max()
+    if pd.notna(max_asof):
+        mask_future = lt_table.index > max_asof
+        if mask_future.any():
+            lt_table.loc[mask_future, -1] = np.nan
+
     # index/columns を整える
     lt_table = lt_table.sort_index()
     lt_table.index.name = "stay_date"
@@ -198,7 +206,10 @@ def build_lt_data_from_daily_snapshots_for_month(
     max_lt: int = 120,
     output_dir: str | Path | None = None,
 ) -> pd.DataFrame:
-    """日別スナップショットCSVから、指定月の宿泊日×LTのテーブルを構築する。"""
+    """日別スナップショットCSVから、指定月の宿泊日×LTのテーブルを構築する。
+
+    daily_snapshots 由来の ACT(-1) は、未着地の宿泊日（stay_date > max(as_of_date)）では NaN になる。
+    """
 
     lt_desc_columns = list(range(0, max_lt + 1)) + [-1]
 

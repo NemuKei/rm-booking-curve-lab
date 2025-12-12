@@ -363,9 +363,7 @@ def get_booking_curve_data(
     else:
         df_week_filled = df_week.copy()
 
-    lt_ticks = (
-        sorted(df_week_filled.columns) if not df_week_filled.empty else sorted(lt_df.columns)
-    )
+    lt_ticks = sorted(df_week_filled.columns) if not df_week_filled.empty else sorted(lt_df.columns)
     lt_min, lt_max = (lt_ticks[0], lt_ticks[-1]) if lt_ticks else (-1, 90)
 
     # NOCB 適用済みのカーブをベースに、ASOF 境界で未来側をトリミングする
@@ -525,9 +523,7 @@ def get_monthly_curve_data(
     # 2) フォールバック: LT_DATA から月次合計カーブを集計する（旧ロジック）
     lt_df = _load_lt_data(hotel_tag=hotel_tag, target_month=target_month)
     if lt_df is None or lt_df.empty:
-        raise ValueError(
-            f"No monthly curve csv and LT_DATA is empty for {hotel_tag}, {target_month}"
-        )
+        raise ValueError(f"No monthly curve csv and LT_DATA is empty for {hotel_tag}, {target_month}")
 
     # 列ラベルを int に変換できるものだけに限定
     lt_columns: dict[str, int] = {}
@@ -953,9 +949,7 @@ def _get_recent_months_before(target_month: str, window_months: int) -> list[str
     return months
 
 
-def get_best_model_stats_for_recent_months(
-    hotel: str, ref_month: str, window_months: int
-) -> dict | None:
+def get_best_model_stats_for_recent_months(hotel: str, ref_month: str, window_months: int) -> dict | None:
     try:
         df = get_model_evaluation_table(hotel)
     except Exception:
@@ -970,9 +964,7 @@ def get_best_model_stats_for_recent_months(
     df = df[df["rmse_pct"].notna()]
     df = df[df["n_samples"].notna()]
 
-    df["target_month_int"] = pd.to_numeric(df["target_month"].astype(str), errors="coerce").astype(
-        "Int64"
-    )
+    df["target_month_int"] = pd.to_numeric(df["target_month"].astype(str), errors="coerce").astype("Int64")
 
     ref_int = pd.to_numeric(str(ref_month), errors="coerce")
     if pd.isna(ref_int):
@@ -1029,9 +1021,7 @@ def _target_month_to_int(value: object) -> int:
         raise ValueError(f"Invalid target_month value: {value}")
 
 
-def _filter_by_target_month(
-    df: pd.DataFrame, from_ym: Optional[str], to_ym: Optional[str]
-) -> pd.DataFrame:
+def _filter_by_target_month(df: pd.DataFrame, from_ym: Optional[str], to_ym: Optional[str]) -> pd.DataFrame:
     df = df.copy()
     df["target_month_int"] = df["target_month"].map(_target_month_to_int)
 
@@ -1142,9 +1132,7 @@ def get_eval_monthly_by_asof(
 
     df_detail.sort_values(by=["target_month_int", "asof_type", "model"], inplace=True)
 
-    return df_detail[
-        ["target_month", "asof_type", "model", "error_pct", "abs_error_pct"]
-    ].reset_index(drop=True)
+    return df_detail[["target_month", "asof_type", "model", "error_pct", "abs_error_pct"]].reset_index(drop=True)
 
 
 def run_build_lt_data_for_gui(
@@ -1183,9 +1171,7 @@ def run_full_evaluation_for_gui_range(
     return detail_path, summary_path
 
 
-def get_nearest_asof_type_for_gui(
-    target_month: str, asof_date_str: str, calendar_df: pd.DataFrame | None = None
-) -> str | None:
+def get_nearest_asof_type_for_gui(target_month: str, asof_date_str: str, calendar_df: pd.DataFrame | None = None) -> str | None:
     if not asof_date_str:
         return None
 
@@ -1314,9 +1300,7 @@ def get_monthly_forecast_scenarios(
 ) -> dict:
     window_months = int(best_model_stats.get("window_months", 3)) if best_model_stats else 3
 
-    best_recent = best_model_stats or get_best_model_stats_for_recent_months(
-        hotel_key, target_month, window_months
-    )
+    best_recent = best_model_stats or get_best_model_stats_for_recent_months(hotel_key, target_month, window_months)
     model_name = best_recent.get("model") if best_recent else None
 
     avg_scenario = _calculate_scenario_from_stats(

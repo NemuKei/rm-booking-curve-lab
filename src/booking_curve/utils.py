@@ -76,9 +76,7 @@ def apply_nocb_along_lt(
             return result
 
         lt_sorted = sorted(lt_columns, key=lambda x: int(x))
-        filled_subset = result[lt_sorted].apply(
-            lambda row: _apply_nocb_series(row, max_gap), axis=1
-        )
+        filled_subset = result[lt_sorted].apply(lambda row: _apply_nocb_series(row, max_gap), axis=1)
         result[lt_sorted] = filled_subset
         return result
 

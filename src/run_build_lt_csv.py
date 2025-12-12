@@ -5,13 +5,19 @@ GUI からは run_build_lt_for_gui(hotel_tag, target_months) を呼び出す。
 CLI 実行時は HOTELS_CONFIG の先頭に定義された hotel_tag（現在は daikokucho）を処理する。
 """
 
+from calendar import monthrange
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
 
 from booking_curve.data_loader import load_time_series_excel
-from booking_curve.lt_builder import build_lt_data, extract_asof_dates_from_timeseries
+from booking_curve.lt_builder import (
+    build_lt_data,
+    build_lt_data_from_daily_snapshots_for_month,
+    extract_asof_dates_from_timeseries,
+)
+from booking_curve.daily_snapshots import read_daily_snapshots_for_month
 from booking_curve.config import DATA_DIR, OUTPUT_DIR, HOTEL_CONFIG
 
 
@@ -89,6 +95,59 @@ def build_monthly_curve_from_timeseries(
     return df_out
 
 
+def build_monthly_curve_from_daily_snapshots(
+    hotel_id: str, target_month: str, output_dir: Path, max_lt: int = MAX_LT
+) -> pd.DataFrame:
+    """
+    daily snapshots 由来の月次カーブを ASOF ベースで集計し、LT 軸に変換する。
+    """
+
+    df_month = read_daily_snapshots_for_month(
+        hotel_id=hotel_id, target_month=target_month, output_dir=output_dir
+    )
+
+    if df_month is None or df_month.empty:
+        return pd.DataFrame(columns=["lt", "rooms_total"])
+
+    df_month = df_month.copy()
+    df_month["stay_date"] = pd.to_datetime(
+        df_month["stay_date"], errors="coerce"
+    ).dt.normalize()
+    df_month["as_of_date"] = pd.to_datetime(
+        df_month["as_of_date"], errors="coerce"
+    ).dt.normalize()
+
+    df_month = df_month.dropna(subset=["stay_date", "as_of_date", "rooms_oh"])
+    if df_month.empty:
+        return pd.DataFrame(columns=["lt", "rooms_total"])
+
+    year = int(target_month[:4])
+    month = int(target_month[4:])
+    last_day = monthrange(year, month)[1]
+    month_end = datetime(year, month, last_day)
+    act_asof = month_end + timedelta(days=1)
+
+    df_monthly = df_month.groupby("as_of_date")["rooms_oh"].sum().sort_index()
+    df_monthly = df_monthly.reset_index().rename(columns={"rooms_oh": "rooms_total"})
+
+    df_monthly["lt"] = (act_asof - df_monthly["as_of_date"]).dt.days - 1
+
+    df_monthly = df_monthly[(df_monthly["lt"] >= -1) & (df_monthly["lt"] <= max_lt)]
+    if df_monthly.empty:
+        return pd.DataFrame(columns=["lt", "rooms_total"])
+
+    df_monthly = (
+        df_monthly.groupby("lt")["rooms_total"]
+        .sum()
+        .reset_index()
+        .sort_values("lt")
+        .reset_index(drop=True)
+    )
+
+    df_monthly["lt"] = df_monthly["lt"].astype(int)
+    return df_monthly
+
+
 def _get_hotel_io_config(hotel_tag: str) -> tuple[Path, str]:
     """
     指定された hotel_tag について、時系列データExcelのパスと表示名を返すヘルパー。
@@ -155,6 +214,7 @@ def build_lt_for_month(
 def run_build_lt_for_gui(
     hotel_tag: str,
     target_months: list[str],
+    source: str = "timeseries",
 ) -> None:
     """
     GUI から呼び出すための薄いラッパー。
@@ -175,12 +235,43 @@ def run_build_lt_for_gui(
     all_asof_dates: list[pd.Timestamp] = []
 
     for ym in target_months:
-        month_asofs = build_lt_for_month(
-            ym,
-            hotel_tag=hotel_tag,
-            excel_path=excel_path,
-        )
-        all_asof_dates.extend(pd.Timestamp(d).normalize() for d in month_asofs)
+        if source == "timeseries":
+            month_asofs = build_lt_for_month(
+                ym,
+                hotel_tag=hotel_tag,
+                excel_path=excel_path,
+            )
+            all_asof_dates.extend(pd.Timestamp(d).normalize() for d in month_asofs)
+        elif source == "daily_snapshots":
+            print(f"[daily_snapshots] building LT_DATA for {hotel_tag} {ym}")
+            lt_df = build_lt_data_from_daily_snapshots_for_month(
+                hotel_id=hotel_tag,
+                target_month=ym,
+                max_lt=MAX_LT,
+                output_dir=OUTPUT_DIR,
+            )
+            out_path = OUTPUT_DIR / f"lt_data_{ym}_{hotel_tag}.csv"
+            lt_df.to_csv(out_path, index_label="stay_date", encoding="utf-8-sig")
+            print(f"[OK] 出力: {out_path}")
+
+            monthly_df = build_monthly_curve_from_daily_snapshots(
+                hotel_id=hotel_tag,
+                target_month=ym,
+                output_dir=OUTPUT_DIR,
+                max_lt=MAX_LT,
+            )
+
+            if monthly_df.empty:
+                print(f"[WARN] 月次カーブ用データが取得できませんでした: {ym}")
+            else:
+                mc_path = OUTPUT_DIR / f"monthly_curve_{ym}_{hotel_tag}.csv"
+                monthly_df.to_csv(mc_path, index=False, encoding="utf-8-sig")
+                print(f"[OK] 月次カーブ出力: {mc_path}")
+        else:
+            raise ValueError(f"Unknown source: {source}")
+
+    if source != "timeseries":
+        return
 
     if not all_asof_dates:
         print("[WARN] 取得日が1件も検出されませんでした (asof_dates CSV は出力されません)。")

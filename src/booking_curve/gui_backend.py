@@ -1,21 +1,21 @@
 from __future__ import annotations
 
+import json
 from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, List, Optional
-import json
 
 import pandas as pd
-import build_calendar_features
-import run_forecast_batch
-import run_build_lt_csv
-from run_full_evaluation import run_full_evaluation_for_gui, resolve_asof_dates_for_month
 
+import build_calendar_features
+import run_build_lt_csv
+import run_forecast_batch
 from booking_curve.forecast_simple import (
+    moving_average_3months,
     moving_average_recent_90days,
     moving_average_recent_90days_weighted,
-    moving_average_3months,
 )
+from run_full_evaluation import resolve_asof_dates_for_month, run_full_evaluation_for_gui
 
 # プロジェクトルートから見た output ディレクトリ
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -195,9 +195,7 @@ def _get_evaluation_detail_df(hotel_tag: str) -> pd.DataFrame:
         df_detail["asof_type"] = df_detail["asof_type"].astype(str)
 
     df_detail["error_pct"] = pd.to_numeric(df_detail["error_pct"], errors="coerce")
-    df_detail["abs_error_pct"] = pd.to_numeric(
-        df_detail["abs_error_pct"], errors="coerce"
-    )
+    df_detail["abs_error_pct"] = pd.to_numeric(df_detail["abs_error_pct"], errors="coerce")
 
     _evaluation_detail_cache[hotel_tag] = df_detail
     return df_detail.copy()
@@ -499,9 +497,7 @@ def get_monthly_curve_data(
         try:
             df.index = df.index.astype(int)
         except Exception as exc:
-            raise ValueError(
-                f"Invalid LT index in monthly curve csv: {csv_path}"
-            ) from exc
+            raise ValueError(f"Invalid LT index in monthly curve csv: {csv_path}") from exc
 
         # 列は "rooms_total" 一列に揃える
         if "rooms_total" in df.columns:
@@ -509,9 +505,7 @@ def get_monthly_curve_data(
         elif len(df.columns) == 1:
             df.columns = ["rooms_total"]
         else:
-            raise ValueError(
-                f"Unexpected columns in monthly curve csv: {list(df.columns)}"
-            )
+            raise ValueError(f"Unexpected columns in monthly curve csv: {list(df.columns)}")
 
         df = df.sort_index()
         return df
@@ -532,9 +526,7 @@ def get_monthly_curve_data(
             continue
 
     if not lt_columns:
-        raise ValueError(
-            f"No valid LT columns in LT_DATA for {hotel_tag}, {target_month}"
-        )
+        raise ValueError(f"No valid LT columns in LT_DATA for {hotel_tag}, {target_month}")
 
     # 対象月の宿泊日のみに念のためフィルタ
     ym = int(target_month)
@@ -543,9 +535,7 @@ def get_monthly_curve_data(
     mask = (lt_df.index.year == year) & (lt_df.index.month == month)
     lt_month = lt_df.loc[mask, list(lt_columns.keys())]
     if lt_month.empty:
-        raise ValueError(
-            f"No stay dates for {hotel_tag}, {target_month} in LT_DATA"
-        )
+        raise ValueError(f"No stay dates for {hotel_tag}, {target_month} in LT_DATA")
 
     # LT昇順で列を並べ替え、列合計を取る
     ordered_cols = [c for c, _ in sorted(lt_columns.items(), key=lambda kv: kv[1])]
@@ -758,9 +748,7 @@ def get_model_evaluation_table(hotel_tag: str) -> pd.DataFrame:
     df_summary = df_summary.copy()
     df_summary["target_month"] = df_summary["target_month"].astype(str)
     df_summary["model"] = df_summary["model"].astype(str)
-    df_summary["mean_error_pct"] = pd.to_numeric(
-        df_summary["mean_error_pct"], errors="coerce"
-    )
+    df_summary["mean_error_pct"] = pd.to_numeric(df_summary["mean_error_pct"], errors="coerce")
     df_summary["mae_pct"] = pd.to_numeric(df_summary["mae_pct"], errors="coerce")
 
     # --- 明細から rmse_pct / n_samples を計算 ---
@@ -775,16 +763,11 @@ def get_model_evaluation_table(hotel_tag: str) -> pd.DataFrame:
         df_detail = df_detail.copy()
         df_detail["target_month"] = df_detail["target_month"].astype(str)
         df_detail["model"] = df_detail["model"].astype(str)
-        df_detail["error_pct"] = pd.to_numeric(
-            df_detail["error_pct"], errors="coerce"
-        )
-        df_detail["abs_error_pct"] = pd.to_numeric(
-            df_detail["abs_error_pct"], errors="coerce"
-        )
+        df_detail["error_pct"] = pd.to_numeric(df_detail["error_pct"], errors="coerce")
+        df_detail["abs_error_pct"] = pd.to_numeric(df_detail["abs_error_pct"], errors="coerce")
 
         def _agg_group(g: pd.DataFrame) -> dict:
             err = g["error_pct"].dropna()
-            err_abs = g["abs_error_pct"].dropna()
             n = int(err.count())
             rmse = err.pow(2).mean() ** 0.5 if not err.empty else float("nan")
             return {
@@ -796,9 +779,7 @@ def get_model_evaluation_table(hotel_tag: str) -> pd.DataFrame:
         records = []
         for (tm, model), g in df_detail.groupby(["target_month", "model"]):
             agg = _agg_group(g)
-            records.append(
-                {"target_month": tm, "model": model, **agg}
-            )
+            records.append({"target_month": tm, "model": model, **agg})
 
         df_rmse = pd.DataFrame(
             records,
@@ -1144,9 +1125,7 @@ def get_eval_monthly_by_asof(
     if models is not None:
         df_detail = df_detail[df_detail["model"].isin(models)]
 
-    df_detail.sort_values(
-        by=["target_month_int", "asof_type", "model"], inplace=True
-    )
+    df_detail.sort_values(by=["target_month_int", "asof_type", "model"], inplace=True)
 
     return df_detail[
         ["target_month", "asof_type", "model", "error_pct", "abs_error_pct"]
@@ -1230,9 +1209,7 @@ def get_nearest_asof_type_for_gui(
     return nearest_type
 
 
-def _calculate_scenario_from_stats(
-    forecast_total_rooms: float, stats: dict | None
-) -> dict | None:
+def _calculate_scenario_from_stats(forecast_total_rooms: float, stats: dict | None) -> dict | None:
     if not stats:
         return None
 
@@ -1344,9 +1321,6 @@ def get_monthly_forecast_scenarios(
     else:
         nearest_stats = None
 
-    nearest_scenario = _calculate_scenario_from_stats(
-        forecast_total_rooms, nearest_stats
-    )
+    nearest_scenario = _calculate_scenario_from_stats(forecast_total_rooms, nearest_stats)
 
     return {"avg_asof": avg_scenario, "nearest_asof": nearest_scenario}
-

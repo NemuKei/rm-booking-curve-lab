@@ -7,9 +7,13 @@ PMSから取得した宿泊日×取得日の時系列データを、宿泊日×L
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import List
 
+import numpy as np
 import pandas as pd
+
+from booking_curve.daily_snapshots import read_daily_snapshots_for_month
 
 EXCEL_BASE_DATE = datetime(1899, 12, 30)
 
@@ -105,9 +109,7 @@ def build_lt_data(df: pd.DataFrame, max_lt: int = 120) -> pd.DataFrame:
 
     records_df = pd.DataFrame(records)
     lt_table = (
-        records_df.pivot_table(
-            index="stay_date", columns="lt", values="rooms", aggfunc="last"
-        )
+        records_df.pivot_table(index="stay_date", columns="lt", values="rooms", aggfunc="last")
         .reindex(columns=range(-1, max_lt + 1))
         .sort_index()
     )
@@ -129,6 +131,125 @@ def build_lt_data(df: pd.DataFrame, max_lt: int = 120) -> pd.DataFrame:
     lt_final = lt_rounded.reindex(columns=lt_desc_columns)
 
     return lt_final
+
+
+def build_lt_table_from_daily_snapshots(df: pd.DataFrame, max_lt: int = 120) -> pd.DataFrame:
+    """日別スナップショットから LT テーブルを生成する（非補完版）。"""
+
+    df = df.copy()
+
+    # 日付を整形
+    df["stay_date"] = pd.to_datetime(df["stay_date"])
+    df["as_of_date"] = pd.to_datetime(df["as_of_date"])
+
+    # rooms_oh が NaN の行は落とす（0 は残す）
+    df = df[~df["rooms_oh"].isna()].copy()
+
+    # LT を計算（ここは「元 df」に対してやる）
+    df["lt"] = (df["stay_date"] - df["as_of_date"]).dt.days
+
+    # --- ① LT 0..max_lt 用テーブル（lt_df） ---
+    df_lt = df[(df["lt"] >= 0) & (df["lt"] <= max_lt)].copy()
+    if df_lt.empty:
+        # 対象LTが何もなければ空テーブルを返す
+        index = pd.Index([], name="stay_date")
+        cols = list(range(0, max_lt + 1))
+        return pd.DataFrame(index=index, columns=cols, dtype=float)
+
+    df_lt = df_lt.sort_values(["stay_date", "as_of_date"])
+    df_last = df_lt.groupby(["stay_date", "lt"]).tail(1)
+
+    lt_table = df_last.pivot(index="stay_date", columns="lt", values="rooms_oh")
+    lt_table = lt_table.reindex(columns=range(0, max_lt + 1))
+
+    # index/columns を整える
+    lt_table = lt_table.sort_index()
+    lt_table.index.name = "stay_date"
+
+    int_cols = sorted(c for c in lt_table.columns if isinstance(c, (int, np.integer)))
+    lt_table = lt_table.reindex(columns=int_cols)
+
+    return lt_table
+
+
+def build_lt_data_from_daily_snapshots_for_month(
+    hotel_id: str,
+    target_month: str,
+    max_lt: int = 120,
+    output_dir: str | Path | None = None,
+) -> pd.DataFrame:
+    """日別スナップショットCSVから、指定月の宿泊日×LTのテーブルを構築する。
+
+    daily_snapshots 由来の ACT(-1) は、D+ スナップショット（as_of_date > stay_date）
+    が存在する宿泊日にだけ rooms_oh を設定し、それ以外は NaN となる。
+    """
+
+    lt_desc_columns = list(range(0, max_lt + 1)) + [-1]
+
+    df_month = read_daily_snapshots_for_month(
+        hotel_id=hotel_id, target_month=target_month, output_dir=output_dir
+    )
+
+    if df_month is None or df_month.empty:
+        return pd.DataFrame(columns=lt_desc_columns, dtype="float")
+
+    if "hotel_id" in df_month.columns:
+        df_month = df_month[df_month["hotel_id"] == hotel_id]
+
+    lt_table = build_lt_table_from_daily_snapshots(df_month, max_lt=max_lt)
+
+    # --- ACT(-1) を daily_snapshots から再計算して上書き ---
+    if df_month is not None and not df_month.empty:
+        df_act_src = df_month.copy()
+        df_act_src["stay_date"] = pd.to_datetime(
+            df_act_src["stay_date"], errors="coerce"
+        ).dt.normalize()
+        df_act_src["as_of_date"] = pd.to_datetime(
+            df_act_src["as_of_date"], errors="coerce"
+        ).dt.normalize()
+
+        # stay_date, as_of_date, rooms_oh が揃っている行だけを対象にする
+        df_act_src = df_act_src.dropna(subset=["stay_date", "as_of_date", "rooms_oh"])
+
+        if not df_act_src.empty:
+            # D+ スナップショットだけに絞る（as_of_date > stay_date）
+            mask_dplus = df_act_src["as_of_date"] > df_act_src["stay_date"]
+            df_act_src = df_act_src.loc[mask_dplus].copy()
+
+            if not df_act_src.empty:
+                # 各 stay_date について「一番新しい as_of_date」の行を1つだけ採用
+                df_act_src = df_act_src.sort_values(["stay_date", "as_of_date"])
+                df_act_last = df_act_src.groupby("stay_date").tail(1)
+                s_act = df_act_last.set_index("stay_date")["rooms_oh"]
+
+                # -1 列を用意して、いったん NaN にリセット
+                if -1 not in lt_table.columns:
+                    lt_table[-1] = np.nan
+                else:
+                    lt_table.loc[:, -1] = np.nan
+
+                # D+ が存在する宿泊日のみ ACT(-1) を埋める
+                lt_table.loc[s_act.index, -1] = s_act
+
+    lt_table = lt_table.reindex(columns=lt_desc_columns)
+
+    if lt_table.empty:
+        return lt_table
+
+    if output_dir is None:
+        from booking_curve.config import OUTPUT_DIR
+
+        output_path = Path(OUTPUT_DIR)
+    else:
+        output_path = Path(output_dir)
+
+    output_path.mkdir(parents=True, exist_ok=True)
+    csv_path = output_path / f"lt_data_{target_month}_{hotel_id}.csv"
+    lt_table.to_csv(csv_path, index_label="stay_date")
+
+    print(f"[lt_builder] LT table saved to {csv_path}")
+
+    return lt_table
 
 
 def build_monthly_curve_from_timeseries(
@@ -213,3 +334,36 @@ def build_monthly_curve_from_timeseries(
         index=pd.Index(lts, name="lt"),
     )
     return result
+
+
+def build_monthly_curve_from_lt_table(lt_table: pd.DataFrame) -> pd.DataFrame:
+    """LT テーブルから月次ブッキングカーブを構築する。
+
+    入力となる ``lt_table`` は、index に宿泊日 (``stay_date``)、columns に整数 LT
+    (-1..max_lt) を持ち、値として rooms_oh を格納する DataFrame を想定する。
+
+    Returns
+    -------
+    pd.DataFrame
+        index: "lt" と名付けられた LT (max_lt..-1) の降順インデックス
+        columns: "rooms_total" 1 列のみ。各 LT における宿泊月トータル rooms_oh の合計。
+    """
+
+    if lt_table is None or lt_table.empty:
+        return pd.DataFrame(columns=["rooms_total"], dtype="float")
+
+    monthly_totals = lt_table.sum(axis=0, skipna=True)
+    monthly_curve = monthly_totals.to_frame(name="rooms_total")
+    monthly_curve.index.name = "lt"
+
+    return monthly_curve.sort_index(ascending=False)
+
+
+__all__ = [
+    "extract_asof_dates_from_timeseries",
+    "build_lt_data",
+    "build_lt_table_from_daily_snapshots",
+    "build_lt_data_from_daily_snapshots_for_month",
+    "build_monthly_curve_from_timeseries",
+    "build_monthly_curve_from_lt_table",
+]

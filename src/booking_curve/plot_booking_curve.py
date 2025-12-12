@@ -1,7 +1,7 @@
-import pandas as pd
-import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 
 # 日本語フォント & マイナス表示対策（Windows想定）
 matplotlib.rcParams["font.family"] = "Meiryo"
@@ -9,10 +9,40 @@ matplotlib.rcParams["axes.unicode_minus"] = False
 
 # X軸に使う LT ピッチ（カテゴリ）: 左から右へ 90,84,...,0,ACT(-1)
 LEAD_TIME_PITCHES = [
-    90, 84, 78, 72, 67, 60, 53, 46, 39, 32,
-    29, 26, 23, 20, 18, 17, 16, 15, 14, 13,
-    12, 11, 10, 9, 8, 7, 6, 5, 4, 3,
-    2, 1, 0, -1,  # -1 は ACT
+    90,
+    84,
+    78,
+    72,
+    67,
+    60,
+    53,
+    46,
+    39,
+    32,
+    29,
+    26,
+    23,
+    20,
+    18,
+    17,
+    16,
+    15,
+    14,
+    13,
+    12,
+    11,
+    10,
+    9,
+    8,
+    7,
+    6,
+    5,
+    4,
+    3,
+    2,
+    1,
+    0,
+    -1,  # -1 は ACT
 ]
 
 
@@ -174,7 +204,7 @@ def plot_booking_curves_for_weekday(
     # Y軸の設定：0〜180、20刻み & 10刻みの補助目盛
     ax.set_ylabel("Rooms")
     ax.set_ylim(0, 180)
-    ax.set_yticks(range(0, 181, 20))         # 主メモリ
+    ax.set_yticks(range(0, 181, 20))  # 主メモリ
     ax.set_yticks(range(0, 181, 10), minor=True)  # 補助メモリ
 
     # グリッド

@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Literal, Optional
-
 import logging
 import re
+from pathlib import Path
+from typing import Literal, Optional
 
 import pandas as pd
 
 from booking_curve.daily_snapshots import (
-    normalize_daily_snapshots_df,
     append_daily_snapshots,
+    normalize_daily_snapshots_df,
 )
 
 # layout="auto" 時は A列の日付行の間隔から自動判定する
@@ -146,7 +145,11 @@ def parse_nface_file(
     Args:
         file_path: Excel ファイルのパス。
         hotel_id: 出力に付与するホテルID。
-        layout: OH 行の配置を指定する。"shifted" は宿泊日行の1行下、"inline" は宿泊日行と同じ行、"auto" はA列の日付間隔から自動判定。
+        layout: 
+            OH 行の配置を指定する。
+            "shifted" は宿泊日行の1行下、
+            "inline" は宿泊日行と同じ行、
+            "auto" はA列の日付間隔から自動判定。
         output_dir: 標準CSVを保存する出力ディレクトリ。
         save: True の場合は標準CSVに追記する。
 
@@ -212,18 +215,14 @@ def parse_nface_file(
         logger.warning("%s: target_month 外の行を %s 件スキップしました", path, skipped_count)
 
     if not records:
-        logger.warning(
-            "%s: 宿泊日行が見つからないか、target_month に一致する行がありません", path
-        )
+        logger.warning("%s: 宿泊日行が見つからないか、target_month に一致する行がありません", path)
         return normalize_daily_snapshots_df(pd.DataFrame(), hotel_id=hotel_id)
 
     df = pd.DataFrame(records)
     df_norm = normalize_daily_snapshots_df(df, hotel_id=hotel_id, as_of_date=as_of_date)
 
     if save:
-        output_path = append_daily_snapshots(
-            df_norm, hotel_id=hotel_id, output_dir=output_dir
-        )
+        output_path = append_daily_snapshots(df_norm, hotel_id=hotel_id, output_dir=output_dir)
         logger.info("%s: 標準CSVに追記しました -> %s", path, output_path)
 
     return df_norm
@@ -247,9 +246,7 @@ def build_daily_snapshots_from_folder(
         return
 
     candidates = list(input_path.glob(glob))
-    files = sorted(
-        p for p in candidates if p.is_file() and p.suffix.lower() in {".xls", ".xlsx"}
-    )
+    files = sorted(p for p in candidates if p.is_file() and p.suffix.lower() in {".xls", ".xlsx"})
 
     if not files:
         logger.warning("%s 配下に対象ファイルが見つかりません", input_path)

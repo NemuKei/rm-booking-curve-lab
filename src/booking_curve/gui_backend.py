@@ -15,6 +15,7 @@ from booking_curve.forecast_simple import (
     moving_average_recent_90days,
     moving_average_recent_90days_weighted,
 )
+from booking_curve.utils import apply_nocb_along_lt
 from run_full_evaluation import resolve_asof_dates_for_month, run_full_evaluation_for_gui
 
 # プロジェクトルートから見た output ディレクトリ
@@ -357,10 +358,18 @@ def get_booking_curve_data(
     df_week = lt_df[lt_df.index.weekday == weekday].copy()
     df_week.sort_index(inplace=True)
 
-    lt_ticks = sorted(df_week.columns) if not df_week.empty else sorted(lt_df.columns)
+    if not df_week.empty:
+        df_week_filled = apply_nocb_along_lt(df_week, axis="columns", max_gap=None)
+    else:
+        df_week_filled = df_week.copy()
+
+    lt_ticks = (
+        sorted(df_week_filled.columns) if not df_week_filled.empty else sorted(lt_df.columns)
+    )
     lt_min, lt_max = (lt_ticks[0], lt_ticks[-1]) if lt_ticks else (-1, 90)
 
-    df_week_plot = df_week.copy()
+    # NOCB 適用済みのカーブをベースに、ASOF 境界で未来側をトリミングする
+    df_week_plot = df_week_filled.copy()
 
     asof_ts = pd.to_datetime(as_of_date)
 
@@ -429,8 +438,8 @@ def get_booking_curve_data(
             lt_max=lt_max,
         )
     else:
-        if not df_week.empty:
-            avg_curve = df_week.reindex(columns=lt_ticks).mean(axis=0, skipna=True)
+        if not df_week_filled.empty:
+            avg_curve = df_week_filled.reindex(columns=lt_ticks).mean(axis=0, skipna=True)
         else:
             avg_curve = None
 
@@ -508,6 +517,9 @@ def get_monthly_curve_data(
             raise ValueError(f"Unexpected columns in monthly curve csv: {list(df.columns)}")
 
         df = df.sort_index()
+        if not df.empty:
+            # LT 方向に NOCB を適用してギザつきを緩和
+            df = apply_nocb_along_lt(df, axis="index", max_gap=None)
         return df
 
     # 2) フォールバック: LT_DATA から月次合計カーブを集計する（旧ロジック）
@@ -545,6 +557,9 @@ def get_monthly_curve_data(
     result = pd.DataFrame({"rooms_total": agg})
     result.index = result.index.map(lambda c: lt_columns[c]).astype(int)
     result = result.sort_index()
+    if not result.empty:
+        # LT 方向に NOCB を適用して欠損を補完
+        result = apply_nocb_along_lt(result, axis="index", max_gap=None)
     return result
 
 

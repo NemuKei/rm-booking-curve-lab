@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import json
 from datetime import date, datetime
 from pathlib import Path
@@ -10,6 +11,9 @@ import pandas as pd
 import build_calendar_features
 import run_build_lt_csv
 import run_forecast_batch
+from booking_curve.pms_adapter_nface import (
+    build_daily_snapshots_from_folder as nface_build_daily_snapshots_from_folder,
+)
 from booking_curve.daily_snapshots import read_daily_snapshots_for_month
 from booking_curve.forecast_simple import (
     moving_average_3months,
@@ -18,6 +22,7 @@ from booking_curve.forecast_simple import (
 )
 from booking_curve.utils import apply_nocb_along_lt
 from run_full_evaluation import resolve_asof_dates_for_month, run_full_evaluation_for_gui
+from build_daily_snapshots_from_folder import HOTELS as NFACE_HOTELS
 
 # プロジェクトルートから見た output ディレクトリ
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -1230,6 +1235,45 @@ def run_build_lt_data_for_gui(
         )
     except Exception:
         raise
+
+
+def run_daily_snapshots_for_gui(
+    hotel_tag: str,
+    mode: str = "partial",
+) -> None:
+    """
+    Tkinter GUI から daily snapshots 更新を実行するための薄いラッパー。
+
+    現時点では mode に関わらず、指定 hotel_tag の N@FACE 生データフォルダを
+    フルスキャンして daily_snapshots_<hotel>.csv を更新する。
+
+    将来的に、mode="partial" のときに差分更新ロジックを実装できるようにしておく。
+    """
+
+    if hotel_tag not in NFACE_HOTELS:
+        raise ValueError(f"Unknown hotel_tag for N@FACE snapshots: {hotel_tag}")
+
+    config = NFACE_HOTELS[hotel_tag]
+    input_dir = config["input_dir"]
+    layout = config.get("layout", "auto")
+
+    logging.info(
+        "Starting daily snapshots build: hotel_tag=%s, mode=%s, input_dir=%s, layout=%s",
+        hotel_tag,
+        mode,
+        input_dir,
+        layout,
+    )
+
+    nface_build_daily_snapshots_from_folder(
+        input_dir=input_dir,
+        hotel_id=hotel_tag,
+        layout=layout,
+        output_dir=None,
+        glob="*.xls*",
+    )
+
+    logging.info("Completed daily snapshots build: hotel_tag=%s", hotel_tag)
 
 
 def run_full_evaluation_for_gui_range(

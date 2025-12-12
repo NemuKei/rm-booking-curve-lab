@@ -336,10 +336,34 @@ def build_monthly_curve_from_timeseries(
     return result
 
 
+def build_monthly_curve_from_lt_table(lt_table: pd.DataFrame) -> pd.DataFrame:
+    """LT テーブルから月次ブッキングカーブを構築する。
+
+    入力となる ``lt_table`` は、index に宿泊日 (``stay_date``)、columns に整数 LT
+    (-1..max_lt) を持ち、値として rooms_oh を格納する DataFrame を想定する。
+
+    Returns
+    -------
+    pd.DataFrame
+        index: "lt" と名付けられた LT (max_lt..-1) の降順インデックス
+        columns: "rooms_total" 1 列のみ。各 LT における宿泊月トータル rooms_oh の合計。
+    """
+
+    if lt_table is None or lt_table.empty:
+        return pd.DataFrame(columns=["rooms_total"], dtype="float")
+
+    monthly_totals = lt_table.sum(axis=0, skipna=True)
+    monthly_curve = monthly_totals.to_frame(name="rooms_total")
+    monthly_curve.index.name = "lt"
+
+    return monthly_curve.sort_index(ascending=False)
+
+
 __all__ = [
     "extract_asof_dates_from_timeseries",
     "build_lt_data",
     "build_lt_table_from_daily_snapshots",
     "build_lt_data_from_daily_snapshots_for_month",
     "build_monthly_curve_from_timeseries",
+    "build_monthly_curve_from_lt_table",
 ]

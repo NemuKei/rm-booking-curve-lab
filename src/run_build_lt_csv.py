@@ -14,6 +14,7 @@ from booking_curve.data_loader import load_time_series_excel
 from booking_curve.lt_builder import (
     build_lt_data,
     build_lt_data_from_daily_snapshots_for_month,
+    build_monthly_curve_from_lt_table,
     extract_asof_dates_from_timeseries,
 )
 from booking_curve.config import DATA_DIR, OUTPUT_DIR, HOTEL_CONFIG
@@ -193,10 +194,17 @@ def run_build_lt_for_gui(
                 hotel_id=hotel_tag,
                 target_month=ym,
                 max_lt=MAX_LT,
+                output_dir=OUTPUT_DIR,
             )
             out_path = OUTPUT_DIR / f"lt_data_{ym}_{hotel_tag}.csv"
-            lt_df.to_csv(out_path, index=True)
+            lt_df.to_csv(out_path, index_label="stay_date", encoding="utf-8-sig")
             print(f"[OK] 出力: {out_path}")
+
+            monthly_curve = build_monthly_curve_from_lt_table(lt_df)
+
+            mc_path = OUTPUT_DIR / f"monthly_curve_{ym}_{hotel_tag}.csv"
+            monthly_curve.to_csv(mc_path, index_label="lt", encoding="utf-8-sig")
+            print(f"[OK] 月次カーブ出力: {mc_path}")
         else:
             raise ValueError(f"Unknown source: {source}")
 

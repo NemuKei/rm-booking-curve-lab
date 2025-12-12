@@ -1208,12 +1208,15 @@ def get_eval_monthly_by_asof(
 def run_build_lt_data_for_gui(
     hotel_tag: str,
     target_months: list[str],
+    source: str = "timeseries",
 ) -> None:
     """
     Tkinter GUI から LT_DATA 生成バッチを実行するための薄いラッパー。
 
     hotel_tag ごとに config.HOTEL_CONFIG で定義された時系列Excelを読み込み、
     run_build_lt_csv.run_build_lt_for_gui() を呼び出す。
+
+    source: "timeseries" または "daily_snapshots" を指定する。デフォルトは "timeseries"。
     """
 
     if not target_months:
@@ -1223,6 +1226,7 @@ def run_build_lt_data_for_gui(
         run_build_lt_csv.run_build_lt_for_gui(
             hotel_tag=hotel_tag,
             target_months=target_months,
+            source=source,
         )
     except Exception:
         raise

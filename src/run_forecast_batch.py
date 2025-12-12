@@ -6,14 +6,14 @@ from pathlib import Path
 import pandas as pd
 
 from booking_curve.config import OUTPUT_DIR
-from booking_curve.plot_booking_curve import filter_by_weekday
 from booking_curve.forecast_simple import (
+    forecast_final_from_avg,
+    forecast_month_from_recent90,
     moving_average_3months,
     moving_average_recent_90days,
     moving_average_recent_90days_weighted,
-    forecast_final_from_avg,
-    forecast_month_from_recent90,
 )
+from booking_curve.plot_booking_curve import filter_by_weekday
 
 # ===== 設定ここから =====
 HOTEL_TAG = "daikokucho"
@@ -51,6 +51,7 @@ LT_MIN = -1
 LT_MAX = 90
 CAPACITY = 168.0  # デフォルトキャパシティ
 
+
 # 指定があれば引数の値を使い、なければデフォルトCAPACITYを返す
 def _resolve_capacity(capacity: float | None) -> float:
     """
@@ -64,7 +65,9 @@ def _resolve_capacity(capacity: float | None) -> float:
     except Exception:
         return CAPACITY
 
+
 # ===== 設定ここまで =====
+
 
 def get_history_months_around_asof(
     as_of_ts: pd.Timestamp,
@@ -133,7 +136,9 @@ def load_lt_csv(month: str, hotel_tag: str) -> pd.DataFrame:
     return pd.read_csv(file_path, index_col=0)
 
 
-def _prepare_output(df_target: pd.DataFrame, forecast: dict[pd.Timestamp, float], as_of_ts: pd.Timestamp) -> pd.DataFrame:
+def _prepare_output(
+    df_target: pd.DataFrame, forecast: dict[pd.Timestamp, float], as_of_ts: pd.Timestamp
+) -> pd.DataFrame:
     result = pd.Series(forecast, dtype=float)
     result.sort_index(inplace=True)
 

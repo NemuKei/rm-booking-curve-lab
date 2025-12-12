@@ -11,15 +11,14 @@ from pathlib import Path
 
 import pandas as pd
 
+from booking_curve.config import DATA_DIR, HOTEL_CONFIG, OUTPUT_DIR
+from booking_curve.daily_snapshots import read_daily_snapshots_for_month
 from booking_curve.data_loader import load_time_series_excel
 from booking_curve.lt_builder import (
     build_lt_data,
     build_lt_data_from_daily_snapshots_for_month,
     extract_asof_dates_from_timeseries,
 )
-from booking_curve.daily_snapshots import read_daily_snapshots_for_month
-from booking_curve.config import DATA_DIR, OUTPUT_DIR, HOTEL_CONFIG
-
 
 DEFAULT_HOTEL_TAG = next(iter(HOTEL_CONFIG.keys()))
 
@@ -35,9 +34,7 @@ TARGET_MONTHS = [
 MAX_LT = 120
 
 
-def build_monthly_curve_from_timeseries(
-    df_ts: pd.DataFrame, max_lt: int
-) -> pd.DataFrame:
+def build_monthly_curve_from_timeseries(df_ts: pd.DataFrame, max_lt: int) -> pd.DataFrame:
     """
     時系列Excelから月次ブッキングカーブ用の「LT別・月次Rooms合計」を生成する。
     """
@@ -110,12 +107,8 @@ def build_monthly_curve_from_daily_snapshots(
         return pd.DataFrame(columns=["lt", "rooms_total"])
 
     df_month = df_month.copy()
-    df_month["stay_date"] = pd.to_datetime(
-        df_month["stay_date"], errors="coerce"
-    ).dt.normalize()
-    df_month["as_of_date"] = pd.to_datetime(
-        df_month["as_of_date"], errors="coerce"
-    ).dt.normalize()
+    df_month["stay_date"] = pd.to_datetime(df_month["stay_date"], errors="coerce").dt.normalize()
+    df_month["as_of_date"] = pd.to_datetime(df_month["as_of_date"], errors="coerce").dt.normalize()
 
     df_month = df_month.dropna(subset=["stay_date", "as_of_date", "rooms_oh"])
     if df_month.empty:
@@ -163,18 +156,14 @@ def _get_hotel_io_config(hotel_tag: str) -> tuple[Path, str]:
     data_subdir = cfg.get("data_subdir")
     timeseries_file = cfg.get("timeseries_file")
     if not data_subdir or not timeseries_file:
-        raise ValueError(
-            f"Hotel config missing data_subdir/timeseries_file for {hotel_tag!r}"
-        )
+        raise ValueError(f"Hotel config missing data_subdir/timeseries_file for {hotel_tag!r}")
 
     excel_path = DATA_DIR / data_subdir / timeseries_file
     display_name = cfg.get("display_name", hotel_tag)
     return excel_path, display_name
 
 
-def build_lt_for_month(
-    sheet_name: str, hotel_tag: str, excel_path: Path
-) -> list[pd.Timestamp]:
+def build_lt_for_month(sheet_name: str, hotel_tag: str, excel_path: Path) -> list[pd.Timestamp]:
     """指定した宿泊月シートの LT_DATA を作成し、ASOF 日付一覧を返す。"""
 
     print(f"[INFO] sheet={sheet_name} から LT_DATA を作成中 ...")
@@ -196,9 +185,7 @@ def build_lt_for_month(
     try:
         monthly_df = build_monthly_curve_from_timeseries(df_ts, max_lt=MAX_LT)
     except Exception as exc:  # noqa: BLE001
-        print(
-            f"[run_build_lt_csv] Skip monthly_curve for {hotel_tag} {sheet_name}: {exc}"
-        )
+        print(f"[run_build_lt_csv] Skip monthly_curve for {hotel_tag} {sheet_name}: {exc}")
     else:
         if monthly_df.empty:
             print(f"[WARN] 月次カーブ用データが取得できませんでした: {sheet_name}")
@@ -228,9 +215,7 @@ def run_build_lt_for_gui(
         return
 
     excel_path, display_name = _get_hotel_io_config(hotel_tag)
-    print(
-        f"対象ホテル: {display_name} ({hotel_tag}) / ファイル: {excel_path.name}"
-    )
+    print(f"対象ホテル: {display_name} ({hotel_tag}) / ファイル: {excel_path.name}")
 
     all_asof_dates: list[pd.Timestamp] = []
 

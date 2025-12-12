@@ -1,18 +1,16 @@
 import pandas as pd
-from pathlib import Path
 
 from booking_curve.config import OUTPUT_DIR
+from booking_curve.forecast_simple import moving_average_3months
 from booking_curve.plot_booking_curve import (
     filter_by_weekday,
     plot_booking_curves_for_weekday,
 )
-from booking_curve.forecast_simple import moving_average_3months
-
 
 # ===== 設定 =====
 
-HOTEL_TAG = "daikokucho"            # LT CSV のファイル名に合わせる
-TARGET_MONTH = "202506"             # 描画したい宿泊月（6月）
+HOTEL_TAG = "daikokucho"  # LT CSV のファイル名に合わせる
+TARGET_MONTH = "202506"  # 描画したい宿泊月（6月）
 HISTORY_MONTHS = ["202503", "202504", "202505"]  # 3ヶ月平均に使う履歴月
 WEEKDAY = 4  # 0=月, 1=火, ..., 4=金, 5=土, 6=日
 
@@ -47,7 +45,7 @@ def main():
         lt_df=df_target,
         weekday=WEEKDAY,
         title=title,
-        output_path=None,          # 画像保存したければパスを入れる
+        output_path=None,  # 画像保存したければパスを入れる
         external_avg=avg_3m,
         external_avg_label="3-month avg",
     )

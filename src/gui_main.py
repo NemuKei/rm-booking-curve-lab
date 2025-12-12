@@ -823,10 +823,15 @@ class BookingCurveApp(tk.Tk):
             "stay_date",
             "weekday",
             "actual_rooms",
+            "asof_oh_rooms",
             "forecast_rooms",
+            "diff_rooms_vs_actual",
+            "diff_pct_vs_actual",
+            "pickup_expected_from_asof",
             "diff_rooms",
             "diff_pct",
             "occ_actual_pct",
+            "occ_asof_pct",
             "occ_forecast_pct",
         ]
 
@@ -839,10 +844,23 @@ class BookingCurveApp(tk.Tk):
             elif col == "weekday":
                 width = 70
                 anchor = "center"
-            elif col in ("actual_rooms", "forecast_rooms", "diff_rooms"):
+            elif col in (
+                "actual_rooms",
+                "asof_oh_rooms",
+                "forecast_rooms",
+                "diff_rooms_vs_actual",
+                "pickup_expected_from_asof",
+                "diff_rooms",
+            ):
                 width = 90
                 anchor = "e"
-            elif col in ("diff_pct", "occ_actual_pct", "occ_forecast_pct"):
+            elif col in (
+                "diff_pct_vs_actual",
+                "diff_pct",
+                "occ_actual_pct",
+                "occ_asof_pct",
+                "occ_forecast_pct",
+            ):
                 width = 90
                 anchor = "e"
             else:
@@ -1094,9 +1112,15 @@ class BookingCurveApp(tk.Tk):
                 stay_str = pd.to_datetime(stay_date).strftime("%Y-%m-%d")
 
             weekday = row["weekday"]
-            # 数値のままだと分かりにくいので、0-6 は "Mon".."Sun" にしてもよい
-            if isinstance(weekday, (int, float)) and not pd.isna(weekday):
-                weekday_str = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][int(weekday)]
+            if (
+                isinstance(weekday, (int, float))
+                and not pd.isna(weekday)
+                and 0 <= int(weekday) <= 6
+            ):
+                weekday_idx = int(weekday)
+                weekday_str = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][
+                    weekday_idx
+                ]
             else:
                 weekday_str = str(weekday)
 
@@ -1104,10 +1128,15 @@ class BookingCurveApp(tk.Tk):
                 stay_str,
                 weekday_str,
                 _fmt_num(row.get("actual_rooms")),
+                _fmt_num(row.get("asof_oh_rooms")),
                 _fmt_num(row.get("forecast_rooms")),
+                _fmt_num(row.get("diff_rooms_vs_actual")),
+                _fmt_pct(row.get("diff_pct_vs_actual")),
+                _fmt_num(row.get("pickup_expected_from_asof")),
                 _fmt_num(row.get("diff_rooms")),
                 _fmt_pct(row.get("diff_pct")),
                 _fmt_pct(row.get("occ_actual_pct")),
+                _fmt_pct(row.get("occ_asof_pct")),
                 _fmt_pct(row.get("occ_forecast_pct")),
             ]
             tags: tuple[str, ...] = ()

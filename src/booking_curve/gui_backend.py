@@ -692,24 +692,42 @@ def get_daily_forecast_table(
     out["actual_rooms"] = df["actual_rooms"].astype(float)
     out["forecast_rooms"] = df[col_name].astype(float)
 
-    snap = read_daily_snapshots_for_month(hotel_id=hotel_tag, target_month=target_month)
-    if snap is not None and not snap.empty and {"stay_date", "as_of_date", "rooms_oh"}.issubset(snap.columns):
-        snap = snap.copy()
+    snap_all = read_daily_snapshots_for_month(
+        hotel_id=hotel_tag, target_month=target_month
+    )
+    required_cols = {"stay_date", "as_of_date", "rooms_oh"}
+
+    if snap_all is None or snap_all.empty or not required_cols.issubset(snap_all.columns):
+        out["asof_oh_rooms"] = out["actual_rooms"].astype(float)
+    else:
+        snap = snap_all.copy()
         snap["stay_date"] = pd.to_datetime(snap["stay_date"], errors="coerce").dt.normalize()
         snap["as_of_date"] = pd.to_datetime(snap["as_of_date"], errors="coerce").dt.normalize()
-        snap = snap[snap["as_of_date"] <= asof_ts]
-        if snap.empty:
-            out["asof_oh_rooms"] = out["actual_rooms"].astype(float)
-        else:
-            snap = snap.sort_values(["stay_date", "as_of_date"])
-            last_snap = snap.groupby("stay_date").tail(1)
-            oh_map = pd.to_numeric(last_snap.set_index("stay_date")["rooms_oh"], errors="coerce")
-            asof_oh_series = out["stay_date"].dt.normalize().map(oh_map)
-            mask_fallback = asof_oh_series.isna() & out["actual_rooms"].notna()
-            asof_oh_series.loc[mask_fallback] = out.loc[mask_fallback, "actual_rooms"].to_numpy()
+        snap = snap.dropna(subset=["stay_date", "as_of_date"])
+
+        snap_asof = snap[snap["as_of_date"] <= asof_ts]
+        if snap_asof.empty:
+            asof_oh_series = pd.Series(0.0, index=out.index)
             out["asof_oh_rooms"] = asof_oh_series.astype(float)
-    else:
-        out["asof_oh_rooms"] = out["actual_rooms"].astype(float)
+        else:
+            snap_asof = snap_asof.sort_values(["stay_date", "as_of_date"])
+            last_snap = snap_asof.groupby("stay_date").tail(1)
+            oh_map = pd.to_numeric(
+                last_snap.set_index("stay_date")["rooms_oh"], errors="coerce"
+            )
+
+            stay_dates_norm = out["stay_date"].dt.normalize()
+            asof_oh_series = stay_dates_norm.map(oh_map)
+
+            mask_past = stay_dates_norm < asof_ts
+            mask_fallback = (
+                asof_oh_series.isna()
+                & mask_past
+                & out["actual_rooms"].notna()
+            )
+            asof_oh_series.loc[mask_fallback] = out.loc[mask_fallback, "actual_rooms"].to_numpy()
+            asof_oh_series = asof_oh_series.fillna(0.0)
+            out["asof_oh_rooms"] = asof_oh_series.astype(float)
 
     out["diff_rooms_vs_actual"] = out["forecast_rooms"] - out["actual_rooms"]
     denom_actual = out["actual_rooms"].replace(0, pd.NA)

@@ -516,8 +516,14 @@ def get_monthly_curve_data(
 
         df = df.sort_index()
         if not df.empty:
-            # LT 方向に NOCB を適用してギザつきを緩和
-            df = apply_nocb_along_lt(df, axis="index", max_gap=None)
+            # LT 方向に NOCB を適用してギザつきを緩和（ACT(-1) は除外）
+            act_row = df.loc[[-1]] if -1 in df.index else None
+            df_no_act = df.loc[df.index != -1]
+            df_no_act = apply_nocb_along_lt(df_no_act, axis="index", max_gap=None)
+            parts = [df_no_act]
+            if act_row is not None:
+                parts.append(act_row)
+            df = pd.concat(parts).sort_index()
         return df
 
     # 2) フォールバック: LT_DATA から月次合計カーブを集計する（旧ロジック）
@@ -554,8 +560,14 @@ def get_monthly_curve_data(
     result.index = result.index.map(lambda c: lt_columns[c]).astype(int)
     result = result.sort_index()
     if not result.empty:
-        # LT 方向に NOCB を適用して欠損を補完
-        result = apply_nocb_along_lt(result, axis="index", max_gap=None)
+        # LT 方向に NOCB を適用して欠損を補完（ACT(-1) は除外）
+        result_act = result.loc[[-1]] if -1 in result.index else None
+        result_no_act = result.loc[result.index != -1]
+        result_no_act = apply_nocb_along_lt(result_no_act, axis="index", max_gap=None)
+        parts = [result_no_act]
+        if result_act is not None:
+            parts.append(result_act)
+        result = pd.concat(parts).sort_index()
     return result
 
 

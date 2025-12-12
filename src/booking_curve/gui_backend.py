@@ -692,9 +692,7 @@ def get_daily_forecast_table(
     out["actual_rooms"] = df["actual_rooms"].astype(float)
     out["forecast_rooms"] = df[col_name].astype(float)
 
-    snap = read_daily_snapshots_for_month(
-        hotel_id=hotel_tag, target_month=target_month
-    )
+    snap = read_daily_snapshots_for_month(hotel_id=hotel_tag, target_month=target_month)
     fallback_asof_oh = True
     oh_map: Optional[pd.Series] = None
     if snap is not None and not snap.empty:
@@ -705,9 +703,7 @@ def get_daily_forecast_table(
             snap["as_of_date"] = pd.to_datetime(snap["as_of_date"], errors="coerce")
             snap_asof = snap[snap["as_of_date"] == asof_ts].copy()
             if not snap_asof.empty:
-                oh_map = pd.to_numeric(
-                    snap_asof.set_index("stay_date")["rooms_oh"], errors="coerce"
-                )
+                oh_map = pd.to_numeric(snap_asof.set_index("stay_date")["rooms_oh"], errors="coerce")
                 fallback_asof_oh = False
 
     if fallback_asof_oh:
@@ -724,12 +720,8 @@ def get_daily_forecast_table(
 
     out["diff_rooms_vs_actual"] = out["forecast_rooms"] - out["actual_rooms"]
     denom = out["actual_rooms"].replace(0, pd.NA)
-    out["diff_pct_vs_actual"] = (out["diff_rooms_vs_actual"] / denom * 100.0).astype(
-        float
-    )
-    out["pickup_expected_from_asof"] = out["forecast_rooms"] - out[
-        "asof_oh_rooms"
-    ]
+    out["diff_pct_vs_actual"] = (out["diff_rooms_vs_actual"] / denom * 100.0).astype(float)
+    out["pickup_expected_from_asof"] = out["forecast_rooms"] - out["asof_oh_rooms"]
 
     out["diff_rooms"] = out["diff_rooms_vs_actual"]
     out["diff_pct"] = out["diff_pct_vs_actual"]

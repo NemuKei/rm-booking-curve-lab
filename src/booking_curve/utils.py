@@ -20,21 +20,24 @@ def _is_int_like(label: object) -> bool:
 
 
 def _apply_nocb_series(series: pd.Series, max_gap: Optional[int]) -> pd.Series:
-    """Apply NOCB to a 1D Series ordered from small to large LT."""
+    """Fill NaN by extending newer LT values toward older LT in ascending order."""
     filled = series.copy()
-    last_val = np.nan
+    last_val: object | None = None
     gap = 0
 
-    for idx in reversed(series.index):
+    for idx in series.index:
         value = series.loc[idx]
-        if pd.notna(value):
-            last_val = value
-            gap = 0
+        if pd.isna(value):
+            if last_val is None:
+                continue
+            gap += 1
+            if max_gap is None or gap <= max_gap:
+                filled.loc[idx] = last_val
             continue
 
-        gap += 1
-        if pd.notna(last_val) and (max_gap is None or gap <= max_gap):
-            filled.loc[idx] = last_val
+        last_val = value
+        gap = 0
+
     return filled
 
 
@@ -44,22 +47,10 @@ def apply_nocb_along_lt(
     axis: Literal["columns", "index"] = "columns",
     max_gap: Optional[int] = None,
 ) -> pd.DataFrame:
-    """Apply NOCB completion along the LT axis without mutating the input.
+    """Apply LOCF-style NOCB along the LT axis without mutating the input.
 
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Target DataFrame.
-    axis : Literal["columns", "index"], optional
-        Axis where LT labels reside. "columns" assumes LT columns; "index" assumes
-        LT index. Defaults to "columns".
-    max_gap : Optional[int], optional
-        Maximum consecutive gap length to backfill. None means no limit.
-
-    Returns
-    -------
-    pd.DataFrame
-        New DataFrame with LT direction NOCB applied.
+    For LT labels, smaller LT (closer stay_date) values are propagated toward older LT
+    positions while preserving non-LT labels untouched.
     """
 
     if df.empty:
@@ -76,8 +67,9 @@ def apply_nocb_along_lt(
             return result
 
         lt_sorted = sorted(lt_columns, key=lambda x: int(x))
-        filled_subset = result[lt_sorted].apply(lambda row: _apply_nocb_series(row, max_gap), axis=1)
-        result[lt_sorted] = filled_subset
+        for idx in result.index:
+            row = result.loc[idx, lt_sorted]
+            result.loc[idx, lt_sorted] = _apply_nocb_series(row, max_gap)
         return result
 
     lt_index = [idx for idx in df.index if _is_int_like(idx)]

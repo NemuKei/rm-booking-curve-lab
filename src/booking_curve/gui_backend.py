@@ -10,6 +10,7 @@ import pandas as pd
 import build_calendar_features
 import run_build_lt_csv
 import run_forecast_batch
+from booking_curve.daily_snapshots import read_daily_snapshots_for_month
 from booking_curve.forecast_simple import (
     moving_average_3months,
     moving_average_recent_90days,
@@ -655,7 +656,6 @@ def get_daily_forecast_table(
     """
     cap = _get_capacity(hotel_tag, capacity)
 
-    # GUIモデル名から CSV prefix と列名を決定する
     model_map = {
         "avg": ("forecast", "projected_rooms"),
         "recent90": ("forecast_recent90", "projected_rooms"),
@@ -668,9 +668,9 @@ def get_daily_forecast_table(
 
     prefix, col_name = model_map[gui_model]
 
-    # as_of_date を "YYYYMMDD" に変換 (既存ファイル命名規則と揃える)
-    asof_ts = pd.to_datetime(as_of_date)
-    asof_tag = asof_ts.strftime("%Y%m%d")
+    asof_ts_raw = pd.to_datetime(as_of_date)
+    asof_ts = asof_ts_raw.normalize()
+    asof_tag = asof_ts_raw.strftime("%Y%m%d")
 
     csv_name = f"{prefix}_{target_month}_{hotel_tag}_asof_{asof_tag}.csv"
     csv_path = OUTPUT_DIR / csv_name
@@ -678,11 +678,9 @@ def get_daily_forecast_table(
         raise FileNotFoundError(f"forecast csv not found: {csv_path}")
 
     df = pd.read_csv(csv_path, index_col=0)
-    # index は stay_date
     df.index = pd.to_datetime(df.index)
     df = df.sort_index()
 
-    # 列存在チェック
     if "actual_rooms" not in df.columns:
         raise ValueError(f"{csv_path} に actual_rooms 列がありません。")
     if col_name not in df.columns:
@@ -690,50 +688,115 @@ def get_daily_forecast_table(
 
     out = pd.DataFrame(index=df.index.copy())
     out["stay_date"] = out.index
-    # 曜日 (0=Monday..6=Sunday)
     out["weekday"] = out["stay_date"].dt.weekday
-
     out["actual_rooms"] = df["actual_rooms"].astype(float)
     out["forecast_rooms"] = df[col_name].astype(float)
 
-    # 差異 (actual が NaN の場合は NaN)
-    out["diff_rooms"] = out["forecast_rooms"] - out["actual_rooms"]
-    # 差異率
-    denom = out["actual_rooms"].replace(0, pd.NA)
-    out["diff_pct"] = (out["diff_rooms"] / denom * 100.0).astype(float)
+    snap = read_daily_snapshots_for_month(
+        hotel_id=hotel_tag, target_month=target_month
+    )
+    fallback_asof_oh = True
+    oh_map: Optional[pd.Series] = None
+    if snap is not None and not snap.empty:
+        required_snap_cols = {"stay_date", "as_of_date", "rooms_oh"}
+        if required_snap_cols.issubset(snap.columns):
+            snap = snap.copy()
+            snap["stay_date"] = pd.to_datetime(snap["stay_date"], errors="coerce")
+            snap["as_of_date"] = pd.to_datetime(snap["as_of_date"], errors="coerce")
+            snap_asof = snap[snap["as_of_date"] == asof_ts].copy()
+            if not snap_asof.empty:
+                oh_map = pd.to_numeric(
+                    snap_asof.set_index("stay_date")["rooms_oh"], errors="coerce"
+                )
+                fallback_asof_oh = False
 
-    # 稼働率 (daily)
+    if fallback_asof_oh:
+        out["asof_oh_rooms"] = out["actual_rooms"]
+    else:
+        asof_oh_rooms = pd.Series(index=out.index, dtype="float")
+        past_mask = out["stay_date"].dt.normalize() <= asof_ts
+        asof_oh_rooms.loc[past_mask] = out.loc[past_mask, "actual_rooms"].to_numpy()
+        future_dates = out.loc[~past_mask, "stay_date"].map(oh_map)
+        asof_oh_rooms.loc[~past_mask] = future_dates.to_numpy()
+        out["asof_oh_rooms"] = asof_oh_rooms.astype(float)
+
+    out["asof_oh_rooms"] = out["asof_oh_rooms"].astype(float)
+
+    out["diff_rooms_vs_actual"] = out["forecast_rooms"] - out["actual_rooms"]
+    denom = out["actual_rooms"].replace(0, pd.NA)
+    out["diff_pct_vs_actual"] = (out["diff_rooms_vs_actual"] / denom * 100.0).astype(
+        float
+    )
+    out["pickup_expected_from_asof"] = out["forecast_rooms"] - out[
+        "asof_oh_rooms"
+    ]
+
+    out["diff_rooms"] = out["diff_rooms_vs_actual"]
+    out["diff_pct"] = out["diff_pct_vs_actual"]
+
     out["occ_actual_pct"] = (out["actual_rooms"] / cap * 100.0).astype(float)
+    out["occ_asof_pct"] = (out["asof_oh_rooms"] / cap * 100.0).astype(float)
     out["occ_forecast_pct"] = (out["forecast_rooms"] / cap * 100.0).astype(float)
 
-    # 月次合計行の追加
-    # 有効日数 = stay_date のユニーク数
     num_days = out["stay_date"].nunique()
 
     actual_total = out["actual_rooms"].fillna(0).sum()
+    asof_total = out["asof_oh_rooms"].fillna(0).sum()
     forecast_total = out["forecast_rooms"].fillna(0).sum()
-    diff_total = forecast_total - actual_total
-    if actual_total > 0:
-        diff_total_pct = diff_total / actual_total * 100.0
-    else:
-        diff_total_pct = float("nan")
 
-    occ_actual_month = actual_total / (cap * num_days) * 100.0 if num_days > 0 else float("nan")
-    occ_forecast_month = forecast_total / (cap * num_days) * 100.0 if num_days > 0 else float("nan")
+    diff_total_vs_actual = forecast_total - actual_total
+    if actual_total > 0:
+        diff_total_pct_vs_actual = diff_total_vs_actual / actual_total * 100.0
+    else:
+        diff_total_pct_vs_actual = float("nan")
+
+    pickup_total_from_asof = forecast_total - asof_total
+
+    if num_days > 0:
+        occ_actual_month = actual_total / (cap * num_days) * 100.0
+        occ_asof_month = asof_total / (cap * num_days) * 100.0
+        occ_forecast_month = forecast_total / (cap * num_days) * 100.0
+    else:
+        occ_actual_month = float("nan")
+        occ_asof_month = float("nan")
+        occ_forecast_month = float("nan")
 
     total_row = {
         "stay_date": pd.NaT,
         "weekday": "",
         "actual_rooms": actual_total,
+        "asof_oh_rooms": asof_total,
         "forecast_rooms": forecast_total,
-        "diff_rooms": diff_total,
-        "diff_pct": diff_total_pct,
+        "diff_rooms_vs_actual": diff_total_vs_actual,
+        "diff_pct_vs_actual": diff_total_pct_vs_actual,
+        "pickup_expected_from_asof": pickup_total_from_asof,
+        "diff_rooms": diff_total_vs_actual,
+        "diff_pct": diff_total_pct_vs_actual,
         "occ_actual_pct": occ_actual_month,
+        "occ_asof_pct": occ_asof_month,
         "occ_forecast_pct": occ_forecast_month,
     }
 
     out = out.reset_index(drop=True)
     out = pd.concat([out, pd.DataFrame([total_row])], ignore_index=True)
+
+    column_order = [
+        "stay_date",
+        "weekday",
+        "actual_rooms",
+        "asof_oh_rooms",
+        "forecast_rooms",
+        "diff_rooms_vs_actual",
+        "diff_pct_vs_actual",
+        "pickup_expected_from_asof",
+        "diff_rooms",
+        "diff_pct",
+        "occ_actual_pct",
+        "occ_asof_pct",
+        "occ_forecast_pct",
+    ]
+
+    out = out[column_order]
 
     return out
 

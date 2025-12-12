@@ -150,9 +150,7 @@ class BookingCurveApp(tk.Tk):
             occ = base_cap
         return fc, occ
 
-    def _set_daily_caps_for_hotel(
-        self, hotel_tag: str, forecast_cap: float, occ_capacity: float
-    ) -> None:
+    def _set_daily_caps_for_hotel(self, hotel_tag: str, forecast_cap: float, occ_capacity: float) -> None:
         daily = self._settings.setdefault("daily_forecast", {})
         fc_map = daily.setdefault("forecast_cap", {})
         occ_map = daily.setdefault("occ_capacity", {})
@@ -166,9 +164,7 @@ class BookingCurveApp(tk.Tk):
     def _get_best_model_stats_for_month(self, hotel: str, target_month: str) -> dict | None:
         return get_best_model_for_month(hotel, target_month)
 
-    def _get_best_model_stats_for_recent_months(
-        self, hotel: str, ref_month: str, window_months: int
-    ) -> dict | None:
+    def _get_best_model_stats_for_recent_months(self, hotel: str, ref_month: str, window_months: int) -> dict | None:
         try:
             df = get_model_evaluation_table(hotel)
         except Exception:
@@ -183,9 +179,7 @@ class BookingCurveApp(tk.Tk):
         df = df[df["rmse_pct"].notna()]
         df = df[df["n_samples"].notna()]
 
-        df["target_month_int"] = pd.to_numeric(
-            df["target_month"].astype(str), errors="coerce"
-        ).astype("Int64")
+        df["target_month_int"] = pd.to_numeric(df["target_month"].astype(str), errors="coerce").astype("Int64")
 
         latest_eval_month_int: int | None
         try:
@@ -212,10 +206,7 @@ class BookingCurveApp(tk.Tk):
 
         try:
             period = pd.Period(str(ref_month), freq="M")
-            recent_months = [
-                f"{(period - offset).year}{(period - offset).month:02d}"
-                for offset in range(1, window_months + 1)
-            ]
+            recent_months = [f"{(period - offset).year}{(period - offset).month:02d}" for offset in range(1, window_months + 1)]
         except Exception:
             recent_months = []
         if not recent_months:
@@ -345,14 +336,10 @@ class BookingCurveApp(tk.Tk):
         info = best_12 or best_3
         if info:
             latest_eval = info.get("latest_eval_month_int") if isinstance(info, dict) else None
-            expected_latest = (
-                info.get("expected_latest_month_int") if isinstance(info, dict) else None
-            )
+            expected_latest = info.get("expected_latest_month_int") if isinstance(info, dict) else None
             has_missing = bool(info.get("has_missing_latest")) if isinstance(info, dict) else False
             if has_missing and latest_eval and expected_latest:
-                lines.append(
-                    f"※評価データは {_fmt_ym_int(latest_eval)} まで（最新着地月 {_fmt_ym_int(expected_latest)} は未評価）"
-                )
+                lines.append(f"※評価データは {_fmt_ym_int(latest_eval)} まで（最新着地月 {_fmt_ym_int(expected_latest)} は未評価）")
 
         return "\n".join(lines)
 
@@ -388,12 +375,7 @@ class BookingCurveApp(tk.Tk):
         if label is None:
             return
 
-        if (
-            total_forecast_rooms is None
-            or not hotel
-            or not target_month
-            or len(str(target_month)) != 6
-        ):
+        if total_forecast_rooms is None or not hotel or not target_month or len(str(target_month)) != 6:
             label.configure(text="")
             return
 
@@ -480,17 +462,13 @@ class BookingCurveApp(tk.Tk):
         calendar_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
 
         ttk.Label(calendar_frame, text="ホテル:").grid(row=0, column=0, sticky="w")
-        self.hotel_combo = ttk.Combobox(
-            calendar_frame, textvariable=self.hotel_var, state="readonly"
-        )
+        self.hotel_combo = ttk.Combobox(calendar_frame, textvariable=self.hotel_var, state="readonly")
         self.hotel_combo["values"] = sorted(HOTEL_CONFIG.keys())
         self.hotel_combo.grid(row=0, column=1, padx=4, pady=2, sticky="w")
         self.hotel_combo.bind("<<ComboboxSelected>>", self._on_hotel_changed)
 
         self.calendar_coverage_var = tk.StringVar()
-        self.calendar_coverage_label = ttk.Label(
-            calendar_frame, textvariable=self.calendar_coverage_var
-        )
+        self.calendar_coverage_label = ttk.Label(calendar_frame, textvariable=self.calendar_coverage_var)
         self.calendar_coverage_label.grid(row=1, column=0, columnspan=3, padx=4, pady=2, sticky="w")
 
         self.calendar_build_button = ttk.Button(
@@ -504,21 +482,13 @@ class BookingCurveApp(tk.Tk):
         caps_frame = ttk.LabelFrame(frame, text="日別フォーキャスト / ブッキングカーブ共通設定")
         caps_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 8))
 
-        ttk.Label(caps_frame, text="予測キャップ:").grid(
-            row=0, column=0, sticky="w", padx=4, pady=2
-        )
+        ttk.Label(caps_frame, text="予測キャップ:").grid(row=0, column=0, sticky="w", padx=4, pady=2)
         self.master_fc_cap_var = tk.StringVar()
-        ttk.Entry(caps_frame, textvariable=self.master_fc_cap_var, width=8).grid(
-            row=0, column=1, padx=4, pady=2, sticky="w"
-        )
+        ttk.Entry(caps_frame, textvariable=self.master_fc_cap_var, width=8).grid(row=0, column=1, padx=4, pady=2, sticky="w")
 
-        ttk.Label(caps_frame, text="稼働率キャパ:").grid(
-            row=0, column=2, sticky="w", padx=12, pady=2
-        )
+        ttk.Label(caps_frame, text="稼働率キャパ:").grid(row=0, column=2, sticky="w", padx=12, pady=2)
         self.master_occ_cap_var = tk.StringVar()
-        ttk.Entry(caps_frame, textvariable=self.master_occ_cap_var, width=8).grid(
-            row=0, column=3, padx=4, pady=2, sticky="w"
-        )
+        ttk.Entry(caps_frame, textvariable=self.master_occ_cap_var, width=8).grid(row=0, column=3, padx=4, pady=2, sticky="w")
 
         ttk.Button(
             caps_frame,
@@ -715,9 +685,7 @@ class BookingCurveApp(tk.Tk):
         ttk.Label(form, text="対象月 (YYYYMM):").grid(row=0, column=2, sticky="w")
         current_month = date.today().strftime("%Y%m")
         self.df_month_var = tk.StringVar(value=current_month)
-        ttk.Entry(form, textvariable=self.df_month_var, width=8).grid(
-            row=0, column=3, padx=4, pady=2
-        )
+        ttk.Entry(form, textvariable=self.df_month_var, width=8).grid(row=0, column=3, padx=4, pady=2)
 
         # as_of
         ttk.Label(form, text="AS OF (YYYY-MM-DD):").grid(row=0, column=4, sticky="w")
@@ -739,12 +707,8 @@ class BookingCurveApp(tk.Tk):
 
         self.df_latest_asof_var = tk.StringVar(value="")
         ttk.Label(form, text="最新ASOF:").grid(row=0, column=6, sticky="w")
-        ttk.Label(form, textvariable=self.df_latest_asof_var, width=12).grid(
-            row=0, column=7, padx=4, pady=2, sticky="w"
-        )
-        ttk.Button(form, text="最新に反映", command=self._on_df_set_asof_to_latest).grid(
-            row=0, column=8, padx=4, pady=2, sticky="w"
-        )
+        ttk.Label(form, textvariable=self.df_latest_asof_var, width=12).grid(row=0, column=7, padx=4, pady=2, sticky="w")
+        ttk.Button(form, text="最新に反映", command=self._on_df_set_asof_to_latest).grid(row=0, column=8, padx=4, pady=2, sticky="w")
 
         # モデル
         ttk.Label(form, text="モデル:").grid(row=1, column=0, sticky="w", pady=(4, 2))
@@ -771,9 +735,7 @@ class BookingCurveApp(tk.Tk):
 
         ttk.Label(form, text="予測キャップ:").grid(row=1, column=2, sticky="w")
         self.df_forecast_cap_var = tk.StringVar(value=str(fc_cap))
-        ttk.Entry(form, textvariable=self.df_forecast_cap_var, width=6).grid(
-            row=1, column=3, padx=4, pady=2
-        )
+        ttk.Entry(form, textvariable=self.df_forecast_cap_var, width=6).grid(row=1, column=3, padx=4, pady=2)
 
         nav_frame = ttk.Frame(form)
         nav_frame.grid(row=2, column=2, columnspan=6, sticky="w", pady=(4, 0))
@@ -811,9 +773,7 @@ class BookingCurveApp(tk.Tk):
         export_btn.grid(row=1, column=5, padx=4, pady=2, sticky="e")
         ttk.Label(form, text="稼働率キャパ:").grid(row=1, column=6, sticky="w")
         self.df_occ_cap_var = tk.StringVar(value=str(occ_cap))
-        ttk.Entry(form, textvariable=self.df_occ_cap_var, width=6).grid(
-            row=1, column=7, padx=4, pady=2
-        )
+        ttk.Entry(form, textvariable=self.df_occ_cap_var, width=6).grid(row=1, column=7, padx=4, pady=2)
 
         # テーブル用コンテナ
         table_container = ttk.Frame(frame)
@@ -942,9 +902,7 @@ class BookingCurveApp(tk.Tk):
 
         if len(month) != 6 or not month.isdigit():
             self.df_best_model_label.config(text="最適モデル: 対象月が未設定です")
-            self._update_daily_forecast_scenario_label(
-                None, None, hotel, month, self.df_asof_var.get().strip()
-            )
+            self._update_daily_forecast_scenario_label(None, None, hotel, month, self.df_asof_var.get().strip())
             return
 
         best_month = self._get_best_model_stats_for_month(hotel, month)
@@ -955,9 +913,7 @@ class BookingCurveApp(tk.Tk):
         self.df_best_model_label.config(text=text)
 
         total_forecast_rooms = self._get_current_daily_forecast_total()
-        self._update_daily_forecast_scenario_label(
-            best_3, total_forecast_rooms, hotel, month, self.df_asof_var.get().strip()
-        )
+        self._update_daily_forecast_scenario_label(best_3, total_forecast_rooms, hotel, month, self.df_asof_var.get().strip())
 
     def _on_df_set_asof_to_latest(self) -> None:
         latest = self.df_latest_asof_var.get().strip()
@@ -1055,8 +1011,7 @@ class BookingCurveApp(tk.Tk):
             if latest_ts is not None and asof_ts > latest_ts:
                 messagebox.showerror(
                     "エラー",
-                    f"AS OF が最新データ ({latest}) を超えています。\n"
-                    f"{latest} 以前の日付を指定してください。",
+                    f"AS OF が最新データ ({latest}) を超えています。\n{latest} 以前の日付を指定してください。",
                 )
                 return
 
@@ -1112,15 +1067,9 @@ class BookingCurveApp(tk.Tk):
                 stay_str = pd.to_datetime(stay_date).strftime("%Y-%m-%d")
 
             weekday = row["weekday"]
-            if (
-                isinstance(weekday, (int, float))
-                and not pd.isna(weekday)
-                and 0 <= int(weekday) <= 6
-            ):
+            if isinstance(weekday, (int, float)) and not pd.isna(weekday) and 0 <= int(weekday) <= 6:
                 weekday_idx = int(weekday)
-                weekday_str = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][
-                    weekday_idx
-                ]
+                weekday_str = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][weekday_idx]
             else:
                 weekday_str = str(weekday)
 
@@ -1283,9 +1232,7 @@ class BookingCurveApp(tk.Tk):
             return
 
         columns = list(self.df_tree["columns"])
-        tree_rows = [
-            self.df_tree.item(row_id, "values") for row_id in self.df_tree.get_children("")
-        ]
+        tree_rows = [self.df_tree.item(row_id, "values") for row_id in self.df_tree.get_children("")]
         df_export = pd.DataFrame(tree_rows, columns=columns)
 
         hotel = self.df_hotel_var.get().strip()
@@ -1294,9 +1241,7 @@ class BookingCurveApp(tk.Tk):
         model = self.df_model_var.get().strip()
 
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        out_path = (
-            OUTPUT_DIR / f"daily_forecast_{hotel}_{month}_{model}_asof_{asof.replace('-', '')}.csv"
-        )
+        out_path = OUTPUT_DIR / f"daily_forecast_{hotel}_{month}_{model}_asof_{asof.replace('-', '')}.csv"
 
         try:
             df_export.to_csv(out_path, index=False)
@@ -1362,21 +1307,11 @@ class BookingCurveApp(tk.Tk):
         ttk.Label(top, text="終了月(YYYYMM):").grid(row=0, column=5, sticky="w", padx=(8, 4))
         ttk.Entry(top, textvariable=self.me_to_var, width=8).grid(row=0, column=6, padx=4, pady=2)
 
-        ttk.Button(top, text="前月", command=self._on_me_prev_month_clicked).grid(
-            row=0, column=7, padx=4, pady=2
-        )
-        ttk.Button(top, text="直近3ヶ月", command=self._on_me_last3_clicked).grid(
-            row=0, column=8, padx=4, pady=2
-        )
-        ttk.Button(top, text="直近12ヶ月", command=self._on_me_last12_clicked).grid(
-            row=0, column=9, padx=4, pady=2
-        )
-        ttk.Button(top, text="CSV出力", command=self._on_export_model_eval_csv).grid(
-            row=0, column=10, padx=4, pady=2
-        )
-        ttk.Button(top, text="評価再計算", command=self._on_rebuild_evaluation_csv).grid(
-            row=0, column=11, padx=4, pady=2
-        )
+        ttk.Button(top, text="前月", command=self._on_me_prev_month_clicked).grid(row=0, column=7, padx=4, pady=2)
+        ttk.Button(top, text="直近3ヶ月", command=self._on_me_last3_clicked).grid(row=0, column=8, padx=4, pady=2)
+        ttk.Button(top, text="直近12ヶ月", command=self._on_me_last12_clicked).grid(row=0, column=9, padx=4, pady=2)
+        ttk.Button(top, text="CSV出力", command=self._on_export_model_eval_csv).grid(row=0, column=10, padx=4, pady=2)
+        ttk.Button(top, text="評価再計算", command=self._on_rebuild_evaluation_csv).grid(row=0, column=11, padx=4, pady=2)
 
         columns = [
             "target_month",
@@ -1478,8 +1413,7 @@ class BookingCurveApp(tk.Tk):
             self._refresh_model_eval_table()
             messagebox.showinfo(
                 "情報",
-                "このホテルのモデル評価CSVが見つかりません。\n"
-                "必要に応じて「評価再計算」を実行してください。",
+                "このホテルのモデル評価CSVが見つかりません。\n必要に応じて「評価再計算」を実行してください。",
             )
             return
         except Exception as e:
@@ -1633,13 +1567,9 @@ class BookingCurveApp(tk.Tk):
         self.asof_from_ym_var = tk.StringVar()
         self.asof_to_ym_var = tk.StringVar()
         ttk.Label(top, text="期間From (YYYYMM):").grid(row=0, column=2, sticky="w")
-        ttk.Entry(top, textvariable=self.asof_from_ym_var, width=8).grid(
-            row=0, column=3, padx=4, pady=2
-        )
+        ttk.Entry(top, textvariable=self.asof_from_ym_var, width=8).grid(row=0, column=3, padx=4, pady=2)
         ttk.Label(top, text="期間To (YYYYMM):").grid(row=0, column=4, sticky="w")
-        ttk.Entry(top, textvariable=self.asof_to_ym_var, width=8).grid(
-            row=0, column=5, padx=4, pady=2
-        )
+        ttk.Entry(top, textvariable=self.asof_to_ym_var, width=8).grid(row=0, column=5, padx=4, pady=2)
 
         run_btn = ttk.Button(top, text="評価読み込み", command=self._on_load_asof_eval)
         run_btn.grid(row=0, column=6, padx=4, pady=2)
@@ -1662,21 +1592,15 @@ class BookingCurveApp(tk.Tk):
         asof_filter_combo.grid(row=0, column=9, padx=4, pady=2, sticky="w")
         asof_filter_combo.bind("<<ComboboxSelected>>", lambda *_: self._refresh_asof_eval_tables())
 
-        ttk.Button(top, text="CSV出力(サマリ)", command=self._on_export_asof_overview_csv).grid(
-            row=0, column=10, padx=4, pady=2
-        )
-        ttk.Button(top, text="CSV出力(月別ログ)", command=self._on_export_asof_detail_csv).grid(
-            row=0, column=11, padx=4, pady=2
-        )
+        ttk.Button(top, text="CSV出力(サマリ)", command=self._on_export_asof_overview_csv).grid(row=0, column=10, padx=4, pady=2)
+        ttk.Button(top, text="CSV出力(月別ログ)", command=self._on_export_asof_detail_csv).grid(row=0, column=11, padx=4, pady=2)
 
         # ASOF別サマリテーブル
         overview_frame = ttk.LabelFrame(frame, text="ASOF別サマリ")
         overview_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=(0, 4))
 
         columns = ["model", "asof_type", "mean_error_pct", "mae_pct", "rmse_pct", "n_samples"]
-        self.asof_overview_tree = ttk.Treeview(
-            overview_frame, columns=columns, show="headings", height=8
-        )
+        self.asof_overview_tree = ttk.Treeview(overview_frame, columns=columns, show="headings", height=8)
         for col in columns:
             self.asof_overview_tree.heading(col, text=col)
         # 列幅・整列設定
@@ -1690,9 +1614,7 @@ class BookingCurveApp(tk.Tk):
         self.asof_overview_tree.tag_configure("asof_best", background="#e0f2ff")
 
         self.asof_overview_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 4), pady=4)
-        vsb1 = ttk.Scrollbar(
-            overview_frame, orient="vertical", command=self.asof_overview_tree.yview
-        )
+        vsb1 = ttk.Scrollbar(overview_frame, orient="vertical", command=self.asof_overview_tree.yview)
         self.asof_overview_tree.configure(yscrollcommand=vsb1.set)
         vsb1.pack(side=tk.RIGHT, fill=tk.Y)
 
@@ -1701,9 +1623,7 @@ class BookingCurveApp(tk.Tk):
         detail_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
 
         detail_columns = ["target_month", "asof_type", "model", "error_pct", "abs_error_pct"]
-        self.asof_detail_tree = ttk.Treeview(
-            detail_frame, columns=detail_columns, show="headings", height=12
-        )
+        self.asof_detail_tree = ttk.Treeview(detail_frame, columns=detail_columns, show="headings", height=12)
         for col in detail_columns:
             self.asof_detail_tree.heading(col, text=col)
 
@@ -1861,14 +1781,8 @@ class BookingCurveApp(tk.Tk):
         hotel = self.asof_hotel_var.get().strip() if hasattr(self, "asof_hotel_var") else ""
         from_ym = self.asof_from_ym_var.get().strip() if hasattr(self, "asof_from_ym_var") else ""
         to_ym = self.asof_to_ym_var.get().strip() if hasattr(self, "asof_to_ym_var") else ""
-        asof_filter = (
-            self._asof_filter_var.get().strip() if hasattr(self, "_asof_filter_var") else ""
-        )
-        best_only = (
-            "best"
-            if getattr(self, "_asof_best_only_var", tk.BooleanVar(value=False)).get()
-            else "all"
-        )
+        asof_filter = self._asof_filter_var.get().strip() if hasattr(self, "_asof_filter_var") else ""
+        best_only = "best" if getattr(self, "_asof_best_only_var", tk.BooleanVar(value=False)).get() else "all"
 
         if not hotel:
             hotel = "unknown"
@@ -1907,14 +1821,8 @@ class BookingCurveApp(tk.Tk):
         hotel = self.asof_hotel_var.get().strip() if hasattr(self, "asof_hotel_var") else ""
         from_ym = self.asof_from_ym_var.get().strip() if hasattr(self, "asof_from_ym_var") else ""
         to_ym = self.asof_to_ym_var.get().strip() if hasattr(self, "asof_to_ym_var") else ""
-        asof_filter = (
-            self._asof_filter_var.get().strip() if hasattr(self, "_asof_filter_var") else ""
-        )
-        best_only = (
-            "best"
-            if getattr(self, "_asof_best_only_var", tk.BooleanVar(value=False)).get()
-            else "all"
-        )
+        asof_filter = self._asof_filter_var.get().strip() if hasattr(self, "_asof_filter_var") else ""
+        best_only = "best" if getattr(self, "_asof_best_only_var", tk.BooleanVar(value=False)).get() else "all"
 
         if not hotel:
             hotel = "unknown"
@@ -1959,15 +1867,11 @@ class BookingCurveApp(tk.Tk):
         ttk.Label(form, text="対象月 (YYYYMM):").grid(row=0, column=2, sticky="w")
         current_month = date.today().strftime("%Y%m")
         self.bc_month_var = tk.StringVar(value=current_month)
-        ttk.Entry(form, textvariable=self.bc_month_var, width=8).grid(
-            row=0, column=3, padx=4, pady=2
-        )
+        ttk.Entry(form, textvariable=self.bc_month_var, width=8).grid(row=0, column=3, padx=4, pady=2)
 
         ttk.Label(form, text="曜日:").grid(row=0, column=4, sticky="w")
         self.bc_weekday_var = tk.StringVar(value="5:Sat")
-        weekday_combo = ttk.Combobox(
-            form, textvariable=self.bc_weekday_var, state="readonly", width=7
-        )
+        weekday_combo = ttk.Combobox(form, textvariable=self.bc_weekday_var, state="readonly", width=7)
         weekday_combo["values"] = [
             "0:Mon",
             "1:Tue",
@@ -2017,12 +1921,8 @@ class BookingCurveApp(tk.Tk):
 
         self.bc_latest_asof_var = tk.StringVar(value="")
         ttk.Label(form, text="最新ASOF:").grid(row=1, column=2, sticky="w", pady=(4, 2))
-        ttk.Label(form, textvariable=self.bc_latest_asof_var, width=12).grid(
-            row=1, column=3, padx=4, pady=(4, 2), sticky="w"
-        )
-        ttk.Button(form, text="最新に反映", command=self._on_bc_set_asof_to_latest).grid(
-            row=1, column=4, padx=4, pady=(4, 2), sticky="w"
-        )
+        ttk.Label(form, textvariable=self.bc_latest_asof_var, width=12).grid(row=1, column=3, padx=4, pady=(4, 2), sticky="w")
+        ttk.Button(form, text="最新に反映", command=self._on_bc_set_asof_to_latest).grid(row=1, column=4, padx=4, pady=(4, 2), sticky="w")
 
         ttk.Label(form, text="モデル:").grid(row=1, column=5, sticky="w", pady=(4, 2))
         self.bc_model_var = tk.StringVar(value="recent90w")
@@ -2036,9 +1936,7 @@ class BookingCurveApp(tk.Tk):
         self.bc_forecast_cap_var = tk.StringVar(value=str(fc_cap))
 
         ttk.Label(form, text="予測キャップ:").grid(row=1, column=11, sticky="w", pady=(4, 2))
-        ttk.Entry(form, textvariable=self.bc_forecast_cap_var, width=6).grid(
-            row=1, column=12, padx=2, pady=(4, 2), sticky="w"
-        )
+        ttk.Entry(form, textvariable=self.bc_forecast_cap_var, width=6).grid(row=1, column=12, padx=2, pady=(4, 2), sticky="w")
 
         save_btn = ttk.Button(form, text="PNG保存", command=self._on_save_booking_curve_png)
         save_btn.grid(row=1, column=7, padx=4, pady=(4, 2))
@@ -2073,14 +1971,10 @@ class BookingCurveApp(tk.Tk):
             command=lambda: self._on_bc_shift_month(+12),
         ).pack(side=tk.LEFT, padx=2)
 
-        self.btn_build_lt = ttk.Button(
-            nav_right, text="LT_DATA(4ヶ月)", command=self._on_build_lt_data
-        )
+        self.btn_build_lt = ttk.Button(nav_right, text="LT_DATA(4ヶ月)", command=self._on_build_lt_data)
         self.btn_build_lt.pack(side=tk.LEFT, padx=4)
 
-        self.btn_build_lt_range = ttk.Button(
-            nav_right, text="LT_DATA(期間指定)", command=self._on_build_lt_data_range
-        )
+        self.btn_build_lt_range = ttk.Button(nav_right, text="LT_DATA(期間指定)", command=self._on_build_lt_data_range)
         self.btn_build_lt_range.pack(side=tk.LEFT, padx=4)
 
         draw_btn = ttk.Button(nav_right, text="描画", command=self._on_draw_booking_curve)
@@ -2153,9 +2047,7 @@ class BookingCurveApp(tk.Tk):
             return
 
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        filename = (
-            f"booking_curve_{hotel_tag}_{target_month}_wd{weekday_int}_{model}_asof_{asof_tag}.png"
-        )
+        filename = f"booking_curve_{hotel_tag}_{target_month}_wd{weekday_int}_{model}_asof_{asof_tag}.png"
         out_path = OUTPUT_DIR / filename
 
         try:
@@ -2171,17 +2063,13 @@ class BookingCurveApp(tk.Tk):
         base_ym = self.bc_month_var.get().strip()
 
         if len(base_ym) != 6 or not base_ym.isdigit():
-            messagebox.showerror(
-                "LT_DATA生成エラー", "対象月は 6桁の数字 (YYYYMM) で入力してください。"
-            )
+            messagebox.showerror("LT_DATA生成エラー", "対象月は 6桁の数字 (YYYYMM) で入力してください。")
             return
 
         try:
             base_period = pd.Period(f"{base_ym[:4]}-{base_ym[4:]}", freq="M")
         except Exception:
-            messagebox.showerror(
-                "LT_DATA生成エラー", "対象月は 6桁の数字 (YYYYMM) で入力してください。"
-            )
+            messagebox.showerror("LT_DATA生成エラー", "対象月は 6桁の数字 (YYYYMM) で入力してください。")
             return
 
         target_months = [(base_period + i).strftime("%Y%m") for i in range(4)]
@@ -2216,14 +2104,10 @@ class BookingCurveApp(tk.Tk):
 
         messagebox.showinfo(
             "LT_DATA生成",
-            "LT_DATA CSV の生成が完了しました。\n"
-            f"対象月: {', '.join(target_months)}\n"
-            "必要に応じて「最新に反映」ボタンで ASOF を更新してください。",
+            f"LT_DATA CSV の生成が完了しました。\n対象月: {', '.join(target_months)}\n必要に応じて「最新に反映」ボタンで ASOF を更新してください。",
         )
 
-    def _ask_month_range(
-        self, initial_start: str, initial_end: str | None = None
-    ) -> tuple[str, str] | None:
+    def _ask_month_range(self, initial_start: str, initial_end: str | None = None) -> tuple[str, str] | None:
         dialog = tk.Toplevel(self)
         dialog.title("LT_DATA生成")
         dialog.transient(self)
@@ -2304,9 +2188,7 @@ class BookingCurveApp(tk.Tk):
             start_p = pd.Period(f"{start_ym[:4]}-{start_ym[4:]}", freq="M")
             end_p = pd.Period(f"{end_ym[:4]}-{end_ym[4:]}", freq="M")
         except Exception:
-            messagebox.showerror(
-                "LT_DATA生成エラー", "開始月と終了月は YYYYMM 形式で入力してください。"
-            )
+            messagebox.showerror("LT_DATA生成エラー", "開始月と終了月は YYYYMM 形式で入力してください。")
             return
 
         if end_p < start_p:
@@ -2327,9 +2209,7 @@ class BookingCurveApp(tk.Tk):
 
         confirm = messagebox.askokcancel(
             "LT_DATA生成確認",
-            f"{hotel_tag} の LT_DATA を\n"
-            f"{target_months[0]}〜{target_months[-1]} の {len(target_months)}ヶ月分で再生成します。\n"
-            "よろしいですか？",
+            f"{hotel_tag} の LT_DATA を\n{target_months[0]}〜{target_months[-1]} の {len(target_months)}ヶ月分で再生成します。\nよろしいですか？",
         )
         if not confirm:
             return
@@ -2396,11 +2276,7 @@ class BookingCurveApp(tk.Tk):
             if asof_dt > latest_dt:
                 use_latest = messagebox.askyesno(
                     "確認",
-                    (
-                        f"最新ASOF は {latest_str} です。\n"
-                        f"選択中の ASOF ({as_of_date}) は最新より未来の日付です。\n\n"
-                        "最新ASOFに変更して描画しますか？"
-                    ),
+                    (f"最新ASOF は {latest_str} です。\n選択中の ASOF ({as_of_date}) は最新より未来の日付です。\n\n最新ASOFに変更して描画しますか？"),
                 )
                 if use_latest:
                     asof_dt = latest_dt
@@ -2443,9 +2319,7 @@ class BookingCurveApp(tk.Tk):
         if avg_curve is not None:
             avg_series = pd.Series(avg_curve)
         else:
-            avg_series = (
-                df_week.mean(axis=0, skipna=True) if not df_week.empty else pd.Series(dtype=float)
-            )
+            avg_series = df_week.mean(axis=0, skipna=True) if not df_week.empty else pd.Series(dtype=float)
 
         if forecast_curve is not None:
             forecast_series = pd.Series(forecast_curve)
@@ -2617,9 +2491,7 @@ class BookingCurveApp(tk.Tk):
         data は get_booking_curve_data(...) の戻り値。
         """
 
-        fc_cap_str = (
-            self.bc_forecast_cap_var.get().strip() if hasattr(self, "bc_forecast_cap_var") else ""
-        )
+        fc_cap_str = self.bc_forecast_cap_var.get().strip() if hasattr(self, "bc_forecast_cap_var") else ""
         forecast_cap = None
         try:
             if fc_cap_str:
@@ -2764,14 +2636,10 @@ class BookingCurveApp(tk.Tk):
         ttk.Label(form, text="対象月 (YYYYMM):").grid(row=0, column=2, sticky="w")
         current_month = date.today().strftime("%Y%m")
         self.mc_month_var = tk.StringVar(value=current_month)
-        ttk.Entry(form, textvariable=self.mc_month_var, width=8).grid(
-            row=0, column=3, padx=4, pady=2
-        )
+        ttk.Entry(form, textvariable=self.mc_month_var, width=8).grid(row=0, column=3, padx=4, pady=2)
 
         self.mc_show_prev_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(form, text="前年同月を重ねる", variable=self.mc_show_prev_var).grid(
-            row=0, column=4, padx=8, pady=2, sticky="w"
-        )
+        ttk.Checkbutton(form, text="前年同月を重ねる", variable=self.mc_show_prev_var).grid(row=0, column=4, padx=8, pady=2, sticky="w")
 
         save_btn = ttk.Button(form, text="PNG保存", command=self._on_save_monthly_curve_png)
         save_btn.grid(row=0, column=5, padx=4, pady=2)

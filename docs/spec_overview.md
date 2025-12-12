@@ -136,60 +136,58 @@ PMS 生データを正規化し、ホテル共通で扱える形として定義�
 
 ## 4. 現在のバージョン構成
 
-ここでは、フォルダ構成と役割、バージョンごとの主な変更点をまとめます。
-
-### 4-1. フォルダ構成と役割（概要）
-
-`BookingCurveLab/`（EXE 配布版）および `src/`（開発版）を含む構造は概ね以下のとおりです。
-
-- `BookingCurveLab.exe`
-  - GUI アプリ本体（一般ユーザーはこれのみ利用）。
-- `config/`
-  - `hotels.json`：ホテルごとの設定（表示名・データサブフォルダ・キャパシティ等）。
-- `data/`
-  - PMS から出力した **時系列オンハンド Excel** や、生の PMS データ置き場。
-  - サブフォルダは `config/hotels.json` の `data_subdir` と対応。
-- `output/`
-  - `lt_data_YYYYMM_<hotel>.csv`：LTデータ
-  - `monthly_curve_YYYYMM_<hotel>.csv`：月次ブッキングカーブ
-  - `forecast_*.csv`：日別フォーキャスト
-  - `evaluation_*.csv`：モデル評価結果
-  - `daily_snapshots_<hotel>.csv`：標準日別スナップショット（開発版で追加）
-- `booking_curve/`（開発版）
-  - LT構築：`lt_builder.py`
-  - 予測モデル：`forecast_simple.py`
-  - 評価ロジック：`evaluation_multi.py`
-  - セグメント調整：`segment_adjustment.py`
-  - GUI バックエンド：`gui_backend.py`
-  - その他共通ユーティリティ
-- `gui_main.py`（開発版）
-  - Tkinter ベースの GUI エントリーポイント。
-- `run_*.py`（開発版）
-  - CLI ランナー（LT生成・評価バッチ・日別FCバッチなど）。
-  - 可能な限り `booking_curve/` モジュールを呼び出す薄いラッパーとして実装する方針。
-
-### 4-2. バージョン別の主な変更点
+### 4-1. バージョン一覧
 
 #### v0.6.3
 
-- 月次ブッキングカーブ生成ロジックを刷新。
-  - PMS 時系列 OH データから **列合計を直接集計**し、
-  - `monthly_curve_YYYYMM_<hotel>.csv` を出力。
-  - GUI「月次カーブ」タブはこの CSV を優先して使用。
-- 宿泊月合計とグラフ最終値の不整合を解消。
+- 対象ホテルは大国町・関西・ドーム前の 3 館。
+- LT_DATA 生成はすべて「時系列 Excel ベース」。
+  - `data/timeseries/<hotel>/` 配下の「日別オンハンド推移」Excel を読み取り、
+    `build_lt_data_from_timeseries_for_month(...)` で LT_DATA を生成。
+- 月次ブッキングカーブも、同じ時系列 Excel から直接集計して作成。
+- GUI から見た挙動：
+  - 日別カーブ / 月次カーブともに「時系列 Excel を唯一のソース」として動作。
 
-#### v0.6.4
+#### v0.6.4（`feature/standard-daily-snapshots` マージ後）
 
-- 標準日別スナップショットレイヤーを導入（インフラフェーズ）。
-  - `daily_snapshots_<hotel>.csv` を定義。
-  - `pms_adapter_nface.py`・`daily_snapshots.py`・`build_daily_snapshots_from_folder.py` を追加。
-- 既存 LT 生成・GUI・評価ロジックにはまだ直接手を入れておらず、
-  - 今後のバージョンで「LT_DATA を daily snapshots ベースへ移行」する前段階。
+- PMS（N@FACE）生データを「標準日別スナップショット CSV」に正規化するレイヤーを追加。
+  - `build_daily_snapshots_from_folder.py`
+  - `pms_adapter_nface.py`
+  - `daily_snapshots.py`
+- 出力される標準 CSV：
+  - `daily_snapshots_<hotel_id>.csv`
+  - カラム：`hotel_id`, `as_of_date`, `stay_date`, `rooms_oh`, `pax_oh`, `revenue_oh`
+- この時点では **LT_DATA / 月次カーブは依然として時系列 Excel ベース**。
+  - 標準スナップショットは「あくまで次フェーズ用のインフラ」。
+
+#### v0.6.5（想定：`feature/lt-from-daily-snapshots` マージ後）
+
+- **LT_DATA を daily_snapshots ベースで生成できるルートを追加。**
+  - `booking_curve.lt_builder.build_lt_data_from_daily_snapshots_for_month(...)`
+  - `run_build_lt_csv.py` の `run_build_lt_for_gui(...)` に `source` 引数を追加。
+    - `source="timeseries"` … 既存の Excel ベース
+    - `source="daily_snapshots"` … 新しい snapshots ベース
+- **月次ブッキングカーブも daily_snapshots ベースに対応。**
+  - `build_monthly_curve_from_daily_snapshots_for_month(...)` を追加。
+  - ASOF ごとの月累計を算出し、LT 軸（120〜0, ACT）に並べ替える挙動は、
+    v0.6.3 の時系列ルートと数値一致することを確認済み。
+- **ACT(-1) の定義を整理。**
+  - `stay_date < max_as_of_date` のとき：
+    - 最初の `as_of_date > stay_date` の月累計を ACT(-1) として採用。
+      - 例）`stay_date=12/8` に対して、`as_of_date=12/9` のスナップショットが ACT。
+  - `stay_date >= max_as_of_date` のとき：
+    - ACT(-1) は `NaN` のまま保持（未着地）。
+- 互換性：
+  - LT_DATA の列構造（`lt=-1,0,1,...,120`）と CSV 形式は従来と互換。
+  - 月次カーブ CSV も、ファイル名・形式とも従来の `monthly_curve_YYYYMM_<hotel>.csv` を踏襲。
+- GUI から見た挙動：
+  - 現状は **LT_DATA / 月次カーブの生成ルートが切り替え可能になった段階**。
+  - 欠損値の補完（NOCB）はまだ実装しておらず、生の NaN がそのままグラフに反映される。
+    → これは次フェーズ（欠損 NOCB ブランチ）で対応する。
+
 
 #### 今後の予定（概要）
 
-- `feature/lt-from-daily-snapshots`：
-  - daily snapshots から LT_DATA を生成する新ルートを追加。
 - その後のフェーズ：
   - ADR モデルを組み込んだ日別売上予測
   - ペース比較＋料金レコメンド

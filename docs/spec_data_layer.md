@@ -104,15 +104,20 @@
 
 ### 2-1. 役割と位置づけ
 
-LT_DATA は、**宿泊日×LT（Lead Time）** のブッキングカーブを表現する中核データです。  
+LT_DATA は、**宿泊日 × LT（Lead Time）** のブッキングカーブを表現する中核データです。  
 主な利用先：
 
 - GUI の日別ブッキングカーブタブ
 - モデル評価（各モデルの月次 Forecast 元）
 - 日別 Forecast の Rooms 部分（将来の売上予測のベース）
 
-現状は「PMS 時系列 Excel → `lt_builder.build_lt_data()`」のルートが稼働中。  
-今後は「daily snapshots → LT_DATA」のルートを追加し、徐々に移行していく想定です。
+現在は、次の 2 つの生成ルートが並存している。
+
+1. **PMS 時系列 Excel → LT_DATA（従来ルート / legacy）**
+2. **daily snapshots → LT_DATA（新ルート / 推奨）**
+
+どちらのルートも、最終的には同じフォーマットの `lt_data_YYYYMM_<hotel>.csv` を出力する。  
+今後は daily snapshots ルートを標準とし、時系列 Excel ルートは互換性維持と比較用に残す方針。
 
 ---
 
@@ -121,13 +126,13 @@ LT_DATA は、**宿泊日×LT（Lead Time）** のブッキングカーブを表
 - ファイル例：`output/lt_data_YYYYMM_<hotel>.csv`
   - 例：`lt_data_202512_daikokucho.csv`
 - インデックス：`stay_date`（宿泊日）
-  - 文字列 or 日付文字列だが、読み込み側では `pd.to_datetime` で扱う前提。
-- 列：LT 値（整数）  
+  - 文字列 or 日付文字列だが、読み込み側では `pd.to_datetime` 前提。
+- 列：LT 値（整数）
   - 範囲：`-1, 0, 1, ..., max_lt`
     - `-1`：ACT（最終実績）
     - `0..max_lt`：宿泊日から見たリードタイム日数
   - 実装上の並び：
-    - 内部処理中は `-1..max_lt` 昇順で補間を行い、
+    - 内部処理中は `-1..max_lt` 昇順で扱い、
     - 最終的な出力は `max_lt..-1` の降順（`lt_desc_columns`）に並び替えて保存。
 
 #### セルの意味
@@ -135,14 +140,22 @@ LT_DATA は、**宿泊日×LT（Lead Time）** のブッキングカーブを表
 `lt_data[stay_date][lt]`：
 
 - `lt >= 0`：  
-  「**LT = lt の時点での ON HAND 室数**」
+  「**LT = lt の時点での、当該宿泊月の月累計 Rooms**」
+  - 例：`lt=30` なら「宿泊月末から 30 日前 ASOF における、その宿泊月の累計予約室数」。
 - `lt = -1`：  
   「**実績最終値（ACT）**」。  
-  ASOF を越えた未来 LT に実績が入ることはない。
+  - `stay_date` より後の日付に ASOF が存在する場合  
+    → 最初に出現する `as_of_date > stay_date` の月累計 Rooms を ACT として採用。  
+  - `stay_date` 以降の ASOF が存在しない場合  
+    → ACT は `NaN` のまま（未着地）。
 
 #### 欠損と補間
 
-`lt_builder.build_lt_data()` のロジック（要約）：
+LT_DATA の「欠損セル（NaN）」は、ルートごとに扱いが異なる。
+
+##### (A) 時系列 Excel ルート（従来）
+
+`lt_builder.build_lt_data_from_timeseries_for_month(...)` の要約：
 
 1. 原データ（宿泊日×取得日）から、`stay_date`, `lt`, `rooms` のレコードを生成。
 2. `pivot_table(index="stay_date", columns="lt", values="rooms", aggfunc="last")`。
@@ -152,43 +165,78 @@ LT_DATA は、**宿泊日×LT（Lead Time）** のブッキングカーブを表
 5. 四捨五入して `Int64` 型にキャスト。
 6. 列を `max_lt..-1` の降順で並べ替えた DataFrame を返す。
 
-※ 同一 (stay_date, lt) に複数レコードがある場合は、aggfunc="last" で「後から生成された値」を優先する（PMS再出力などの再取り込みを想定）。
+このため legacy ルートでは：
 
-このため：
+- 観測されていない LT の値も、同一宿泊日の他 LT から補間値が入る。
+- PMS 側に一切データがない宿泊日は、全 LT が NaN のまま残る。
 
-- **観測されていない LT の値は、同一宿泊日の他 LT から補間**される。
-- ただし、データが 1 つもない宿泊日は全 LT が NaN のまま。
+##### (B) daily snapshots ルート（新）
+
+`build_lt_data_from_daily_snapshots_for_month(...)` の要約：
+
+1. `read_daily_snapshots_for_month(hotel_id, target_month)` で、
+   対象月の `as_of_date × stay_date` 行を取得。
+2. ASOF ごとに「当該宿泊月の月累計 Rooms」を計算。
+3. `LT = (stay_date - as_of_date).days` を計算し、`LT > max_lt` は切り捨て。
+4. `stay_date × lt` でピボット（aggfunc="last"）。  
+   → この時点では **補間を行わず、存在しないセルは NaN のまま**。
+5. ACT(-1) 列を構成：
+   - `stay_date < max_as_of_date` の行だけ、
+     最初に現れる `as_of_date > stay_date` の月累計を ACT(-1) に設定。
+   - `stay_date >= max_as_of_date` の行は ACT(-1) を NaN のまま保持。
+6. 列を `max_lt..-1` の降順に並べ替えて返す。
+
+→ **daily snapshots ルートでは、データレイヤーで補間はしない。**  
+　NaN は「そもそも snapshots 上に観測がなかった LT」として、そのまま保持する。  
+　NOCB 等の補完は、ビュー / 評価レイヤー側（グラフ描画・モデル評価）で行う方針。
 
 ---
 
 ### 2-3. LT_DATA の生成ルート
 
-#### (1) 時系列 Excel から
+#### (1) 時系列 Excel から（legacy）
 
 - 前提フォーマット：
   - 1 行目：各列の取得日（Excel シリアル）
   - 1 列目：各行の宿泊日（Excel シリアル or 日付）
   - 2 行目以降：OH 室数
 - フロー：
-  1. `load_time_series_excel()`（仮）で DataFrame に読み込み。
+  1. `load_time_series_excel()` 相当の処理で DataFrame に読み込み。
   2. 対象宿泊月だけをフィルタ。
-  3. `lt_builder.build_lt_data(df, max_lt)` を実行。
+  3. `build_lt_data_from_timeseries_for_month(df, max_lt)` を実行。
   4. `lt_data_YYYYMM_<hotel>.csv` として書き出し。
 
-（CLI 実行は `run_build_lt_csv.py` 相当のスクリプトが担当）
+（CLI 実行は `run_build_lt_csv.py` の `source="timeseries"` が担当）
 
-#### (2) daily snapshots から（今後）
+#### (2) daily snapshots から（新・推奨）
 
-- フロー（想定）：
-  1. `read_daily_snapshots_for_month(hotel_id, target_month)` で対象月の `(as_of, stay_date)` 行を取得。
-  2. `lt = (stay_date - as_of_date).days` を計算。
-     - `lt < 0` の場合は `-1` にまとめる（ACT 相当）。
-     - `lt > max_lt` は無視。
-  3. `(stay_date, lt)` ごとに `rooms_oh` を集計（通常は `last` or `sum`）。
-  4. `build_lt_data` 同様に pivot → 補間 → 四捨五入 → DataFrame。
-  5. 既存の LT_DATA と同じフォーマットで `lt_data_YYYYMM_<hotel>.csv` を出力。
+- 入力：`output/daily_snapshots_<hotel_id>.csv`
 
-→ これにより、「どの PMS でも daily snapshots さえ作れば LT_DATA が再生成できる」状態を目指す。
+- フロー：
+
+  1. `read_daily_snapshots_for_month(hotel_id, target_month)` で  
+     `stay_date` が `target_month` に属するレコードのみ抽出。
+
+  2. 各レコードについて `LT = (stay_date - as_of_date).days` を計算。
+     - `LT > max_lt` は無視（切り捨て）。
+     - `LT >= 0` のレコードは「LT テーブル用」のデータとして残す。
+     - `LT < 0`（D+ 側）のレコードは、後で ACT(-1) を組み立てるときだけ使う。
+
+  3. `LT >= 0` のレコードについて、  
+     `(stay_date, LT)` ごとに `rooms = rooms_oh` を `last` で集計し、  
+     `pivot(index="stay_date", columns="lt")` で **宿泊日×LT テーブル** を作成。
+     - この段階では補間は行わず、観測がない LT は `NaN` のまま。
+
+  4. ACT(-1) 列を追加する：
+     - 各 `stay_date` について `as_of_date > stay_date` の D+ スナップショットを探し、
+       - あれば「一番早い `as_of_date` の `rooms_oh`」を ACT(-1) として採用。
+       - なければ ACT(-1) は `NaN`（未着地）のまま残す。
+
+  5. 列を `max_lt..-1` の降順（`lt_desc_columns`）に並べ替え、  
+     `lt_data_YYYYMM_<hotel>.csv` として出力。
+
+→ これにより「PMS 生データ → daily_snapshots → LT_DATA」が一貫パイプラインとして完成する。  
+　時系列 Excel がなくても、daily_snapshots さえ生成できれば LT_DATA を再作成できる。
 
 ---
 
@@ -198,25 +246,39 @@ LT_DATA と並ぶ、もう一つの重要な LT 系データが **月次ブッ�
 これは「宿泊月トータルの Rooms を LT ごとに集計したカーブ」です。
 
 - ファイル例：`output/monthly_curve_YYYYMM_<hotel>.csv`
-- インデックス：`lt`（整数、max_lt..-1 の降順）
+- インデックス：`lt`（整数、`max_lt..-1` の降順）
 - 列：
-  - `rooms_total`：当該 LT 時点での宿泊月累計 Rooms
+  - `rooms_total`：当該 LT 時点での「宿泊月の累計 Rooms」
 
-`lt_builder.build_monthly_curve_from_timeseries()`（現行）は、  
-**PMS 時系列 Excel の「列合計」をベースに** 以下を行います：
+#### 概念（ASOF ベース）
 
-1. 各取得日列について、対象宿泊月の OH 室数を列合計。
-2. 取得日から見た **月末までの残日数** を LT として計算。
-   - `lt < 0` は `-1`（ACT）として扱う。
-   - `lt > max_lt` は無視。
-3. LT ごとに `rooms_total` を加算。
-4. `lt` 降順の DataFrame（1 列）として返却。
+- ある宿泊月（例：2025-12）の月次カーブは、
+  各 ASOF 時点での「その宿泊月の累計予約室数」を LT 軸に並べ替えたもの。
+- LT の定義：
+  - `LT = (month_end_date - as_of_date).days`
+  - `LT < 0` は `-1`（ACT）としてまとめる。
+    - 例：12 月の ACT は、翌 1/1 ASOF の月累計に相当。
+  - `LT > max_lt` は集計から除外。
 
-GUI の月次カーブタブは、この `monthly_curve_YYYYMM_<hotel>.csv` を優先的に読み込み、  
-最終値が宿泊月合計と一致することを保証しています。
+#### 生成ルート
 
-（現状は時系列Excelをソースとするが、将来的には daily snapshots からも同等の monthly_curve を生成できるように設計する。）
+1. **時系列 Excel から**
+   - 各取得日列について、対象宿泊月の OH 室数を列合計。
+   - その列合計を「その ASOF における月累計 Rooms」とみなし、上記の LT 定義で `lt` に割り付ける。
+   - `lt` ごとに `rooms_total` を加算し、`max_lt..-1` の降順 DataFrame として出力。
 
+2. **daily snapshots から（新ルート）**
+   - `daily_snapshots_<hotel_id>.csv` から対象月レコードを読み込み。
+   - `as_of_date` ごとに、当該宿泊月の Rooms を合計（＝その ASOF における月累計）。
+   - あとは時系列ルートと同じく、`LT = (month_end_date - as_of_date).days` で LT に割り付け、
+     `lt` ごとに `rooms_total` を加算して出力。
+
+現状の実装では：
+
+- 時系列ルート・daily snapshots ルートともに、同じ ASOF 定義で集計しており、
+  `monthly_curve_YYYYMM_<hotel>.csv` の数値は両ルートで一致することを確認済み。
+- GUI の月次カーブタブは、この `monthly_curve_YYYYMM_<hotel>.csv` を読み込んで描画する。  
+  欠損セルが存在する場合でも、**monthly_curve レベルでは補間は行わない**（描画時に NOCB 適用予定）。
 ---
 
 ## 3. 評価用データ

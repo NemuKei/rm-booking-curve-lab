@@ -17,41 +17,54 @@
 
 ### タスク
 
-- [ ] **P1-01** `lt_builder.py` に `build_lt_data_from_daily_snapshots_for_month(...)` を追加する  
-  - 引数：`hotel_id` / `target_month(YYYY-MM)` / `max_lt` など  
-  - 入力：`daily_snapshots_<hotel>.csv` から対象月の `stay_date` を抽出  
-  - 出力：既存 LT_DATA CSV と互換性のある `DataFrame`（`stay_date`×`lt`）を返す
-
-- [ ] **P1-02** daily snapshots 読み出し用のヘルパー関数を実装する  
-  - 場所：`daily_snapshots.py` もしくは新規モジュール  
-  - 用途：`hotel_id` / `target_month` から対象範囲の `daily_snapshots` を取得する共通関数
-
-- [ ] **P1-03** `run_build_lt_csv.py` に `source` パラメータを追加する  
-  - `"timeseries"` / `"daily_snapshots"` を指定可能にする  
-  - デフォルトは互換性維持のため `"timeseries"` とする  
-  - CLI 引数または設定ファイルで切り替えられるようにする
-
-- [ ] **P1-04** 旧LTルートとの比較スクリプトを追加する  
-  - 例：`compare_lt_from_timeseries_vs_snapshots.py`  
-  - 入力：旧LT_DATA CSV、新LT_DATA CSV  
-  - 出力：
-    - `LT×stay_date` ごとの差分統計（平均・最大・件数）  
-    - 大きくズレているセルの一覧CSV
-
-- [ ] **P1-05** 実データでの比較検証を行う  
-  - 対象：1〜2ヶ月分 × 複数ホテル  
-  - 手順：
-    - 旧ルート・新ルート双方で LT_DATA を生成  
-    - 差分スクリプトで比較  
-    - 実務上許容できるかどうかをコメントにまとめる
-
-- [ ] **P1-06** 差分検証結果を仕様に反映する  
-  - `spec_data_layer.md` に「timeseries ルートと snapshots ルートの差分・注意点」を追記  
-  - 必要に応じて `spec_models.md` にも前提を追加
-
+- [x] **P1-01** `lt_builder.py` に `build_lt_data_from_daily_snapshots_for_month(...)` を追加する  
+  - daily_snapshots から対象月の `stay_date` を抽出し、`stay_date × lt` テーブルを生成する。
+- [x] **P1-02** daily snapshots 読み出し用のヘルパー関数を実装する  
+  - `read_daily_snapshots_for_month(hotel_id, target_month)` を追加済み。
+- [x] **P1-03** `run_build_lt_csv.py` から snapshots ルートを呼べるようにする  
+  - `source` 引数で `timeseries` / `daily_snapshots` を切り替え可能。
+- [x] **P1-04** 月次ブッキングカーブを snapshots ルートに対応させる  
+  - `build_monthly_curve_from_daily_snapshots_for_month(...)` を追加。
+  - v0.6.3 の時系列ルートと数値一致することを確認済み。
+- [x] **P1-05** ACT(-1) の定義を整理する  
+  - `stay_date < max_as_of_date` のみ ACT を算出（`as_of_date > stay_date` の最初の値）。  
+  - それ以外は `NaN` として保持。
+- [x] **P1-06** 差分検証結果を仕様に反映する  
+  - `spec_data_layer.md` / `spec_overview.md` を snapshots ルート前提に更新。
 - [ ] **P1-07** 将来的なデフォルト切り替えのフラグを設計する  
-  - 設定ファイル（JSON 等）に `lt_source_default` のようなキーを追加  
-  - 実際の切替は Phase2 以降でもよいが、設計だけ先に決めておく
+  - 設定ファイル（JSON 等）に `lt_source_default` のようなキーを追加する案を検討。  
+  - 現状は GUI から `source` を明示指定する運用で暫定対応。
+
+
+---
+## Phase 1.5: 欠損値 NOCB 補完
+
+### 目的
+- LT_DATA に残した「生の NaN」を、
+  ビュー / 評価レイヤーで一貫して NOCB 補完できるようにする。
+- 欠損の位置と補完範囲を可視化し、どこまで実データかを把握できるようにする。
+
+### タスク
+
+- [ ] **P1.5-01** NOCB 補完ヘルパーを実装する  
+  - `booking_curve.utils` などに以下の関数を用意：  
+    - `apply_nocb_along_lt(df, max_gap=None)`  
+      - 行：`stay_date`、列：`lt` を想定。  
+      - 各 `stay_date` 行について `lt` 昇順に NOCB を適用。  
+      - `max_gap=None` の場合はギャップ無制限で補完。  
+      - `max_gap` に数値を指定した場合、そのギャップを超える連続 NaN は補完せず NaN のまま残す。
+- [ ] **P1.5-02** 日別ブッキングカーブ描画に NOCB を適用する  
+  - GUI の日別カーブ描画前に `apply_nocb_along_lt` を適用。  
+  - 別途「raw（補完なし）」を選べる設計も検討する。
+- [ ] **P1.5-03** 月次ブッキングカーブ描画に NOCB を適用する  
+  - 月次カーブ用の LT_DATA / monthly_curve 読み込み後に NOCB を適用。  
+  - 欠損による折れ線の途切れが消えることを確認。
+- [ ] **P1.5-04** 欠損マップの出力機能  
+  - `stay_date × lt` の NaN/非 NaN を 0/1 マスクとして CSV または PNG で出力。  
+  - どの LT / 宿泊日で実データが存在しないかを一目で確認できるようにする。
+- [ ] **P1.5-05** 評価ロジックへの反映  
+  - モデル評価に使うデータにも `apply_nocb_along_lt` を適用するかどうかをオプション化。  
+  - 「補完あり」「補完なし」で評価値がどう変わるかを比較できるようにする。
 
 ---
 

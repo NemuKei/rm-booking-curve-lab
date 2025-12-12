@@ -76,6 +76,7 @@ class BookingCurveApp(tk.Tk):
             initial_hotel = DEFAULT_HOTEL
         self.hotel_var = tk.StringVar(value=initial_hotel)
         self.hotel_var.trace_add("write", self._on_hotel_var_changed)
+        self.lt_source_var = tk.StringVar(value="daily_snapshots")
 
         # モデル評価タブ用の状態変数
         self.model_eval_df: Optional[pd.DataFrame] = None
@@ -1971,6 +1972,16 @@ class BookingCurveApp(tk.Tk):
             command=lambda: self._on_bc_shift_month(+12),
         ).pack(side=tk.LEFT, padx=2)
 
+        ttk.Label(nav_right, text="LTソース:").pack(side=tk.LEFT, padx=(4, 2))
+        self.lt_source_combo = ttk.Combobox(
+            nav_right,
+            textvariable=self.lt_source_var,
+            state="readonly",
+            width=14,
+        )
+        self.lt_source_combo["values"] = ("daily_snapshots", "timeseries")
+        self.lt_source_combo.pack(side=tk.LEFT, padx=2)
+
         self.btn_build_lt = ttk.Button(nav_right, text="LT_DATA(4ヶ月)", command=self._on_build_lt_data)
         self.btn_build_lt.pack(side=tk.LEFT, padx=4)
 
@@ -2082,7 +2093,8 @@ class BookingCurveApp(tk.Tk):
             return
 
         try:
-            run_build_lt_data_for_gui(hotel_tag, target_months)
+            lt_source = self.lt_source_var.get() or "daily_snapshots"
+            run_build_lt_data_for_gui(hotel_tag, target_months, source=lt_source)
         except Exception as e:
             messagebox.showerror(
                 "LT_DATA生成エラー",
@@ -2215,7 +2227,8 @@ class BookingCurveApp(tk.Tk):
             return
 
         try:
-            run_build_lt_data_for_gui(hotel_tag, target_months)
+            lt_source = self.lt_source_var.get() or "daily_snapshots"
+            run_build_lt_data_for_gui(hotel_tag, target_months, source=lt_source)
         except Exception as e:
             messagebox.showerror(
                 "LT_DATA生成エラー",

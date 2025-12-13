@@ -10,6 +10,7 @@ import pandas as pd
 from booking_curve.daily_snapshots import (
     append_daily_snapshots,
     normalize_daily_snapshots_df,
+    upsert_daily_snapshots_range,
 )
 
 # layout="auto" 時は A列の日付行の間隔から自動判定する
@@ -43,15 +44,40 @@ def _parse_asof_date(df: pd.DataFrame, file_path: Path) -> Optional[pd.Timestamp
     dt = pd.to_datetime(raw_value, errors="coerce")
 
     if pd.isna(dt):
-        m = re.search(r"(20\d{6})", file_path.name)
-        if m:
-            dt = pd.to_datetime(m.group(1), format="%Y%m%d", errors="coerce")
+        name = file_path.name
+        candidates_8 = re.findall(r"20\d{6}", name)
+        for candidate in candidates_8:
+            dt_candidate = pd.to_datetime(candidate, format="%Y%m%d", errors="coerce")
+            if not pd.isna(dt_candidate):
+                dt = dt_candidate
+                break
+
+        if pd.isna(dt):
+            fallback_candidates = re.findall(r"20\d{6}", name)
+            if fallback_candidates:
+                last_candidate = fallback_candidates[-1]
+                dt = pd.to_datetime(last_candidate, format="%Y%m%d", errors="coerce")
 
     if pd.isna(dt):
         logger.error("%s: ASOF 日付を取得できませんでした", file_path)
         return None
 
     return pd.Timestamp(dt).normalize()
+
+
+def _parse_nface_filename(file_path: Path) -> tuple[str | None, str | None]:
+    """Extract target month and as-of date from filename.
+
+    The expected pattern is "YYYYMM_YYYYMMDD". If parsing fails, returns
+    (None, None) with a warning log.
+    """
+
+    m = re.search(r"(?P<ym>\d{6})_(?P<asof>\d{8})", file_path.name)
+    if not m:
+        logger.warning("%s: ファイル名から宿泊月/ASOFを解釈できません", file_path)
+        return None, None
+
+    return m.group("ym"), m.group("asof")
 
 
 def _iter_stay_rows(df: pd.DataFrame) -> list[tuple[int, pd.Timestamp]]:
@@ -263,4 +289,107 @@ def build_daily_snapshots_from_folder(
     logger.info("%s 配下の処理が完了しました", input_path)
 
 
-__all__ = ["parse_nface_file", "build_daily_snapshots_from_folder"]
+def build_daily_snapshots_from_folder_partial(
+    input_dir: str | Path,
+    hotel_id: str,
+    target_months: list[str] | None,
+    asof_min: pd.Timestamp | str | None,
+    asof_max: pd.Timestamp | str | None,
+    stay_min: pd.Timestamp | str | None,
+    stay_max: pd.Timestamp | str | None,
+    layout: LayoutType = "auto",
+    output_dir: Optional[Path] = None,
+    glob: str = "*.xls*",
+) -> None:
+    """部分更新用にファイル名フィルタを優先するパーシャルビルド。"""
+
+    input_path = Path(input_dir)
+    if not input_path.exists() or not input_path.is_dir():
+        logger.error("%s が存在しないかディレクトリではありません", input_path)
+        return
+
+    asof_min_ts = pd.to_datetime(asof_min, errors="coerce") if asof_min is not None else None
+    asof_max_ts = pd.to_datetime(asof_max, errors="coerce") if asof_max is not None else None
+
+    if asof_min is not None and pd.isna(asof_min_ts):
+        raise ValueError("asof_min must be convertible to a valid date")
+    if asof_max is not None and pd.isna(asof_max_ts):
+        raise ValueError("asof_max must be convertible to a valid date")
+
+    candidates = list(input_path.glob(glob))
+    files = sorted(p for p in candidates if p.is_file() and p.suffix.lower() in {".xls", ".xlsx"})
+
+    logger.info(
+        "%s: partial build filters -> target_months=%s, asof_min=%s, asof_max=%s",
+        input_path,
+        target_months,
+        asof_min,
+        asof_max,
+    )
+
+    filtered_files: list[Path] = []
+    for file in files:
+        target_month_ym, asof_ymd = _parse_nface_filename(file)
+        if target_month_ym is None or asof_ymd is None:
+            continue
+
+        if target_months is not None and target_month_ym not in target_months:
+            continue
+
+        asof_ts = pd.to_datetime(asof_ymd, format="%Y%m%d", errors="coerce")
+        if pd.isna(asof_ts):
+            logger.warning("%s: ASOF を日付に変換できないためスキップします", file)
+            continue
+
+        if asof_min_ts is not None and asof_ts < asof_min_ts:
+            continue
+        if asof_max_ts is not None and asof_ts > asof_max_ts:
+            continue
+
+        filtered_files.append(file)
+
+    logger.info("%s: partial build 対象ファイル数=%s", input_path, len(filtered_files))
+
+    if not filtered_files:
+        logger.info("%s: 対象ファイルがありません", input_path)
+        return
+
+    df_list: list[pd.DataFrame] = []
+    for file in filtered_files:
+        try:
+            df = parse_nface_file(
+                file,
+                hotel_id=hotel_id,
+                layout=layout,
+                output_dir=output_dir,
+                save=False,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("%s の処理中にエラーが発生しました: %s", file, exc)
+            continue
+
+        if not df.empty:
+            df_list.append(df)
+
+    if not df_list:
+        logger.info("%s: 対象ファイルがありません (Excel 解析結果が空)", input_path)
+        return
+
+    df_new = pd.concat(df_list, ignore_index=True)
+    output_path = upsert_daily_snapshots_range(
+        df_new,
+        hotel_id=hotel_id,
+        asof_min=asof_min_ts,
+        asof_max=asof_max_ts,
+        stay_min=stay_min,
+        stay_max=stay_max,
+        output_dir=output_dir,
+    )
+    logger.info("%s: %s 件のファイルから部分更新を実施しました -> %s", input_path, len(df_list), output_path)
+
+
+__all__ = [
+    "parse_nface_file",
+    "build_daily_snapshots_from_folder",
+    "build_daily_snapshots_from_folder_partial",
+]

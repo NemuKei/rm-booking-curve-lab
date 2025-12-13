@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import tkinter as tk
 from datetime import date
 from tkinter import messagebox, ttk
@@ -1950,7 +1951,12 @@ class BookingCurveApp(tk.Tk):
         nav_left = ttk.Frame(nav_frame)
         nav_left.pack(side=tk.LEFT)
         nav_right = ttk.Frame(nav_frame)
-        nav_right.pack(side=tk.LEFT, padx=16)
+        nav_right.pack(side=tk.LEFT, padx=16, fill=tk.X, expand=True)
+
+        row1_frame = ttk.Frame(nav_right)
+        row1_frame.pack(side=tk.TOP, fill=tk.X, anchor="w")
+        row2_frame = ttk.Frame(nav_right)
+        row2_frame.pack(side=tk.TOP, fill=tk.X, anchor="e", pady=(4, 0))
 
         ttk.Label(nav_left, text="月移動:").pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(
@@ -1974,9 +1980,9 @@ class BookingCurveApp(tk.Tk):
             command=lambda: self._on_bc_shift_month(+12),
         ).pack(side=tk.LEFT, padx=2)
 
-        ttk.Label(nav_right, text="LTソース:").pack(side=tk.LEFT, padx=(4, 2))
+        ttk.Label(row1_frame, text="LTソース:").pack(side=tk.LEFT, padx=(4, 2))
         self.lt_source_combo = ttk.Combobox(
-            nav_right,
+            row1_frame,
             textvariable=self.lt_source_var,
             state="readonly",
             width=14,
@@ -1985,20 +1991,23 @@ class BookingCurveApp(tk.Tk):
         self.lt_source_combo.pack(side=tk.LEFT, padx=2)
 
         self.chk_update_snapshots = ttk.Checkbutton(
-            nav_right,
+            row1_frame,
             text="LT生成時にdaily snapshots更新",
             variable=self.update_daily_snapshots_var,
         )
         self.chk_update_snapshots.pack(side=tk.LEFT, padx=4)
 
-        self.btn_build_lt = ttk.Button(nav_right, text="LT_DATA(4ヶ月)", command=self._on_build_lt_data)
+        self.btn_build_lt = ttk.Button(row2_frame, text="LT_DATA(4ヶ月)", command=self._on_build_lt_data)
         self.btn_build_lt.pack(side=tk.LEFT, padx=4)
 
-        self.btn_build_lt_range = ttk.Button(nav_right, text="LT_DATA(期間指定)", command=self._on_build_lt_data_range)
+        self.btn_build_lt_range = ttk.Button(row2_frame, text="LT_DATA(期間指定)", command=self._on_build_lt_data_range)
         self.btn_build_lt_range.pack(side=tk.LEFT, padx=4)
 
-        draw_btn = ttk.Button(nav_right, text="描画", command=self._on_draw_booking_curve)
+        draw_btn = ttk.Button(row2_frame, text="描画", command=self._on_draw_booking_curve)
         draw_btn.pack(side=tk.LEFT, padx=8)
+
+        self.lt_source_combo.bind("<<ComboboxSelected>>", self._on_lt_source_changed)
+        self._sync_daily_snapshots_checkbox_state()
 
         self.bc_best_model_label = ttk.Label(
             frame,
@@ -2078,6 +2087,18 @@ class BookingCurveApp(tk.Tk):
 
         messagebox.showinfo("保存完了", f"PNG を保存しました:\n{out_path}")
 
+    def _sync_daily_snapshots_checkbox_state(self) -> None:
+        lt_source = self.lt_source_var.get()
+
+        if lt_source == "timeseries":
+            self.update_daily_snapshots_var.set(False)
+            self.chk_update_snapshots.configure(state="disabled")
+        else:
+            self.chk_update_snapshots.configure(state="normal")
+
+    def _on_lt_source_changed(self, *_: object) -> None:
+        self._sync_daily_snapshots_checkbox_state()
+
     def _on_build_lt_data(self) -> None:
         hotel_tag = self.bc_hotel_var.get()
         base_ym = self.bc_month_var.get().strip()
@@ -2102,11 +2123,13 @@ class BookingCurveApp(tk.Tk):
             return
 
         try:
-            # 必要に応じて daily snapshots を先に更新
-            if self.update_daily_snapshots_var.get():
-                run_daily_snapshots_for_gui(hotel_tag, mode="partial")
-
             lt_source = self.lt_source_var.get() or "daily_snapshots"
+            # 必要に応じて daily snapshots を先に更新
+            if self.update_daily_snapshots_var.get() and lt_source == "daily_snapshots":
+                run_daily_snapshots_for_gui(hotel_tag, mode="partial")
+            elif self.update_daily_snapshots_var.get():
+                logging.info("LT生成: source=timeseries のため daily snapshots 更新はスキップ")
+
             run_build_lt_data_for_gui(hotel_tag, target_months, source=lt_source)
         except Exception as e:
             messagebox.showerror(
@@ -2240,10 +2263,12 @@ class BookingCurveApp(tk.Tk):
             return
 
         try:
-            if self.update_daily_snapshots_var.get():
-                run_daily_snapshots_for_gui(hotel_tag, mode="partial")
-
             lt_source = self.lt_source_var.get() or "daily_snapshots"
+            if self.update_daily_snapshots_var.get() and lt_source == "daily_snapshots":
+                run_daily_snapshots_for_gui(hotel_tag, mode="partial")
+            elif self.update_daily_snapshots_var.get():
+                logging.info("LT生成: source=timeseries のため daily snapshots 更新はスキップ")
+
             run_build_lt_data_for_gui(hotel_tag, target_months, source=lt_source)
         except Exception as e:
             messagebox.showerror(

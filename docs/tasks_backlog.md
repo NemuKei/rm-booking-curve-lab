@@ -68,6 +68,31 @@
 
 ---
 
+## Phase 1.6：daily snapshots の部分生成（partial build / upsert）
+**狙い:** 初期投入（過去2〜3年の全量）後の週次運用で、処理時間が劣化しない運用導線を作る。
+
+### 1.6.1 要件（仕様）
+- Full rebuild（全量再生成）と Partial rebuild（部分生成）の両方を提供する。
+- Partial rebuild は「指定ホテル × 指定範囲（例：as_of_date の範囲）」を対象に upsert する。
+- 重複排除キーは原則 `(hotel_id, as_of_date, stay_date)` とし、`keep="last"` を採用する。
+- daily snapshots 自体は NaN を保持（補完はビュー側）。
+
+### 1.6.2 実装タスク（候補）
+- `booking_curve/daily_snapshots.py`
+  - `build_daily_snapshots_partial(..., as_of_min, as_of_max, ...)` の追加
+  - upsert（既存CSVの該当範囲削除 → append → dedupe → save）の共通関数化
+- `build_daily_snapshots_from_folder.py`
+  - 全量/部分の CLI オプション追加（または別スクリプト）
+- GUI
+  - 「LT生成時にdaily snapshots更新」を Partial 方式へ切替（範囲は当月〜翌3ヶ月、または直近N日ASOF等）
+  - 進捗ログと、処理対象範囲の表示（誤操作防止）
+
+### 1.6.3 検証
+- 既存 daily_snapshots に対して、同一 as_of_date 範囲を partial 再生成しても値が一致すること
+- LT_DATA / monthly_curve の出力が、full と partial で一致すること（少なくとも対象範囲内）
+
+---
+
 ## Phase 2: Daily Revenue Forecast（ADRモデル＋ハイブリッド）
 
 ### 目的

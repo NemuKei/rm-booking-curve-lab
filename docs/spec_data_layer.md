@@ -83,7 +83,41 @@
 
 ---
 
-### 1-4. N@FACE アダプタとの関係（参考）
+### 1-4. 生成モード（全量再生成 / 部分生成）
+
+daily snapshots は **「唯一の正」** のレイヤーであり、LT_DATA / monthly_curve の生成元となるため、
+運用上は「いつ・どの範囲を再生成するか」を明確にする必要があります。
+
+#### (A) 全量再生成（Full rebuild）
+- 対象：指定ホテルの *元データ一式*（N@FACE 生データフォルダ）
+- 出力：`output/daily_snapshots_<hotel_id>.csv` を **原則として作り直す**
+- 用途：
+  - 初期導入（過去2〜3年分を一括投入）
+  - 元データの構造変更や、変換ロジック（アダプタ）修正後の整合性取り直し
+
+#### (B) 部分生成（Partial rebuild / Upsert）
+- 対象：指定ホテルの *元データの一部*（例：直近の ASOF のみ / 直近数ヶ月のみ）
+- 目的：週次運用などで、データ量増加による処理時間の悪化を避ける
+- 方式（推奨）：
+  1. 既存 `daily_snapshots_<hotel_id>.csv` を読み込む
+  2. 「今回再生成する対象範囲（例：as_of_date の範囲）」に該当する行を既存CSVから除外
+  3. 元データから対象範囲だけ再生成して append
+  4. `(hotel_id, as_of_date, stay_date)` をキーに `drop_duplicates(keep="last")` 等で重複排除
+  5. ソートして保存（`hotel_id, as_of_date, stay_date`）
+- 注意：
+  - daily snapshots 自体は **欠損（NaN）を保持**する（補完はビュー/評価レイヤーで行う）
+  - upsert の「対象範囲の定義」は、GUI・CLI で統一する
+
+#### (C) GUI からの再生成（LT生成時の連動）
+GUI では、LT_DATA 生成時に daily snapshots を更新できるオプションを持つ（チェックボックス等）。
+
+- `LTソース = daily_snapshots` のときのみ有効
+- 目的：検証時に「daily snapshots → LT_DATA → monthly_curve」を一気通貫で更新し、整合性確認を容易にする
+- 初期実装は Full rebuild でもよいが、運用フェーズでは Partial rebuild を優先して実装する（別ブランチで対応）。
+
+---
+
+### 1-5. N@FACE アダプタとの関係（参考）
 
 `pms_adapter_nface.py` にて、N@FACE の生 Excel を読み込み、  
 `normalize_daily_snapshots_df` → `append_daily_snapshots` を通して標準 CSV に変換する。

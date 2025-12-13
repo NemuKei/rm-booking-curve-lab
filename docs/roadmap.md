@@ -1,59 +1,54 @@
 # rm-booking-curve-lab ロードマップ（2025-12 時点）
 
-## 0. 現在地（v0.6.4 時点）
+## 0. 現在地（v0.6.6 相当）
 
 ### 完了していること
 
 - **月次ブッキングカーブ**
   - v0.6.3 にて、時系列 OH から直接集計するロジックに刷新済み。
-- **標準日別スナップショットレイヤー（v0.6.4）**
+  - v0.6.5 相当以降、daily snapshots ルートでも同等の monthly_curve を生成可能（数値一致確認済み）。
+
+- **標準日別スナップショットレイヤー（daily snapshots）**
   - `daily_snapshots_<hotel_id>.csv` を「唯一の正」とするためのインフラを整備。
-  - `pms_adapter_nface.py`：
-    - N@FACE の「無加工 / 加工A / 加工B / 加工C」Excel を標準CSVに変換。
-  - `daily_snapshots.py`：
-    - 標準CSVの I/O（append / read / 月次抽出）。
-  - `build_daily_snapshots_from_folder.py`：
-    - 生N@FACEファイル一式 → 標準CSV への一括処理スクリプト。
+  - N@FACE の複数パターンを `pms_adapter_nface.py` で吸収し、標準CSVへ正規化できる。
+
+- **LT_DATA のソース切替（timeseries / daily_snapshots）**
+  - daily snapshots から LT_DATA を生成するルートを追加し、旧ルートと共存可能。
+
+- **欠損値（NaN）補完ポリシーの整理**
+  - データレイヤーは生の NaN を保持。
+  - ビュー/評価レイヤーで LT方向の補完（LOCF）を適用して表示を滑らかにする。
+
+- **GUI運用導線の強化**
+  - GUI から LT_DATA（直近4ヶ月 / 期間指定）を生成可能。
+  - `daily_snapshots` をソースにした場合のみ、LT生成時に snapshots 更新を任意で実行可能。
+  - `timeseries` 選択時は更新オプションを無効化（無駄な処理時間を発生させない）。
 
 ### 旧仕様のまま残っている部分
 
-- LT_DATA 生成は「時系列Excelベース」のルートが現行。
-- 日別売上予測は未実装（稼働率ベースの日別FCのみ）。
-- ペースに応じた料金レコメンド機能は未実装。
+- daily snapshots の再生成が「全量前提」になりやすく、データ量増加で処理が重くなる懸念。
+- ADR / 売上の本格予測は未実装（Rooms中心）。
 
 ---
 
-## 1. フェーズ1：LT_DATA を daily_snapshots ベースに移行
-※ 将来的に各タスクには P1-01 形式のIDを付与し、docs/tasks_backlog.md と同期して管理する。
+## 1. 次のフェーズ：daily snapshots の部分生成（Partial build / Upsert）
 
-**ブランチ：`feature/lt-from-daily-snapshots`（次に着手）**
+**ブランチ：`feature/daily-snapshots-partial-build`**
 
-### 1-1. 実装タスク
+### 1-1. 目的
+- 初期投入（過去2〜3年の全量生成）後、週次運用では「必要な範囲だけ」更新できるようにして、
+  処理時間を現実的に保つ。
 
-1. `lt_builder.py` に新 LT 生成関数を追加
-   - 例：`build_lt_data_from_daily_snapshots_for_month(hotel_id, target_month, max_lt=120, output_dir=None)`
-   - 流れ：
-     - `read_daily_snapshots_for_month(hotel_id, target_month)` で月次の OH を取得。
-     - `LT = (stay_date - as_of_date).days` を計算。
-       - `LT < 0` は ACT（-1）扱い。
-       - `LT > max_lt` はスキップ。
-     - `(stay_date, LT)` ごとに `rooms_oh` を集計し、既存 LT_DATA と同じ形に pivot。
-     - 既存 `build_lt_data` と出力仕様（列名・インデックス）を完全一致させる。
+### 1-2. 方針
+- Full rebuild：初期/整合性取り直し用途
+- Partial build：日常運用用途
+  - 例：当月〜翌3ヶ月に影響する as_of_date 範囲（直近N日）だけを upsert 更新
+  - upsert は `(hotel_id, as_of_date, stay_date)` キーで last-wins
 
-2. `run_build_lt_csv.py` にソース切替を追加
-   - 例：引数 or 設定で `source="timeseries"` / `"daily_snapshots"` を切り替え。
-   - 当面はデフォルト `timeseries`、検証用に `daily_snapshots` を選択可能にする。
-
-3. 新旧LT_DATAの検証
-   - 1〜2ヶ月分（例：2025-12）で旧ルートと新ルートを比較。
-   - ランダムな日付・LT について、`rooms` が実質一致しているか確認。
-   - 差分があれば、欠損補完・月判定などどこで食い違っているかを特定。
-
-### 1-2. このフェーズ完了後の状態
-
-- 「PMS生データ → daily_snapshots → LT_DATA → 月次/日次ブッキングカーブ」という
-  **一貫パイプライン**が完成。
-- 以降のモデル改善・売上予測は、**daily snapshots 前提**で設計できる。
+### 1-3. 実装タスク（概要）
+- `daily_snapshots.py` に partial build API を追加（読み込み→範囲削除→再生成→dedupe→保存）
+- CLI と GUI の両方から同じAPIを叩ける形に統一
+- 検証：full と partial で LT_DATA / monthly_curve が一致すること（対象範囲内）
 
 ---
 

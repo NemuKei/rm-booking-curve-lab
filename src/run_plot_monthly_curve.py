@@ -150,7 +150,9 @@ def compute_monthly_curve(
     return curve
 
 
-def plot_monthly_curve(curve: pd.Series, title: str | None = None, output_path: Path | None = None) -> None:
+def plot_monthly_curve(
+    curve: pd.Series, title: str | None = None, output_path: Path | None = None
+) -> None:
     """
     月次ブッキングカーブ Series をプロットする。
     x軸: LT（日）

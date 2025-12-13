@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -10,11 +11,17 @@ import pandas as pd
 import build_calendar_features
 import run_build_lt_csv
 import run_forecast_batch
+from booking_curve.daily_snapshots import read_daily_snapshots_for_month
 from booking_curve.forecast_simple import (
     moving_average_3months,
     moving_average_recent_90days,
     moving_average_recent_90days_weighted,
 )
+from booking_curve.pms_adapter_nface import (
+    build_daily_snapshots_from_folder as nface_build_daily_snapshots_from_folder,
+)
+from booking_curve.utils import apply_nocb_along_lt
+from build_daily_snapshots_from_folder import HOTELS as NFACE_HOTELS
 from run_full_evaluation import resolve_asof_dates_for_month, run_full_evaluation_for_gui
 
 # プロジェクトルートから見た output ディレクトリ
@@ -357,10 +364,16 @@ def get_booking_curve_data(
     df_week = lt_df[lt_df.index.weekday == weekday].copy()
     df_week.sort_index(inplace=True)
 
-    lt_ticks = sorted(df_week.columns) if not df_week.empty else sorted(lt_df.columns)
+    if not df_week.empty:
+        df_week_filled = apply_nocb_along_lt(df_week, axis="columns", max_gap=None)
+    else:
+        df_week_filled = df_week.copy()
+
+    lt_ticks = sorted(df_week_filled.columns) if not df_week_filled.empty else sorted(lt_df.columns)
     lt_min, lt_max = (lt_ticks[0], lt_ticks[-1]) if lt_ticks else (-1, 90)
 
-    df_week_plot = df_week.copy()
+    # NOCB 適用済みのカーブをベースに、ASOF 境界で未来側をトリミングする
+    df_week_plot = df_week_filled.copy()
 
     asof_ts = pd.to_datetime(as_of_date)
 
@@ -429,8 +442,8 @@ def get_booking_curve_data(
             lt_max=lt_max,
         )
     else:
-        if not df_week.empty:
-            avg_curve = df_week.reindex(columns=lt_ticks).mean(axis=0, skipna=True)
+        if not df_week_filled.empty:
+            avg_curve = df_week_filled.reindex(columns=lt_ticks).mean(axis=0, skipna=True)
         else:
             avg_curve = None
 
@@ -508,14 +521,21 @@ def get_monthly_curve_data(
             raise ValueError(f"Unexpected columns in monthly curve csv: {list(df.columns)}")
 
         df = df.sort_index()
+        if not df.empty:
+            # LT 方向に NOCB を適用してギザつきを緩和（ACT(-1) は除外）
+            act_row = df.loc[[-1]] if -1 in df.index else None
+            df_no_act = df.loc[df.index != -1]
+            df_no_act = apply_nocb_along_lt(df_no_act, axis="index", max_gap=None)
+            parts = [df_no_act]
+            if act_row is not None:
+                parts.append(act_row)
+            df = pd.concat(parts).sort_index()
         return df
 
     # 2) フォールバック: LT_DATA から月次合計カーブを集計する（旧ロジック）
     lt_df = _load_lt_data(hotel_tag=hotel_tag, target_month=target_month)
     if lt_df is None or lt_df.empty:
-        raise ValueError(
-            f"No monthly curve csv and LT_DATA is empty for {hotel_tag}, {target_month}"
-        )
+        raise ValueError(f"No monthly curve csv and LT_DATA is empty for {hotel_tag}, {target_month}")
 
     # 列ラベルを int に変換できるものだけに限定
     lt_columns: dict[str, int] = {}
@@ -545,6 +565,15 @@ def get_monthly_curve_data(
     result = pd.DataFrame({"rooms_total": agg})
     result.index = result.index.map(lambda c: lt_columns[c]).astype(int)
     result = result.sort_index()
+    if not result.empty:
+        # LT 方向に NOCB を適用して欠損を補完（ACT(-1) は除外）
+        result_act = result.loc[[-1]] if -1 in result.index else None
+        result_no_act = result.loc[result.index != -1]
+        result_no_act = apply_nocb_along_lt(result_no_act, axis="index", max_gap=None)
+        parts = [result_no_act]
+        if result_act is not None:
+            parts.append(result_act)
+        result = pd.concat(parts).sort_index()
     return result
 
 
@@ -632,7 +661,6 @@ def get_daily_forecast_table(
     """
     cap = _get_capacity(hotel_tag, capacity)
 
-    # GUIモデル名から CSV prefix と列名を決定する
     model_map = {
         "avg": ("forecast", "projected_rooms"),
         "recent90": ("forecast_recent90", "projected_rooms"),
@@ -645,9 +673,9 @@ def get_daily_forecast_table(
 
     prefix, col_name = model_map[gui_model]
 
-    # as_of_date を "YYYYMMDD" に変換 (既存ファイル命名規則と揃える)
-    asof_ts = pd.to_datetime(as_of_date)
-    asof_tag = asof_ts.strftime("%Y%m%d")
+    asof_ts_raw = pd.to_datetime(as_of_date)
+    asof_ts = asof_ts_raw.normalize()
+    asof_tag = asof_ts_raw.strftime("%Y%m%d")
 
     csv_name = f"{prefix}_{target_month}_{hotel_tag}_asof_{asof_tag}.csv"
     csv_path = OUTPUT_DIR / csv_name
@@ -655,11 +683,9 @@ def get_daily_forecast_table(
         raise FileNotFoundError(f"forecast csv not found: {csv_path}")
 
     df = pd.read_csv(csv_path, index_col=0)
-    # index は stay_date
     df.index = pd.to_datetime(df.index)
     df = df.sort_index()
 
-    # 列存在チェック
     if "actual_rooms" not in df.columns:
         raise ValueError(f"{csv_path} に actual_rooms 列がありません。")
     if col_name not in df.columns:
@@ -667,50 +693,110 @@ def get_daily_forecast_table(
 
     out = pd.DataFrame(index=df.index.copy())
     out["stay_date"] = out.index
-    # 曜日 (0=Monday..6=Sunday)
     out["weekday"] = out["stay_date"].dt.weekday
-
     out["actual_rooms"] = df["actual_rooms"].astype(float)
     out["forecast_rooms"] = df[col_name].astype(float)
 
-    # 差異 (actual が NaN の場合は NaN)
-    out["diff_rooms"] = out["forecast_rooms"] - out["actual_rooms"]
-    # 差異率
-    denom = out["actual_rooms"].replace(0, pd.NA)
-    out["diff_pct"] = (out["diff_rooms"] / denom * 100.0).astype(float)
+    snap_all = read_daily_snapshots_for_month(hotel_id=hotel_tag, target_month=target_month)
+    required_cols = {"stay_date", "as_of_date", "rooms_oh"}
 
-    # 稼働率 (daily)
+    if snap_all is None or snap_all.empty or not required_cols.issubset(snap_all.columns):
+        out["asof_oh_rooms"] = out["actual_rooms"].astype(float)
+    else:
+        snap = snap_all.copy()
+        snap["stay_date"] = pd.to_datetime(snap["stay_date"], errors="coerce").dt.normalize()
+        snap["as_of_date"] = pd.to_datetime(snap["as_of_date"], errors="coerce").dt.normalize()
+        snap = snap.dropna(subset=["stay_date", "as_of_date"])
+
+        snap_asof = snap[snap["as_of_date"] <= asof_ts]
+        if snap_asof.empty:
+            asof_oh_series = pd.Series(0.0, index=out.index)
+            out["asof_oh_rooms"] = asof_oh_series.astype(float)
+        else:
+            snap_asof = snap_asof.sort_values(["stay_date", "as_of_date"])
+            last_snap = snap_asof.groupby("stay_date").tail(1)
+            oh_map = pd.to_numeric(last_snap.set_index("stay_date")["rooms_oh"], errors="coerce")
+
+            stay_dates_norm = out["stay_date"].dt.normalize()
+            asof_oh_series = stay_dates_norm.map(oh_map)
+
+            mask_past = stay_dates_norm < asof_ts
+            mask_fallback = asof_oh_series.isna() & mask_past & out["actual_rooms"].notna()
+            asof_oh_series.loc[mask_fallback] = out.loc[mask_fallback, "actual_rooms"].to_numpy()
+            asof_oh_series = asof_oh_series.fillna(0.0)
+            out["asof_oh_rooms"] = asof_oh_series.astype(float)
+
+    out["diff_rooms_vs_actual"] = out["forecast_rooms"] - out["actual_rooms"]
+    denom_actual = out["actual_rooms"].replace(0, pd.NA)
+    out["diff_pct_vs_actual"] = (out["diff_rooms_vs_actual"] / denom_actual * 100.0).astype(float)
+    out["pickup_expected_from_asof"] = out["forecast_rooms"] - out["asof_oh_rooms"]
+
+    out["diff_rooms"] = out["diff_rooms_vs_actual"]
+    out["diff_pct"] = out["diff_pct_vs_actual"]
+
     out["occ_actual_pct"] = (out["actual_rooms"] / cap * 100.0).astype(float)
+    out["occ_asof_pct"] = (out["asof_oh_rooms"] / cap * 100.0).astype(float)
     out["occ_forecast_pct"] = (out["forecast_rooms"] / cap * 100.0).astype(float)
 
-    # 月次合計行の追加
-    # 有効日数 = stay_date のユニーク数
     num_days = out["stay_date"].nunique()
 
     actual_total = out["actual_rooms"].fillna(0).sum()
+    asof_total = out["asof_oh_rooms"].fillna(0).sum()
     forecast_total = out["forecast_rooms"].fillna(0).sum()
-    diff_total = forecast_total - actual_total
-    if actual_total > 0:
-        diff_total_pct = diff_total / actual_total * 100.0
-    else:
-        diff_total_pct = float("nan")
 
-    occ_actual_month = actual_total / (cap * num_days) * 100.0 if num_days > 0 else float("nan")
-    occ_forecast_month = forecast_total / (cap * num_days) * 100.0 if num_days > 0 else float("nan")
+    diff_total_vs_actual = forecast_total - actual_total
+    if actual_total > 0:
+        diff_total_pct_vs_actual = diff_total_vs_actual / actual_total * 100.0
+    else:
+        diff_total_pct_vs_actual = float("nan")
+
+    pickup_total_from_asof = forecast_total - asof_total
+
+    if num_days > 0:
+        occ_actual_month = actual_total / (cap * num_days) * 100.0
+        occ_asof_month = asof_total / (cap * num_days) * 100.0
+        occ_forecast_month = forecast_total / (cap * num_days) * 100.0
+    else:
+        occ_actual_month = float("nan")
+        occ_asof_month = float("nan")
+        occ_forecast_month = float("nan")
 
     total_row = {
         "stay_date": pd.NaT,
         "weekday": "",
         "actual_rooms": actual_total,
+        "asof_oh_rooms": asof_total,
         "forecast_rooms": forecast_total,
-        "diff_rooms": diff_total,
-        "diff_pct": diff_total_pct,
+        "diff_rooms_vs_actual": diff_total_vs_actual,
+        "diff_pct_vs_actual": diff_total_pct_vs_actual,
+        "pickup_expected_from_asof": pickup_total_from_asof,
+        "diff_rooms": diff_total_vs_actual,
+        "diff_pct": diff_total_pct_vs_actual,
         "occ_actual_pct": occ_actual_month,
+        "occ_asof_pct": occ_asof_month,
         "occ_forecast_pct": occ_forecast_month,
     }
 
     out = out.reset_index(drop=True)
     out = pd.concat([out, pd.DataFrame([total_row])], ignore_index=True)
+
+    column_order = [
+        "stay_date",
+        "weekday",
+        "actual_rooms",
+        "asof_oh_rooms",
+        "forecast_rooms",
+        "diff_rooms_vs_actual",
+        "diff_pct_vs_actual",
+        "pickup_expected_from_asof",
+        "diff_rooms",
+        "diff_pct",
+        "occ_actual_pct",
+        "occ_asof_pct",
+        "occ_forecast_pct",
+    ]
+
+    out = out[column_order]
 
     return out
 
@@ -938,9 +1024,7 @@ def _get_recent_months_before(target_month: str, window_months: int) -> list[str
     return months
 
 
-def get_best_model_stats_for_recent_months(
-    hotel: str, ref_month: str, window_months: int
-) -> dict | None:
+def get_best_model_stats_for_recent_months(hotel: str, ref_month: str, window_months: int) -> dict | None:
     try:
         df = get_model_evaluation_table(hotel)
     except Exception:
@@ -955,9 +1039,7 @@ def get_best_model_stats_for_recent_months(
     df = df[df["rmse_pct"].notna()]
     df = df[df["n_samples"].notna()]
 
-    df["target_month_int"] = pd.to_numeric(df["target_month"].astype(str), errors="coerce").astype(
-        "Int64"
-    )
+    df["target_month_int"] = pd.to_numeric(df["target_month"].astype(str), errors="coerce").astype("Int64")
 
     ref_int = pd.to_numeric(str(ref_month), errors="coerce")
     if pd.isna(ref_int):
@@ -1014,9 +1096,7 @@ def _target_month_to_int(value: object) -> int:
         raise ValueError(f"Invalid target_month value: {value}")
 
 
-def _filter_by_target_month(
-    df: pd.DataFrame, from_ym: Optional[str], to_ym: Optional[str]
-) -> pd.DataFrame:
+def _filter_by_target_month(df: pd.DataFrame, from_ym: Optional[str], to_ym: Optional[str]) -> pd.DataFrame:
     df = df.copy()
     df["target_month_int"] = df["target_month"].map(_target_month_to_int)
 
@@ -1127,20 +1207,21 @@ def get_eval_monthly_by_asof(
 
     df_detail.sort_values(by=["target_month_int", "asof_type", "model"], inplace=True)
 
-    return df_detail[
-        ["target_month", "asof_type", "model", "error_pct", "abs_error_pct"]
-    ].reset_index(drop=True)
+    return df_detail[["target_month", "asof_type", "model", "error_pct", "abs_error_pct"]].reset_index(drop=True)
 
 
 def run_build_lt_data_for_gui(
     hotel_tag: str,
     target_months: list[str],
+    source: str = "timeseries",
 ) -> None:
     """
     Tkinter GUI から LT_DATA 生成バッチを実行するための薄いラッパー。
 
     hotel_tag ごとに config.HOTEL_CONFIG で定義された時系列Excelを読み込み、
     run_build_lt_csv.run_build_lt_for_gui() を呼び出す。
+
+    source: "timeseries" または "daily_snapshots" を指定する。デフォルトは "timeseries"。
     """
 
     if not target_months:
@@ -1150,9 +1231,49 @@ def run_build_lt_data_for_gui(
         run_build_lt_csv.run_build_lt_for_gui(
             hotel_tag=hotel_tag,
             target_months=target_months,
+            source=source,
         )
     except Exception:
         raise
+
+
+def run_daily_snapshots_for_gui(
+    hotel_tag: str,
+    mode: str = "partial",
+) -> None:
+    """
+    Tkinter GUI から daily snapshots 更新を実行するための薄いラッパー。
+
+    現時点では mode に関わらず、指定 hotel_tag の N@FACE 生データフォルダを
+    フルスキャンして daily_snapshots_<hotel>.csv を更新する。
+
+    将来的に、mode="partial" のときに差分更新ロジックを実装できるようにしておく。
+    """
+
+    if hotel_tag not in NFACE_HOTELS:
+        raise ValueError(f"Unknown hotel_tag for N@FACE snapshots: {hotel_tag}")
+
+    config = NFACE_HOTELS[hotel_tag]
+    input_dir = config["input_dir"]
+    layout = config.get("layout", "auto")
+
+    logging.info(
+        "Starting daily snapshots build: hotel_tag=%s, mode=%s, input_dir=%s, layout=%s",
+        hotel_tag,
+        mode,
+        input_dir,
+        layout,
+    )
+
+    nface_build_daily_snapshots_from_folder(
+        input_dir=input_dir,
+        hotel_id=hotel_tag,
+        layout=layout,
+        output_dir=None,
+        glob="*.xls*",
+    )
+
+    logging.info("Completed daily snapshots build: hotel_tag=%s", hotel_tag)
 
 
 def run_full_evaluation_for_gui_range(
@@ -1168,9 +1289,7 @@ def run_full_evaluation_for_gui_range(
     return detail_path, summary_path
 
 
-def get_nearest_asof_type_for_gui(
-    target_month: str, asof_date_str: str, calendar_df: pd.DataFrame | None = None
-) -> str | None:
+def get_nearest_asof_type_for_gui(target_month: str, asof_date_str: str, calendar_df: pd.DataFrame | None = None) -> str | None:
     if not asof_date_str:
         return None
 
@@ -1299,9 +1418,7 @@ def get_monthly_forecast_scenarios(
 ) -> dict:
     window_months = int(best_model_stats.get("window_months", 3)) if best_model_stats else 3
 
-    best_recent = best_model_stats or get_best_model_stats_for_recent_months(
-        hotel_key, target_month, window_months
-    )
+    best_recent = best_model_stats or get_best_model_stats_for_recent_months(hotel_key, target_month, window_months)
     model_name = best_recent.get("model") if best_recent else None
 
     avg_scenario = _calculate_scenario_from_stats(

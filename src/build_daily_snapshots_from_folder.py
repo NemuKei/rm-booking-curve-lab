@@ -5,7 +5,6 @@ from pathlib import Path
 
 from booking_curve.pms_adapter_nface import build_daily_snapshots_from_folder
 
-
 # N@FACE 生データの配置とレイアウト指定
 # layout は省略すれば "auto" になるが、必要なら "shifted"/"inline" を明示してもよい。
 HOTELS = {
@@ -19,7 +18,7 @@ HOTELS = {
         "input_dir": Path("data/pms_nface_raw/kansai"),
         "layout": "auto",  # 必要なら "inline" 固定も可
     },
-        "domemae": {
+    "domemae": {
         "input_dir": Path("data/pms_nface_raw/domemae"),
         "layout": "auto",  # 必要なら "inline" 固定も可
     },
@@ -47,9 +46,9 @@ def main() -> None:
         build_daily_snapshots_from_folder(
             input_dir=input_dir,
             hotel_id=hotel_id,
-            layout=layout,      # "auto" / "shifted" / "inline"
-            output_dir=None,    # None -> booking_curve.config.OUTPUT_DIR が使われる
-            glob="*.xls*",      # .xls / .xlsx 両方を対象
+            layout=layout,  # "auto" / "shifted" / "inline"
+            output_dir=None,  # None -> booking_curve.config.OUTPUT_DIR が使われる
+            glob="*.xls*",  # .xls / .xlsx 両方を対象
         )
 
     logging.info("すべてのホテルの処理が完了しました。")

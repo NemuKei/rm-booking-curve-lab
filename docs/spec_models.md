@@ -301,4 +301,69 @@ OCC モデルの主な入力は、`lt_data_YYYYMM_<hotel>.csv` に代表され�
   - ADR / 売上モデルの実装を追加・変更した場合
   - 評価指標の定義（分母や集計粒度）を変更した場合
 
+## 6. 日別フォーキャストタブの表示定義
+
+本節では、GUI の「日別フォーキャスト」タブにおける主な列の意味を整理する。  
+OCC モデル自体の計算方法は前節までの記述（`avg` / `recent90` / `recent90w` など）に従うものとする。
+
+### 6.1 基本コンセプト
+
+日別フォーキャストタブでは、1 行を 1 日（`stay_date`）とし、同じ日について
+
+- **Actual**：現時点で分かっている「最終実績」
+- **ASOF_OH**：指定 ASOF 時点での「その時点までの積み上がり（OH）」
+- **Forecast**：指定 ASOF と選択モデルに基づく「最終着地予測」
+
+の 3 レイヤーを並べて表示する。
+
+将来的に人数・売上などの指標を追加する場合も、  
+「Actual / ASOF_OH / Forecast の 3 レイヤーにそれぞれ Rooms / Pax / Revenue / OCC / ADR / RevPAR をぶら下げる」  
+という構成を基本とする。
+
+### 6.2 Rooms 列の定義
+
+現行実装で意味を持つ列は以下の通り。
+
+- `actual_rooms`
+  - 「最終的にどこまで埋まったか（あるいは現時点でどこまで埋まっているか）」を表す。
+  - 定義：
+    - **着地済み日** … LT_DATA の ACT(-1)（D+ スナップショット由来の最終室数）
+    - **未着地日** … 現在利用可能な **最新 ASOF** の `rooms_oh`
+  - ASOF を変えても値は変化しない（**ASOF 非依存の最終実績**）。
+
+- `asof_oh_rooms`
+  - GUI で指定した `AS_OF_DATE` に対して、  
+    「その ASOF 時点で、各 `stay_date` が何室積み上がっていたか」を表す。
+  - 定義：
+    - `stay_date ≤ AS_OF_DATE` … その時点では結果が確定しているため、ACT(-1) と同じ値
+    - `stay_date > AS_OF_DATE` … daily_snapshots から、当該 ASOF の `rooms_oh`
+  - ASOF を変更すると値が変化する（**ASOF 依存の OH スナップショット**）。
+
+- `forecast_rooms`
+  - 選択したモデル（`avg` / `recent90` / `recent90w` など）と `AS_OF_DATE` に基づく、  
+    各 `stay_date` の「最終着地予測」。
+  - 定義：
+    - `stay_date < AS_OF_DATE` … 実績である `actual_rooms` をそのまま用いる
+    - `stay_date ≥ AS_OF_DATE` … 各モデルの `forecast_month_from_*` ロジックで算出した予測値
+
+### 6.3 派生指標の例
+
+Rooms 列から、以下のような派生指標を計算する。
+
+- `occ_actual_pct`  … `actual_rooms / capacity`
+- `occ_asof_pct`    … `asof_oh_rooms / capacity`
+- `occ_forecast_pct` … `forecast_rooms / capacity`
+
+誤差・ギャップについては、次の 2 軸を基本とする。
+
+- 最終実績との誤差（モデル精度評価用）  
+  - `diff_rooms_vs_actual = forecast_rooms - actual_rooms`
+  - `diff_pct_vs_actual = diff_rooms_vs_actual / actual_rooms`
+- 指定 ASOF からの積み増し量（運用・意思決定の振り返り用）  
+  - `pickup_expected_from_asof = forecast_rooms - asof_oh_rooms`
+
+将来的に人数・売上の列を追加する場合も、  
+同じ考え方で Actual / ASOF_OH / Forecast それぞれに対して派生指標を定義する。
+
+
 以上。

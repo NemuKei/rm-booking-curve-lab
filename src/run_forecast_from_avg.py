@@ -1,22 +1,22 @@
 """Generate forecast CSV using weekday averages and capped logic."""
+
 from pathlib import Path
 
 import pandas as pd
 
 from booking_curve.config import OUTPUT_DIR
-from booking_curve.plot_booking_curve import filter_by_weekday
 from booking_curve.forecast_simple import (
-    moving_average_3months,
     forecast_final_from_avg,
+    moving_average_3months,
 )
-
+from booking_curve.plot_booking_curve import filter_by_weekday
 
 # =========================
 # User configuration block
 # =========================
 HOTEL_TAG = "daikokucho"
 TARGET_MONTH = "202505"
-HISTORY_MONTHS = ["202501","202502","202503","202504", "202505", "202506", "202507", "202508"]
+HISTORY_MONTHS = ["202501", "202502", "202503", "202504", "202505", "202506", "202507", "202508"]
 AS_OF_DATE = "2025-04-30"
 CAPACITY = 168.0
 
@@ -95,9 +95,7 @@ def main() -> None:
         out_df["actual_rooms"] = pd.NA
 
     out_df["forecast_rooms"] = result.reindex(all_dates)
-    out_df["forecast_rooms_int"] = (
-        out_df["forecast_rooms"].round().astype("Int64")
-    )
+    out_df["forecast_rooms_int"] = out_df["forecast_rooms"].round().astype("Int64")
 
     as_of_ts = pd.to_datetime(AS_OF_DATE)
     projected = []

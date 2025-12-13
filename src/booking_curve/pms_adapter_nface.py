@@ -145,7 +145,7 @@ def parse_nface_file(
     Args:
         file_path: Excel ファイルのパス。
         hotel_id: 出力に付与するホテルID。
-        layout: 
+        layout:
             OH 行の配置を指定する。
             "shifted" は宿泊日行の1行下、
             "inline" は宿泊日行と同じ行、

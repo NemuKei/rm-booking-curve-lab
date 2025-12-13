@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -97,11 +97,7 @@ def build_calendar_df(start: date, end: date) -> pd.DataFrame:
             idx = row.name
             # 前後の block_id
             prev_bid = df.loc[idx - 1, "holiday_block_id"] if idx > df.index.min() else None
-            next_bid = (
-                df.loc[idx + 1, "holiday_block_id"]
-                if idx < df.index.max()
-                else None
-            )
+            next_bid = df.loc[idx + 1, "holiday_block_id"] if idx < df.index.max() else None
             if prev_bid != bid and next_bid == bid:
                 positions.append("first")
             elif prev_bid == bid and next_bid == bid:
@@ -114,7 +110,9 @@ def build_calendar_df(start: date, end: date) -> pd.DataFrame:
     df["holiday_position"] = positions
 
     # 3連休以上の中日
-    df["is_long_holiday_middle"] = (df["holiday_block_len"] >= 3) & (df["holiday_position"] == "middle")
+    df["is_long_holiday_middle"] = (df["holiday_block_len"] >= 3) & (
+        df["holiday_position"] == "middle"
+    )
 
     return df
 

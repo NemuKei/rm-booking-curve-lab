@@ -1,18 +1,34 @@
 from pathlib import Path
+
 import pandas as pd
 
 from booking_curve.config import OUTPUT_DIR
-from booking_curve.plot_booking_curve import filter_by_weekday
 from booking_curve.forecast_simple import (
-    moving_average_recent_90days,
     forecast_final_from_avg,
     forecast_month_from_recent90,
+    moving_average_recent_90days,
 )
+from booking_curve.plot_booking_curve import filter_by_weekday
 
 # ===== 設定値（必要に応じてユーザーが書き換える） =====
 HOTEL_TAG = "daikokucho"
-TARGET_MONTH = "202601"   # 予測対象の宿泊月 (例)
-HISTORY_MONTHS = ["202501","202502", "202503", "202504", "202505", "202506", "202507", "202508", "202509", "202510", "202511", "202512", "202601", "202602"]
+TARGET_MONTH = "202601"  # 予測対象の宿泊月 (例)
+HISTORY_MONTHS = [
+    "202501",
+    "202502",
+    "202503",
+    "202504",
+    "202505",
+    "202506",
+    "202507",
+    "202508",
+    "202509",
+    "202510",
+    "202511",
+    "202512",
+    "202601",
+    "202602",
+]
 AS_OF_DATE = "2025-11-21"
 CAPACITY = 168.0
 # ================================================

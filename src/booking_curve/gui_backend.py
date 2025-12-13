@@ -22,6 +22,8 @@ from booking_curve.forecast_simple import (
 )
 from booking_curve.pms_adapter_nface import (
     build_daily_snapshots_from_folder as nface_build_daily_snapshots_from_folder,
+)
+from booking_curve.pms_adapter_nface import (
     build_daily_snapshots_from_folder_partial as nface_build_daily_snapshots_from_folder_partial,
 )
 from booking_curve.utils import apply_nocb_along_lt

@@ -61,10 +61,7 @@ def _parse_target_months(
         end = _validate_month(to_ym)
         if start > end:
             raise ValueError("from-ym must be earlier than or equal to to-ym")
-        month_starts = [
-            (start + pd.DateOffset(months=offset))
-            for offset in range((end.year - start.year) * 12 + (end.month - start.month) + 1)
-        ]
+        month_starts = [(start + pd.DateOffset(months=offset)) for offset in range((end.year - start.year) * 12 + (end.month - start.month) + 1)]
         months = [dt.strftime("%Y%m") for dt in month_starts]
     else:
         return None, None, None
@@ -138,9 +135,7 @@ def main() -> None:
     )
 
     args = _parse_args()
-    target_months, stay_min, stay_max = _parse_target_months(
-        args.target_months, args.from_ym, args.to_ym
-    )
+    target_months, stay_min, stay_max = _parse_target_months(args.target_months, args.from_ym, args.to_ym)
 
     hotels_to_process: Iterable[tuple[str, dict]]
     if args.hotel == "all":
@@ -154,12 +149,7 @@ def main() -> None:
 
         asof_min = args.asof_min
         asof_max = args.asof_max
-        if (
-            args.mode == "partial"
-            and args.auto_asof_from_csv
-            and not args.asof_min
-            and not args.asof_max
-        ):
+        if args.mode == "partial" and args.auto_asof_from_csv and not args.asof_min and not args.asof_max:
             last_asof = get_latest_asof_date(hotel_id)
             if last_asof is not None:
                 asof_min = last_asof - pd.Timedelta(days=args.buffer_days)

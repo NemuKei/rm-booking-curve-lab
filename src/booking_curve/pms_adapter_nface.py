@@ -214,9 +214,7 @@ def parse_nface_file(
             skipped_count += 1
             continue
 
-        rooms_oh, pax_oh, revenue_oh = _extract_oh_values_for_row(
-            df_raw, row_idx, resolved_layout, path
-        )
+        rooms_oh, pax_oh, revenue_oh = _extract_oh_values_for_row(df_raw, row_idx, resolved_layout, path)
         records.append(
             {
                 "hotel_id": hotel_id,
@@ -280,9 +278,7 @@ def build_daily_snapshots_from_folder(
 
     for file in files:
         try:
-            parse_nface_file(
-                file, hotel_id=hotel_id, layout=layout, output_dir=output_dir, save=True
-            )
+            parse_nface_file(file, hotel_id=hotel_id, layout=layout, output_dir=output_dir, save=True)
         except Exception as exc:  # noqa: BLE001
             logger.error("%s の処理中にエラーが発生しました: %s", file, exc)
 

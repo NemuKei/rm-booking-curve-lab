@@ -17,9 +17,7 @@ STANDARD_COLUMNS = [
 ]
 
 
-def get_latest_asof_date(
-    hotel_id: str, output_dir: Optional[Path] = None
-) -> pd.Timestamp | None:
+def get_latest_asof_date(hotel_id: str, output_dir: Optional[Path] = None) -> pd.Timestamp | None:
     """Return the latest as_of_date for the hotel, or None if no CSV exists."""
 
     if not hotel_id:
@@ -76,9 +74,7 @@ def normalize_daily_snapshots_df(
     if "as_of_date" in df_normalized.columns:
         df_normalized["as_of_date"] = pd.to_datetime(df_normalized["as_of_date"], errors="coerce")
 
-    remaining_columns = [
-        column for column in df_normalized.columns if column not in STANDARD_COLUMNS
-    ]
+    remaining_columns = [column for column in df_normalized.columns if column not in STANDARD_COLUMNS]
     df_normalized = df_normalized[STANDARD_COLUMNS + remaining_columns]
     df_normalized.index.name = None
     return df_normalized
@@ -99,9 +95,7 @@ def append_daily_snapshots(
 
     df_new_norm = normalize_daily_snapshots_df(df_new, hotel_id=hotel_id, as_of_date=None)
 
-    if df_new_norm.empty or (
-        "stay_date" in df_new_norm.columns and df_new_norm["stay_date"].isna().all()
-    ):
+    if df_new_norm.empty or ("stay_date" in df_new_norm.columns and df_new_norm["stay_date"].isna().all()):
         return path
 
     if path.exists():
@@ -112,9 +106,7 @@ def append_daily_snapshots(
             df_existing["as_of_date"] = pd.to_datetime(df_existing["as_of_date"], errors="coerce")
         df_existing = _ensure_standard_columns(df_existing)
         df_combined = pd.concat([df_existing, df_new_norm], ignore_index=True)
-        df_combined = df_combined.drop_duplicates(
-            subset=["hotel_id", "as_of_date", "stay_date"], keep="last"
-        )
+        df_combined = df_combined.drop_duplicates(subset=["hotel_id", "as_of_date", "stay_date"], keep="last")
     else:
         df_combined = df_new_norm
 
@@ -157,13 +149,9 @@ def upsert_daily_snapshots_range(
     if path.exists():
         df_existing = pd.read_csv(path)
         if "stay_date" in df_existing.columns:
-            df_existing["stay_date"] = pd.to_datetime(
-                df_existing["stay_date"], errors="coerce"
-            )
+            df_existing["stay_date"] = pd.to_datetime(df_existing["stay_date"], errors="coerce")
         if "as_of_date" in df_existing.columns:
-            df_existing["as_of_date"] = pd.to_datetime(
-                df_existing["as_of_date"], errors="coerce"
-            )
+            df_existing["as_of_date"] = pd.to_datetime(df_existing["as_of_date"], errors="coerce")
         df_existing = _ensure_standard_columns(df_existing)
     else:
         df_existing = pd.DataFrame(columns=STANDARD_COLUMNS)
@@ -176,17 +164,11 @@ def upsert_daily_snapshots_range(
         if pd.isna(asof_min_ts) or pd.isna(asof_max_ts):
             raise ValueError("asof_min and asof_max must be valid dates")
 
-        remove_mask = (df_existing["as_of_date"] >= asof_min_ts) & (
-            df_existing["as_of_date"] <= asof_max_ts
-        )
+        remove_mask = (df_existing["as_of_date"] >= asof_min_ts) & (df_existing["as_of_date"] <= asof_max_ts)
 
         if stay_min is not None or stay_max is not None:
-            stay_min_ts = (
-                pd.to_datetime(stay_min, errors="coerce") if stay_min is not None else None
-            )
-            stay_max_ts = (
-                pd.to_datetime(stay_max, errors="coerce") if stay_max is not None else None
-            )
+            stay_min_ts = pd.to_datetime(stay_min, errors="coerce") if stay_min is not None else None
+            stay_max_ts = pd.to_datetime(stay_max, errors="coerce") if stay_max is not None else None
 
             if stay_min is not None and pd.isna(stay_min_ts):
                 raise ValueError("stay_min must be convertible to a valid date")
@@ -204,27 +186,19 @@ def upsert_daily_snapshots_range(
         df_existing_filtered = df_existing.loc[~remove_mask]
 
     df_combined = pd.concat([df_existing_filtered, df_new_norm], ignore_index=True)
-    df_combined = df_combined.drop_duplicates(
-        subset=["hotel_id", "as_of_date", "stay_date"], keep="last"
-    )
+    df_combined = df_combined.drop_duplicates(subset=["hotel_id", "as_of_date", "stay_date"], keep="last")
 
     if "stay_date" in df_combined.columns:
-        df_combined["stay_date"] = pd.to_datetime(
-            df_combined["stay_date"], errors="coerce"
-        )
+        df_combined["stay_date"] = pd.to_datetime(df_combined["stay_date"], errors="coerce")
     if "as_of_date" in df_combined.columns:
-        df_combined["as_of_date"] = pd.to_datetime(
-            df_combined["as_of_date"], errors="coerce"
-        )
+        df_combined["as_of_date"] = pd.to_datetime(df_combined["as_of_date"], errors="coerce")
 
     df_combined = df_combined.sort_values(["hotel_id", "as_of_date", "stay_date"])
 
     if "stay_date" in df_combined.columns:
         df_combined["stay_date"] = df_combined["stay_date"].dt.strftime("%Y-%m-%d")
     if "as_of_date" in df_combined.columns:
-        df_combined["as_of_date"] = df_combined["as_of_date"].dt.strftime(
-            "%Y-%m-%d"
-        )
+        df_combined["as_of_date"] = df_combined["as_of_date"].dt.strftime("%Y-%m-%d")
 
     tmp_path = path.with_suffix(".tmp")
     df_combined.to_csv(tmp_path, index=False)

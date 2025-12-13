@@ -2126,7 +2126,12 @@ class BookingCurveApp(tk.Tk):
             lt_source = self.lt_source_var.get() or "daily_snapshots"
             # 必要に応じて daily snapshots を先に更新
             if self.update_daily_snapshots_var.get() and lt_source == "daily_snapshots":
-                run_daily_snapshots_for_gui(hotel_tag, mode="partial")
+                run_daily_snapshots_for_gui(
+                    hotel_tag,
+                    target_months=target_months,
+                    mode="partial",
+                    buffer_days=14,
+                )
             elif self.update_daily_snapshots_var.get():
                 logging.info("LT生成: source=timeseries のため daily snapshots 更新はスキップ")
 
@@ -2265,7 +2270,12 @@ class BookingCurveApp(tk.Tk):
         try:
             lt_source = self.lt_source_var.get() or "daily_snapshots"
             if self.update_daily_snapshots_var.get() and lt_source == "daily_snapshots":
-                run_daily_snapshots_for_gui(hotel_tag, mode="partial")
+                run_daily_snapshots_for_gui(
+                    hotel_tag,
+                    target_months=target_months,
+                    mode="partial",
+                    buffer_days=14,
+                )
             elif self.update_daily_snapshots_var.get():
                 logging.info("LT生成: source=timeseries のため daily snapshots 更新はスキップ")
 

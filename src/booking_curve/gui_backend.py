@@ -11,7 +11,10 @@ import pandas as pd
 import build_calendar_features
 import run_build_lt_csv
 import run_forecast_batch
-from booking_curve.daily_snapshots import read_daily_snapshots_for_month
+from booking_curve.daily_snapshots import (
+    get_latest_asof_date,
+    read_daily_snapshots_for_month,
+)
 from booking_curve.forecast_simple import (
     moving_average_3months,
     moving_average_recent_90days,
@@ -19,6 +22,7 @@ from booking_curve.forecast_simple import (
 )
 from booking_curve.pms_adapter_nface import (
     build_daily_snapshots_from_folder as nface_build_daily_snapshots_from_folder,
+    build_daily_snapshots_from_folder_partial as nface_build_daily_snapshots_from_folder_partial,
 )
 from booking_curve.utils import apply_nocb_along_lt
 from build_daily_snapshots_from_folder import HOTELS as NFACE_HOTELS
@@ -1239,15 +1243,15 @@ def run_build_lt_data_for_gui(
 
 def run_daily_snapshots_for_gui(
     hotel_tag: str,
+    target_months: list[str] | None = None,
     mode: str = "partial",
+    buffer_days: int = 14,
 ) -> None:
     """
     Tkinter GUI から daily snapshots 更新を実行するための薄いラッパー。
 
-    現時点では mode に関わらず、指定 hotel_tag の N@FACE 生データフォルダを
-    フルスキャンして daily_snapshots_<hotel>.csv を更新する。
-
-    将来的に、mode="partial" のときに差分更新ロジックを実装できるようにしておく。
+    mode="partial" の場合は対象宿泊月と ASOF 範囲で絞り込んで処理する。
+    mode="full" の場合は従来どおり全スキャンする。
     """
 
     if hotel_tag not in NFACE_HOTELS:
@@ -1265,9 +1269,51 @@ def run_daily_snapshots_for_gui(
         layout,
     )
 
-    nface_build_daily_snapshots_from_folder(
+    if mode == "full":
+        nface_build_daily_snapshots_from_folder(
+            input_dir=input_dir,
+            hotel_id=hotel_tag,
+            layout=layout,
+            output_dir=None,
+            glob="*.xls*",
+        )
+        logging.info("Completed daily snapshots build: hotel_tag=%s", hotel_tag)
+        return
+
+    stay_min = None
+    stay_max = None
+    if target_months:
+        periods: list[pd.Period] = []
+        for ym in target_months:
+            try:
+                period = pd.Period(f"{ym[:4]}-{ym[4:]}", freq="M")
+            except Exception as exc:
+                raise ValueError(f"Invalid target_month format: {ym}") from exc
+            periods.append(period)
+
+        stay_min = min(p.start_time.normalize() for p in periods)
+        stay_max = max(p.end_time.normalize() for p in periods)
+
+    last_asof = get_latest_asof_date(hotel_tag)
+    asof_min = last_asof - pd.Timedelta(days=buffer_days) if last_asof is not None else None
+
+    logging.info(
+        "daily snapshots partial build: hotel_tag=%s, target_months=%s, asof_min=%s, buffer_days=%s, mode=%s",
+        hotel_tag,
+        target_months,
+        asof_min,
+        buffer_days,
+        mode,
+    )
+
+    nface_build_daily_snapshots_from_folder_partial(
         input_dir=input_dir,
         hotel_id=hotel_tag,
+        target_months=target_months,
+        asof_min=asof_min,
+        asof_max=None,
+        stay_min=stay_min,
+        stay_max=stay_max,
         layout=layout,
         output_dir=None,
         glob="*.xls*",

@@ -34,6 +34,7 @@ from booking_curve.gui_backend import (
     get_monthly_curve_data,
     get_monthly_forecast_scenarios,
     run_build_lt_data_for_gui,
+    run_daily_snapshots_for_gui,
     run_forecast_for_gui,
     run_full_evaluation_for_gui_range,
 )
@@ -77,6 +78,7 @@ class BookingCurveApp(tk.Tk):
         self.hotel_var = tk.StringVar(value=initial_hotel)
         self.hotel_var.trace_add("write", self._on_hotel_var_changed)
         self.lt_source_var = tk.StringVar(value="daily_snapshots")
+        self.update_daily_snapshots_var = tk.BooleanVar(value=True)
 
         # モデル評価タブ用の状態変数
         self.model_eval_df: Optional[pd.DataFrame] = None
@@ -1982,6 +1984,13 @@ class BookingCurveApp(tk.Tk):
         self.lt_source_combo["values"] = ("daily_snapshots", "timeseries")
         self.lt_source_combo.pack(side=tk.LEFT, padx=2)
 
+        self.chk_update_snapshots = ttk.Checkbutton(
+            nav_right,
+            text="LT生成時にdaily snapshots更新",
+            variable=self.update_daily_snapshots_var,
+        )
+        self.chk_update_snapshots.pack(side=tk.LEFT, padx=4)
+
         self.btn_build_lt = ttk.Button(nav_right, text="LT_DATA(4ヶ月)", command=self._on_build_lt_data)
         self.btn_build_lt.pack(side=tk.LEFT, padx=4)
 
@@ -2093,6 +2102,10 @@ class BookingCurveApp(tk.Tk):
             return
 
         try:
+            # 必要に応じて daily snapshots を先に更新
+            if self.update_daily_snapshots_var.get():
+                run_daily_snapshots_for_gui(hotel_tag, mode="partial")
+
             lt_source = self.lt_source_var.get() or "daily_snapshots"
             run_build_lt_data_for_gui(hotel_tag, target_months, source=lt_source)
         except Exception as e:
@@ -2227,6 +2240,9 @@ class BookingCurveApp(tk.Tk):
             return
 
         try:
+            if self.update_daily_snapshots_var.get():
+                run_daily_snapshots_for_gui(hotel_tag, mode="partial")
+
             lt_source = self.lt_source_var.get() or "daily_snapshots"
             run_build_lt_data_for_gui(hotel_tag, target_months, source=lt_source)
         except Exception as e:

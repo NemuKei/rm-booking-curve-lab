@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import logging
 import re
+import warnings
 from pathlib import Path
 from typing import Literal, Optional
 
 import pandas as pd
+from booking_curve.config import OUTPUT_DIR
 
 from booking_curve.daily_snapshots import (
     append_daily_snapshots,
@@ -90,6 +92,30 @@ def _iter_stay_rows(df: pd.DataFrame) -> list[tuple[int, pd.Timestamp]]:
             continue
         stay_rows.append((i, pd.Timestamp(stay_dt).normalize()))
     return stay_rows
+
+
+def _normalize_boundary_timestamp(
+    value: pd.Timestamp | str | None, param_name: str
+) -> pd.Timestamp | None:
+    if value is None:
+        return None
+
+    if isinstance(value, str):
+        stripped = value.strip()
+        if re.fullmatch(r"\d{8}", stripped):
+            ts = pd.to_datetime(stripped, format="%Y%m%d", errors="coerce")
+        else:
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message="Parsing Dates", category=UserWarning)
+                ts = pd.to_datetime(stripped, errors="coerce")
+    else:
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="Parsing Dates", category=UserWarning)
+            ts = pd.to_datetime(value, errors="coerce")
+
+    if pd.isna(ts):
+        raise ValueError(f"{param_name} must be convertible to a valid date")
+    return pd.Timestamp(ts).normalize()
 
 
 def _extract_oh_values_for_row(
@@ -246,7 +272,8 @@ def parse_nface_file(
     df_norm = normalize_daily_snapshots_df(df, hotel_id=hotel_id, as_of_date=as_of_date)
 
     if save:
-        output_path = append_daily_snapshots(df_norm, hotel_id=hotel_id, output_dir=output_dir)
+        base_dir = Path(output_dir) if output_dir is not None else OUTPUT_DIR
+        output_path = append_daily_snapshots(base_dir / f"daily_snapshots_{hotel_id}.csv", df_norm)
         logger.info("%s: 標準CSVに追記しました -> %s", path, output_path)
 
     return df_norm
@@ -304,13 +331,10 @@ def build_daily_snapshots_from_folder_partial(
         logger.error("%s が存在しないかディレクトリではありません", input_path)
         return
 
-    asof_min_ts = pd.to_datetime(asof_min, errors="coerce") if asof_min is not None else None
-    asof_max_ts = pd.to_datetime(asof_max, errors="coerce") if asof_max is not None else None
-
-    if asof_min is not None and pd.isna(asof_min_ts):
-        raise ValueError("asof_min must be convertible to a valid date")
-    if asof_max is not None and pd.isna(asof_max_ts):
-        raise ValueError("asof_max must be convertible to a valid date")
+    asof_min_ts = _normalize_boundary_timestamp(asof_min, "asof_min") if asof_min is not None else None
+    asof_max_ts = _normalize_boundary_timestamp(asof_max, "asof_max") if asof_max is not None else None
+    stay_min_ts = _normalize_boundary_timestamp(stay_min, "stay_min") if stay_min is not None else None
+    stay_max_ts = _normalize_boundary_timestamp(stay_max, "stay_max") if stay_max is not None else None
 
     candidates = list(input_path.glob(glob))
     files = sorted(p for p in candidates if p.is_file() and p.suffix.lower() in {".xls", ".xlsx"})
@@ -364,6 +388,17 @@ def build_daily_snapshots_from_folder_partial(
             logger.error("%s の処理中にエラーが発生しました: %s", file, exc)
             continue
 
+        if df.empty:
+            continue
+
+        if stay_min_ts is not None or stay_max_ts is not None:
+            stay_mask = pd.Series(True, index=df.index)
+            if stay_min_ts is not None:
+                stay_mask &= df["stay_date"] >= stay_min_ts
+            if stay_max_ts is not None:
+                stay_mask &= df["stay_date"] <= stay_max_ts
+            df = df.loc[stay_mask]
+
         if not df.empty:
             df_list.append(df)
 
@@ -372,14 +407,17 @@ def build_daily_snapshots_from_folder_partial(
         return
 
     df_new = pd.concat(df_list, ignore_index=True)
+
+    base_dir = Path(output_dir) if output_dir is not None else OUTPUT_DIR
+    output_csv_path = base_dir / f"daily_snapshots_{hotel_id}.csv"
+
     output_path = upsert_daily_snapshots_range(
+        output_csv_path,
         df_new,
-        hotel_id=hotel_id,
         asof_min=asof_min_ts,
         asof_max=asof_max_ts,
-        stay_min=stay_min,
-        stay_max=stay_max,
-        output_dir=output_dir,
+        stay_min=stay_min_ts,
+        stay_max=stay_max_ts,
     )
     logger.info("%s: %s 件のファイルから部分更新を実施しました -> %s", input_path, len(df_list), output_path)
 

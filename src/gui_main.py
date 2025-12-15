@@ -2006,6 +2006,7 @@ class BookingCurveApp(tk.Tk):
         draw_btn = ttk.Button(row2_frame, text="描画", command=self._on_draw_booking_curve)
         draw_btn.pack(side=tk.LEFT, padx=8)
 
+        self.lt_source_var.trace_add("write", self._on_lt_source_changed)
         self.lt_source_combo.bind("<<ComboboxSelected>>", self._on_lt_source_changed)
         self._sync_daily_snapshots_checkbox_state()
 

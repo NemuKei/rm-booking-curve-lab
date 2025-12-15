@@ -1245,15 +1245,16 @@ def run_build_lt_data_for_gui(
 
 def run_daily_snapshots_for_gui(
     hotel_tag: str,
-    target_months: list[str] | None = None,
+    target_months: list[str],
     mode: str = "partial",
     buffer_days: int = 14,
-) -> None:
+) -> str:
     """
     Tkinter GUI から daily snapshots 更新を実行するための薄いラッパー。
 
     mode="partial" の場合は対象宿泊月と ASOF 範囲で絞り込んで処理する。
     mode="full" の場合は従来どおり全スキャンする。
+    戻り値は出力先 CSV のパス文字列。
     """
 
     if hotel_tag not in NFACE_HOTELS:
@@ -1262,6 +1263,10 @@ def run_daily_snapshots_for_gui(
     config = NFACE_HOTELS[hotel_tag]
     input_dir = config["input_dir"]
     layout = config.get("layout", "auto")
+    output_csv_path = OUTPUT_DIR / f"daily_snapshots_{hotel_tag}.csv"
+
+    if not target_months:
+        raise ValueError("target_months must be a non-empty list")
 
     logging.info(
         "Starting daily snapshots build: hotel_tag=%s, mode=%s, input_dir=%s, layout=%s",
@@ -1276,28 +1281,25 @@ def run_daily_snapshots_for_gui(
             input_dir=input_dir,
             hotel_id=hotel_tag,
             layout=layout,
-            output_dir=None,
+            output_dir=output_csv_path.parent,
             glob="*.xls*",
         )
         logging.info("Completed daily snapshots build: hotel_tag=%s", hotel_tag)
-        return
+        return str(output_csv_path)
 
-    stay_min = None
-    stay_max = None
-    if target_months:
-        periods: list[pd.Period] = []
-        for ym in target_months:
-            try:
-                period = pd.Period(f"{ym[:4]}-{ym[4:]}", freq="M")
-            except Exception as exc:
-                raise ValueError(f"Invalid target_month format: {ym}") from exc
-            periods.append(period)
+    periods: list[pd.Period] = []
+    for ym in target_months:
+        try:
+            period = pd.Period(f"{ym[:4]}-{ym[4:]}", freq="M")
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError(f"Invalid target_month format: {ym}") from exc
+        periods.append(period)
 
-        stay_min = min(p.start_time.normalize() for p in periods)
-        stay_max = max(p.end_time.normalize() for p in periods)
+    stay_min = min(p.start_time.normalize() for p in periods)
+    stay_max = max(p.end_time.normalize() for p in periods)
 
-    last_asof = get_latest_asof_date(hotel_tag)
-    asof_min = last_asof - pd.Timedelta(days=buffer_days) if last_asof is not None else None
+    latest_asof = get_latest_asof_date(hotel_tag, output_dir=output_csv_path.parent)
+    asof_min = latest_asof - pd.Timedelta(days=buffer_days) if latest_asof is not None else None
 
     logging.info(
         "daily snapshots partial build: hotel_tag=%s, target_months=%s, asof_min=%s, buffer_days=%s, mode=%s",
@@ -1317,11 +1319,12 @@ def run_daily_snapshots_for_gui(
         stay_min=stay_min,
         stay_max=stay_max,
         layout=layout,
-        output_dir=None,
+        output_dir=output_csv_path.parent,
         glob="*.xls*",
     )
 
     logging.info("Completed daily snapshots build: hotel_tag=%s", hotel_tag)
+    return str(output_csv_path)
 
 
 def run_full_evaluation_for_gui_range(

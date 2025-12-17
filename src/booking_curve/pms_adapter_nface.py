@@ -37,34 +37,50 @@ def _parse_target_month(df: pd.DataFrame, file_path: Path) -> Optional[pd.Timest
     return pd.Timestamp(year=dt.year, month=dt.month, day=1).normalize()
 
 
-def _parse_asof_date(df: pd.DataFrame, file_path: Path) -> Optional[pd.Timestamp]:
-    """Parse the as-of date from cell Q1 or fallback to filename."""
+def _parse_asof_date(
+    df: pd.DataFrame, file_path: Path, filename_asof_ymd: str | None
+) -> Optional[pd.Timestamp]:
+    """Parse the as-of date prioritizing filename information."""
+
     try:
         raw_value = df.iloc[0, 16]
     except IndexError:
         raw_value = pd.NA
-    dt = pd.to_datetime(raw_value, errors="coerce")
 
-    if pd.isna(dt):
-        name = file_path.name
-        candidates_8 = re.findall(r"20\d{6}", name)
-        for candidate in candidates_8:
-            dt_candidate = pd.to_datetime(candidate, format="%Y%m%d", errors="coerce")
-            if not pd.isna(dt_candidate):
-                dt = dt_candidate
-                break
+    cell_ts: pd.Timestamp | None
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Parsing Dates", category=UserWarning)
+        dt = pd.to_datetime(raw_value, errors="coerce")
+    cell_ts = None if pd.isna(dt) else pd.Timestamp(dt).normalize()
 
-        if pd.isna(dt):
-            fallback_candidates = re.findall(r"20\d{6}", name)
-            if fallback_candidates:
-                last_candidate = fallback_candidates[-1]
-                dt = pd.to_datetime(last_candidate, format="%Y%m%d", errors="coerce")
+    filename_ts: pd.Timestamp | None = None
+    if filename_asof_ymd:
+        ts = pd.to_datetime(filename_asof_ymd, format="%Y%m%d", errors="coerce")
+        if pd.isna(ts):
+            logger.warning("%s: ファイル名のASOF(%s)を日付に変換できません", file_path, filename_asof_ymd)
+        else:
+            filename_ts = pd.Timestamp(ts).normalize()
 
-    if pd.isna(dt):
-        logger.error("%s: ASOF 日付を取得できませんでした", file_path)
-        return None
+    if filename_ts is not None:
+        if cell_ts is not None and filename_ts != cell_ts:
+            logger.warning(
+                "%s: ファイル名ASOF(%s)とセルASOF(%s)が一致しません",
+                file_path,
+                filename_ts.date(),
+                cell_ts.date(),
+            )
+        return filename_ts
 
-    return pd.Timestamp(dt).normalize()
+    if cell_ts is not None:
+        return cell_ts
+
+    for candidate in re.findall(r"\d{8}", file_path.name):
+        ts = pd.to_datetime(candidate, format="%Y%m%d", errors="coerce")
+        if not pd.isna(ts):
+            return pd.Timestamp(ts).normalize()
+
+    logger.error("%s: ASOF 日付を取得できませんでした", file_path)
+    return None
 
 
 def _parse_nface_filename(file_path: Path) -> tuple[str | None, str | None]:
@@ -189,6 +205,7 @@ def parse_nface_file(
     layout: LayoutType = "auto",
     output_dir: Optional[Path] = None,
     save: bool = True,
+    filename_asof_ymd: str | None = None,
 ) -> pd.DataFrame:
     """Parse a N@FACE Excel file into standard daily snapshots format.
 
@@ -207,6 +224,9 @@ def parse_nface_file(
         Normalized dataframe of daily snapshots extracted from the file.
     """
     path = Path(file_path)
+    filename_stay_ym, parsed_filename_asof = _parse_nface_filename(path)
+    if filename_asof_ymd is None:
+        filename_asof_ymd = parsed_filename_asof
     df_raw = pd.read_excel(path, header=None)
 
     if layout == "auto":
@@ -221,7 +241,19 @@ def parse_nface_file(
         logger.error("%s: target_month が取得できないためスキップします", path)
         return normalize_daily_snapshots_df(pd.DataFrame(), hotel_id=hotel_id)
 
-    as_of_date = _parse_asof_date(df_raw, path)
+    if filename_stay_ym is not None:
+        stay_ts = pd.to_datetime(f"{filename_stay_ym}01", format="%Y%m%d", errors="coerce")
+        if not pd.isna(stay_ts):
+            stay_ts = pd.Timestamp(stay_ts).normalize()
+            if stay_ts.month != target_month.month or stay_ts.year != target_month.year:
+                logger.warning(
+                    "%s: ファイル名の宿泊月(%s)とシートの宿泊月(%s)が一致しません",
+                    path,
+                    stay_ts.strftime("%Y-%m"),
+                    target_month.strftime("%Y-%m"),
+                )
+
+    as_of_date = _parse_asof_date(df_raw, path, filename_asof_ymd)
     if as_of_date is None:
         logger.error("%s: ASOF不明のためこのファイルはスキップします", path)
         return normalize_daily_snapshots_df(pd.DataFrame(), hotel_id=hotel_id)
@@ -289,25 +321,199 @@ def build_daily_snapshots_from_folder(
     デフォルトでは layout="auto" としてファイルごとにレイアウトを自動判定する。必要に応じて
     "shifted" / "inline" を明示指定することもできる。
     """
+    build_daily_snapshots_full_all(
+        input_dir=input_dir,
+        hotel_id=hotel_id,
+        layout=layout,
+        output_dir=output_dir,
+        glob=glob,
+    )
+
+
+def build_daily_snapshots_fast(
+    input_dir: str | Path,
+    hotel_id: str,
+    target_months: list[str],
+    asof_min: pd.Timestamp | None,
+    asof_max: pd.Timestamp | None,
+    layout: LayoutType = "auto",
+    output_dir: Optional[Path] = None,
+    glob: str = "*.xls*",
+) -> None:
+    """Build snapshots quickly by filename filtering and single append."""
+
     input_path = Path(input_dir)
     if not input_path.exists() or not input_path.is_dir():
         logger.error("%s が存在しないかディレクトリではありません", input_path)
         return
 
-    candidates = list(input_path.glob(glob))
-    files = sorted(p for p in candidates if p.is_file() and p.suffix.lower() in {".xls", ".xlsx"})
+    asof_min_ts = _normalize_boundary_timestamp(asof_min, "asof_min") if asof_min is not None else None
+    asof_max_ts = _normalize_boundary_timestamp(asof_max, "asof_max") if asof_max is not None else None
+
+    files = sorted(
+        p for p in input_path.glob(glob) if p.is_file() and p.suffix.lower() in {".xls", ".xlsx"}
+    )
+
+    filtered: list[tuple[Path, str]] = []
+    for file in files:
+        stay_ym, asof_ymd = _parse_nface_filename(file)
+        if stay_ym is None or asof_ymd is None:
+            continue
+        if stay_ym not in target_months:
+            continue
+        asof_ts = pd.to_datetime(asof_ymd, format="%Y%m%d", errors="coerce")
+        if pd.isna(asof_ts):
+            logger.warning("%s: ASOF を日付に変換できないためスキップします", file)
+            continue
+        asof_ts = pd.Timestamp(asof_ts).normalize()
+        if asof_min_ts is not None and asof_ts < asof_min_ts:
+            continue
+        if asof_max_ts is not None and asof_ts > asof_max_ts:
+            continue
+        filtered.append((file, asof_ymd))
+
+    if not filtered:
+        logger.info("%s: 対象ファイルがありません (FAST)", input_path)
+        return
+
+    df_list: list[pd.DataFrame] = []
+    for file, asof_ymd in filtered:
+        try:
+            df = parse_nface_file(
+                file,
+                hotel_id=hotel_id,
+                layout=layout,
+                output_dir=output_dir,
+                save=False,
+                filename_asof_ymd=asof_ymd,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("%s の処理中にエラーが発生しました: %s", file, exc)
+            continue
+        if not df.empty:
+            df_list.append(df)
+
+    if not df_list:
+        logger.info("%s: Excel解析結果が空のためスキップします (FAST)", input_path)
+        return
+
+    df_new = pd.concat(df_list, ignore_index=True)
+    base_dir = Path(output_dir) if output_dir is not None else OUTPUT_DIR
+    output_path = append_daily_snapshots(base_dir / f"daily_snapshots_{hotel_id}.csv", df_new)
+    logger.info("%s: FASTモードで %s 件のファイルを処理しました -> %s", input_path, len(df_list), output_path)
+
+
+def build_daily_snapshots_full_months(
+    input_dir: str | Path,
+    hotel_id: str,
+    target_months: list[str],
+    layout: LayoutType = "auto",
+    output_dir: Optional[Path] = None,
+    glob: str = "*.xls*",
+) -> None:
+    """Append snapshots for specified months using single append."""
+
+    input_path = Path(input_dir)
+    if not input_path.exists() or not input_path.is_dir():
+        logger.error("%s が存在しないかディレクトリではありません", input_path)
+        return
+
+    files = sorted(
+        p for p in input_path.glob(glob) if p.is_file() and p.suffix.lower() in {".xls", ".xlsx"}
+    )
+
+    filtered: list[tuple[Path, str]] = []
+    for file in files:
+        stay_ym, asof_ymd = _parse_nface_filename(file)
+        if stay_ym is None or asof_ymd is None:
+            continue
+        if stay_ym not in target_months:
+            continue
+        filtered.append((file, asof_ymd))
+
+    if not filtered:
+        logger.info("%s: 対象ファイルがありません (FULL_MONTHS)", input_path)
+        return
+
+    df_list: list[pd.DataFrame] = []
+    for file, asof_ymd in filtered:
+        try:
+            df = parse_nface_file(
+                file,
+                hotel_id=hotel_id,
+                layout=layout,
+                output_dir=output_dir,
+                save=False,
+                filename_asof_ymd=asof_ymd,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("%s の処理中にエラーが発生しました: %s", file, exc)
+            continue
+        if not df.empty:
+            df_list.append(df)
+
+    if not df_list:
+        logger.info("%s: Excel解析結果が空のためスキップします (FULL_MONTHS)", input_path)
+        return
+
+    df_new = pd.concat(df_list, ignore_index=True)
+    base_dir = Path(output_dir) if output_dir is not None else OUTPUT_DIR
+    output_path = append_daily_snapshots(base_dir / f"daily_snapshots_{hotel_id}.csv", df_new)
+    logger.info(
+        "%s: FULL_MONTHSモードで %s 件のファイルを処理しました -> %s", input_path, len(df_list), output_path
+    )
+
+
+def build_daily_snapshots_full_all(
+    input_dir: str | Path,
+    hotel_id: str,
+    layout: LayoutType = "auto",
+    output_dir: Optional[Path] = None,
+    glob: str = "*.xls*",
+) -> None:
+    """Append snapshots for all Excel files with a single append."""
+
+    input_path = Path(input_dir)
+    if not input_path.exists() or not input_path.is_dir():
+        logger.error("%s が存在しないかディレクトリではありません", input_path)
+        return
+
+    files = sorted(
+        p for p in input_path.glob(glob) if p.is_file() and p.suffix.lower() in {".xls", ".xlsx"}
+    )
 
     if not files:
         logger.warning("%s 配下に対象ファイルが見つかりません", input_path)
         return
 
+    df_list: list[pd.DataFrame] = []
     for file in files:
+        stay_ym, asof_ymd = _parse_nface_filename(file)
+        if stay_ym is None or asof_ymd is None:
+            continue
         try:
-            parse_nface_file(file, hotel_id=hotel_id, layout=layout, output_dir=output_dir, save=True)
+            df = parse_nface_file(
+                file,
+                hotel_id=hotel_id,
+                layout=layout,
+                output_dir=output_dir,
+                save=False,
+                filename_asof_ymd=asof_ymd,
+            )
         except Exception as exc:  # noqa: BLE001
             logger.error("%s の処理中にエラーが発生しました: %s", file, exc)
+            continue
+        if not df.empty:
+            df_list.append(df)
 
-    logger.info("%s 配下の処理が完了しました", input_path)
+    if not df_list:
+        logger.info("%s: Excel解析結果が空のためスキップします (FULL_ALL)", input_path)
+        return
+
+    df_new = pd.concat(df_list, ignore_index=True)
+    base_dir = Path(output_dir) if output_dir is not None else OUTPUT_DIR
+    output_path = append_daily_snapshots(base_dir / f"daily_snapshots_{hotel_id}.csv", df_new)
+    logger.info("%s: FULL_ALLモードで %s 件のファイルを処理しました -> %s", input_path, len(df_list), output_path)
 
 
 def build_daily_snapshots_from_folder_partial(
@@ -345,7 +551,7 @@ def build_daily_snapshots_from_folder_partial(
         asof_max,
     )
 
-    filtered_files: list[Path] = []
+    filtered_files: list[tuple[Path, str]] = []
     for file in files:
         target_month_ym, asof_ymd = _parse_nface_filename(file)
         if target_month_ym is None or asof_ymd is None:
@@ -364,7 +570,7 @@ def build_daily_snapshots_from_folder_partial(
         if asof_max_ts is not None and asof_ts > asof_max_ts:
             continue
 
-        filtered_files.append(file)
+        filtered_files.append((file, asof_ymd))
 
     logger.info("%s: partial build 対象ファイル数=%s", input_path, len(filtered_files))
 
@@ -373,7 +579,7 @@ def build_daily_snapshots_from_folder_partial(
         return
 
     df_list: list[pd.DataFrame] = []
-    for file in filtered_files:
+    for file, asof_ymd in filtered_files:
         try:
             df = parse_nface_file(
                 file,
@@ -381,6 +587,7 @@ def build_daily_snapshots_from_folder_partial(
                 layout=layout,
                 output_dir=output_dir,
                 save=False,
+                filename_asof_ymd=asof_ymd,
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("%s の処理中にエラーが発生しました: %s", file, exc)
@@ -422,6 +629,9 @@ def build_daily_snapshots_from_folder_partial(
 
 __all__ = [
     "parse_nface_file",
+    "build_daily_snapshots_fast",
     "build_daily_snapshots_from_folder",
+    "build_daily_snapshots_full_all",
+    "build_daily_snapshots_full_months",
     "build_daily_snapshots_from_folder_partial",
 ]

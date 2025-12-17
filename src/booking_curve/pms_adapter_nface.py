@@ -10,9 +10,9 @@ import pandas as pd
 
 from booking_curve.config import OUTPUT_DIR
 from booking_curve.daily_snapshots import (
-    append_daily_snapshots,
+    append_daily_snapshots_by_hotel,
     normalize_daily_snapshots_df,
-    upsert_daily_snapshots_range,
+    upsert_daily_snapshots_range_by_hotel,
 )
 
 # layout="auto" 時は A列の日付行の間隔から自動判定する
@@ -301,7 +301,7 @@ def parse_nface_file(
 
     if save:
         base_dir = Path(output_dir) if output_dir is not None else OUTPUT_DIR
-        output_path = append_daily_snapshots(base_dir / f"daily_snapshots_{hotel_id}.csv", df_norm)
+        output_path = append_daily_snapshots_by_hotel(df_norm, hotel_id, output_dir=base_dir)
         logger.info("%s: 標準CSVに追記しました -> %s", path, output_path)
 
     return df_norm
@@ -395,7 +395,7 @@ def build_daily_snapshots_fast(
 
     df_new = pd.concat(df_list, ignore_index=True)
     base_dir = Path(output_dir) if output_dir is not None else OUTPUT_DIR
-    output_path = append_daily_snapshots(base_dir / f"daily_snapshots_{hotel_id}.csv", df_new)
+    output_path = append_daily_snapshots_by_hotel(df_new, hotel_id, output_dir=base_dir)
     logger.info("%s: FASTモードで %s 件のファイルを処理しました -> %s", input_path, len(df_list), output_path)
 
 
@@ -452,7 +452,7 @@ def build_daily_snapshots_full_months(
 
     df_new = pd.concat(df_list, ignore_index=True)
     base_dir = Path(output_dir) if output_dir is not None else OUTPUT_DIR
-    output_path = append_daily_snapshots(base_dir / f"daily_snapshots_{hotel_id}.csv", df_new)
+    output_path = append_daily_snapshots_by_hotel(df_new, hotel_id, output_dir=base_dir)
     logger.info("%s: FULL_MONTHSモードで %s 件のファイルを処理しました -> %s", input_path, len(df_list), output_path)
 
 
@@ -502,7 +502,7 @@ def build_daily_snapshots_full_all(
 
     df_new = pd.concat(df_list, ignore_index=True)
     base_dir = Path(output_dir) if output_dir is not None else OUTPUT_DIR
-    output_path = append_daily_snapshots(base_dir / f"daily_snapshots_{hotel_id}.csv", df_new)
+    output_path = append_daily_snapshots_by_hotel(df_new, hotel_id, output_dir=base_dir)
     logger.info("%s: FULL_ALLモードで %s 件のファイルを処理しました -> %s", input_path, len(df_list), output_path)
 
 
@@ -603,16 +603,14 @@ def build_daily_snapshots_from_folder_partial(
 
     df_new = pd.concat(df_list, ignore_index=True)
 
-    base_dir = Path(output_dir) if output_dir is not None else OUTPUT_DIR
-    output_csv_path = base_dir / f"daily_snapshots_{hotel_id}.csv"
-
-    output_path = upsert_daily_snapshots_range(
-        output_csv_path,
+    output_path = upsert_daily_snapshots_range_by_hotel(
         df_new,
+        hotel_id,
         asof_min=asof_min_ts,
         asof_max=asof_max_ts,
         stay_min=stay_min_ts,
         stay_max=stay_max_ts,
+        output_dir=Path(output_dir) if output_dir is not None else OUTPUT_DIR,
     )
     logger.info("%s: %s 件のファイルから部分更新を実施しました -> %s", input_path, len(df_list), output_path)
 

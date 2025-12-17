@@ -3,20 +3,20 @@ from __future__ import annotations
 import json
 import logging
 import tkinter as tk
-from datetime import date
-from tkinter import messagebox, ttk
+from datetime import date, datetime
+from pathlib import Path
+from tkinter import messagebox, simpledialog, ttk
 from typing import Optional
 
+import numpy as np
 import pandas as pd
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
 
 try:
     from tkcalendar import DateEntry
 except ImportError:  # tkcalendar が無い環境向けフォールバック
     DateEntry = None
-
-import numpy as np
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.figure import Figure
 
 # プロジェクト内モジュール
 from booking_curve.gui_backend import (
@@ -40,6 +40,15 @@ from booking_curve.gui_backend import (
     run_full_evaluation_for_gui_range,
 )
 from booking_curve.plot_booking_curve import LEAD_TIME_PITCHES
+from build_daily_snapshots_from_folder import (
+    DEFAULT_FULL_ALL_RATE,
+    LOGS_DIR,
+    count_excel_files,
+    load_historical_full_all_rate,
+)
+from build_daily_snapshots_from_folder import (
+    HOTELS as NFACE_HOTELS,
+)
 
 # デフォルトホテル (現状は大国町のみ想定)
 DEFAULT_HOTEL = next(iter(HOTEL_CONFIG.keys()), "daikokucho")
@@ -500,6 +509,19 @@ class BookingCurveApp(tk.Tk):
             command=self._on_save_master_daily_caps,
         ).grid(row=0, column=4, padx=12, pady=2, sticky="e")
 
+        advanced_frame = ttk.LabelFrame(frame, text="Advanced / Daily snapshots")
+        advanced_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 8))
+
+        ttk.Label(
+            advanced_frame,
+            text="FULL_ALL は大量処理です。事前確認のうえ実行してください。",
+        ).grid(row=0, column=0, columnspan=2, padx=4, pady=2, sticky="w")
+        ttk.Button(
+            advanced_frame,
+            text="Daily snapshots 全量再生成（危険）",
+            command=self._on_run_full_all_snapshots,
+        ).grid(row=1, column=0, padx=4, pady=4, sticky="w")
+
         # 初期表示
         self._refresh_calendar_coverage()
         self._refresh_master_daily_caps()
@@ -666,6 +688,73 @@ class BookingCurveApp(tk.Tk):
             self.bc_forecast_cap_var.set(str(fc_val))
 
         messagebox.showinfo("保存完了", "キャパシティ設定を保存しました。")
+
+    def _on_run_full_all_snapshots(self) -> None:
+        hotel_tag = self.hotel_var.get().strip()
+        if not hotel_tag:
+            messagebox.showerror("エラー", "ホテルが選択されていません。")
+            return
+
+        cfg = NFACE_HOTELS.get(hotel_tag)
+        if cfg is None:
+            messagebox.showerror("エラー", f"N@FACE設定が見つかりません: {hotel_tag}")
+            return
+
+        input_dir_raw = cfg.get("input_dir")
+        if not input_dir_raw:
+            messagebox.showerror("エラー", f"入力ディレクトリが設定されていません: {hotel_tag}")
+            return
+
+        input_dir = Path(input_dir_raw)
+        file_count = count_excel_files(input_dir)
+        rate = load_historical_full_all_rate(LOGS_DIR) or DEFAULT_FULL_ALL_RATE
+        estimate_sec = file_count / rate if rate > 0 and file_count else None
+        log_file = LOGS_DIR / f"full_all_{datetime.now().strftime('%Y%m%d_%H%M')}.log"
+
+        estimate_text = (
+            f"概算時間: ~{estimate_sec:.1f} 秒 (rate {rate:.2f} files/sec)"
+            if estimate_sec is not None
+            else f"概算時間: 不明 (rate {rate:.2f} files/sec)"
+        )
+
+        message = (
+            "Daily snapshots を全量再生成します。\n"
+            f"ホテル: {hotel_tag}\n"
+            f"対象ファイル数: {file_count}\n"
+            f"{estimate_text}\n"
+            f"ログ: {log_file}"
+        )
+
+        messagebox.showinfo("FULL_ALL 事前確認", message)
+
+        confirm = simpledialog.askstring("最終確認", '続行するには "FULL_ALL" と入力してください。')
+        if confirm is None or confirm.strip().upper() != "FULL_ALL":
+            messagebox.showinfo("中断", "FULL_ALL を入力しなかったため処理を中止しました。")
+            return
+
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s - %(message)s"))
+        root_logger = logging.getLogger()
+        root_logger.addHandler(file_handler)
+
+        try:
+            run_daily_snapshots_for_gui(hotel_tag, mode="FULL_ALL")
+        except Exception as exc:  # noqa: BLE001
+            logging.exception("FULL_ALL 実行中にエラーが発生しました")
+            messagebox.showerror("エラー", f"FULL_ALL 実行に失敗しました。\n{exc}\nログ: {log_file}")
+            return
+        finally:
+            root_logger.removeHandler(file_handler)
+            file_handler.close()
+
+        try:
+            self._update_bc_latest_asof_label(update_asof_if_empty=False)
+            self._update_df_latest_asof_label(update_asof_if_empty=False)
+        except Exception:
+            logging.warning("最新ASOF表示の更新に失敗しました", exc_info=True)
+
+        messagebox.showinfo("完了", f"Daily snapshots FULL_ALL が完了しました。\nログ: {log_file}")
 
     # =========================
     # 3) 日別フォーキャスト一覧タブ

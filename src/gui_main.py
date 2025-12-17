@@ -2135,8 +2135,8 @@ class BookingCurveApp(tk.Tk):
                     return
                 run_daily_snapshots_for_gui(
                     hotel_tag,
+                    mode="FAST",
                     target_months=target_months,
-                    mode="partial",
                     buffer_days=14,
                 )
             elif self.update_daily_snapshots_var.get():
@@ -2285,8 +2285,8 @@ class BookingCurveApp(tk.Tk):
                     return
                 run_daily_snapshots_for_gui(
                     hotel_tag,
+                    mode="FULL_MONTHS",
                     target_months=target_months,
-                    mode="partial",
                     buffer_days=14,
                 )
             elif self.update_daily_snapshots_var.get():

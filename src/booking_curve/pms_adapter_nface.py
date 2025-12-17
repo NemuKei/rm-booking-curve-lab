@@ -37,9 +37,7 @@ def _parse_target_month(df: pd.DataFrame, file_path: Path) -> Optional[pd.Timest
     return pd.Timestamp(year=dt.year, month=dt.month, day=1).normalize()
 
 
-def _parse_asof_date(
-    df: pd.DataFrame, file_path: Path, filename_asof_ymd: str | None
-) -> Optional[pd.Timestamp]:
+def _parse_asof_date(df: pd.DataFrame, file_path: Path, filename_asof_ymd: str | None) -> Optional[pd.Timestamp]:
     """Parse the as-of date prioritizing filename information."""
 
     try:
@@ -350,9 +348,7 @@ def build_daily_snapshots_fast(
     asof_min_ts = _normalize_boundary_timestamp(asof_min, "asof_min") if asof_min is not None else None
     asof_max_ts = _normalize_boundary_timestamp(asof_max, "asof_max") if asof_max is not None else None
 
-    files = sorted(
-        p for p in input_path.glob(glob) if p.is_file() and p.suffix.lower() in {".xls", ".xlsx"}
-    )
+    files = sorted(p for p in input_path.glob(glob) if p.is_file() and p.suffix.lower() in {".xls", ".xlsx"})
 
     filtered: list[tuple[Path, str]] = []
     for file in files:
@@ -418,9 +414,7 @@ def build_daily_snapshots_full_months(
         logger.error("%s が存在しないかディレクトリではありません", input_path)
         return
 
-    files = sorted(
-        p for p in input_path.glob(glob) if p.is_file() and p.suffix.lower() in {".xls", ".xlsx"}
-    )
+    files = sorted(p for p in input_path.glob(glob) if p.is_file() and p.suffix.lower() in {".xls", ".xlsx"})
 
     filtered: list[tuple[Path, str]] = []
     for file in files:
@@ -459,9 +453,7 @@ def build_daily_snapshots_full_months(
     df_new = pd.concat(df_list, ignore_index=True)
     base_dir = Path(output_dir) if output_dir is not None else OUTPUT_DIR
     output_path = append_daily_snapshots(base_dir / f"daily_snapshots_{hotel_id}.csv", df_new)
-    logger.info(
-        "%s: FULL_MONTHSモードで %s 件のファイルを処理しました -> %s", input_path, len(df_list), output_path
-    )
+    logger.info("%s: FULL_MONTHSモードで %s 件のファイルを処理しました -> %s", input_path, len(df_list), output_path)
 
 
 def build_daily_snapshots_full_all(
@@ -478,9 +470,7 @@ def build_daily_snapshots_full_all(
         logger.error("%s が存在しないかディレクトリではありません", input_path)
         return
 
-    files = sorted(
-        p for p in input_path.glob(glob) if p.is_file() and p.suffix.lower() in {".xls", ".xlsx"}
-    )
+    files = sorted(p for p in input_path.glob(glob) if p.is_file() and p.suffix.lower() in {".xls", ".xlsx"})
 
     if not files:
         logger.warning("%s 配下に対象ファイルが見つかりません", input_path)

@@ -21,9 +21,7 @@ from booking_curve.forecast_simple import (
     moving_average_recent_90days,
     moving_average_recent_90days_weighted,
 )
-from booking_curve.pms_adapter_nface import build_daily_snapshots_fast
-from booking_curve.pms_adapter_nface import build_daily_snapshots_full_all
-from booking_curve.pms_adapter_nface import build_daily_snapshots_full_months
+from booking_curve.pms_adapter_nface import build_daily_snapshots_fast, build_daily_snapshots_full_all, build_daily_snapshots_full_months
 from booking_curve.utils import apply_nocb_along_lt
 from build_daily_snapshots_from_folder import HOTELS as NFACE_HOTELS
 from run_full_evaluation import resolve_asof_dates_for_month, run_full_evaluation_for_gui

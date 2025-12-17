@@ -208,9 +208,7 @@ def get_latest_asof_date(hotel_id: str, output_dir: Optional[Path] = None) -> pd
     return asof_max.normalize()
 
 
-def rebuild_asof_dates_from_daily_snapshots(
-    hotel_id: str, output_dir: Optional[Path] = None
-) -> Path | None:
+def rebuild_asof_dates_from_daily_snapshots(hotel_id: str, output_dir: Optional[Path] = None) -> Path | None:
     if not hotel_id:
         raise ValueError("hotel_id must be a non-empty string")
 
@@ -223,11 +221,7 @@ def rebuild_asof_dates_from_daily_snapshots(
 
     df = read_daily_snapshots_csv(daily_path)
     asof_series = pd.to_datetime(df.get("as_of_date"), errors="coerce")
-    asof_list = (
-        asof_series.dropna().dt.normalize().drop_duplicates().sort_values().tolist()
-        if not asof_series.empty
-        else []
-    )
+    asof_list = asof_series.dropna().dt.normalize().drop_duplicates().sort_values().tolist() if not asof_series.empty else []
 
     asof_df = pd.DataFrame({"as_of_date": asof_list})
     asof_path = base_dir / f"asof_dates_{hotel_id}.csv"

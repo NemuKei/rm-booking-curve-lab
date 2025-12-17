@@ -2,15 +2,22 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
+import time
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
 import pandas as pd
 
-from booking_curve.daily_snapshots import get_latest_asof_date
+from booking_curve.daily_snapshots import (
+    get_latest_asof_date,
+    rebuild_asof_dates_from_daily_snapshots,
+)
 from booking_curve.pms_adapter_nface import (
-    build_daily_snapshots_from_folder,
-    build_daily_snapshots_from_folder_partial,
+    build_daily_snapshots_fast,
+    build_daily_snapshots_full_all,
+    build_daily_snapshots_full_months,
 )
 
 # N@FACE 生データの配置とレイアウト指定
@@ -37,61 +44,145 @@ HOTELS = {
     # },
 }
 
-
-def _parse_target_months(
-    target_months_arg: str | None, from_ym: str | None, to_ym: str | None
-) -> tuple[list[str] | None, pd.Timestamp | None, pd.Timestamp | None]:
-    """Parse target months argument into list and stay date boundaries."""
-
-    def _validate_month(month: str) -> pd.Timestamp:
-        month = month.strip()
-        if len(month) != 6 or not month.isdigit():
-            raise ValueError("month must be in YYYYMM format")
-        return pd.to_datetime(f"{month}01", format="%Y%m%d", errors="raise")
-
-    if target_months_arg:
-        months = [m.strip() for m in target_months_arg.split(",") if m.strip()]
-        if not months:
-            raise ValueError("target-months must contain at least one YYYYMM value")
-        month_starts = [_validate_month(month) for month in months]
-    elif from_ym or to_ym:
-        if not (from_ym and to_ym):
-            raise ValueError("both --from-ym and --to-ym are required when using ranges")
-        start = _validate_month(from_ym)
-        end = _validate_month(to_ym)
-        if start > end:
-            raise ValueError("from-ym must be earlier than or equal to to-ym")
-        month_starts = [(start + pd.DateOffset(months=offset)) for offset in range((end.year - start.year) * 12 + (end.month - start.month) + 1)]
-        months = [dt.strftime("%Y%m") for dt in month_starts]
-    else:
-        return None, None, None
-
-    stay_min = min(month_starts)
-    last_month_end = max(month_starts) + pd.offsets.MonthEnd(0)
-    return months, stay_min, last_month_end
+EXCEL_GLOB = "*.xls*"
+LOGS_DIR = Path("output/logs")
+DEFAULT_FULL_ALL_RATE = 0.5
 
 
-def _log_run_parameters(
-    hotel_ids: Iterable[str],
-    mode: str,
-    target_months: list[str] | None,
-    asof_min: pd.Timestamp | str | None,
-    asof_max: pd.Timestamp | str | None,
-    stay_min: pd.Timestamp | str | None,
-    stay_max: pd.Timestamp | str | None,
-    buffer_days: int,
-) -> None:
-    hotels_str = ",".join(hotel_ids)
+def _configure_logging(log_file: Path | None) -> None:
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if log_file is not None:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        handlers.append(logging.FileHandler(log_file, encoding="utf-8"))
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
+        handlers=handlers,
+        force=True,
+    )
+
+
+def _parse_target_months_arg(target_months: str | None) -> list[str]:
+    if not target_months:
+        raise ValueError("target-months is required for FAST or FULL_MONTHS mode")
+
+    months: list[str] = []
+    for value in target_months.split(","):
+        ym = value.strip()
+        if not ym:
+            continue
+        if not re.fullmatch(r"\d{6}", ym):
+            raise ValueError(f"Invalid target month format: {ym}")
+        months.append(ym)
+
+    if not months:
+        raise ValueError("target-months must include at least one YYYYMM value")
+
+    return months
+
+
+def _count_excel_files(input_dir: Path, glob: str = EXCEL_GLOB) -> int:
+    return sum(1 for p in input_dir.glob(glob) if p.is_file() and p.suffix.lower() in {".xls", ".xlsx"})
+
+
+def _load_historical_full_all_rate(logs_dir: Path) -> float | None:
+    if not logs_dir.exists():
+        return None
+
+    for log_path in sorted(logs_dir.glob("full_all_*.log"), reverse=True):
+        lines = log_path.read_text(encoding="utf-8").splitlines()
+        for line in reversed(lines):
+            match = re.search(r"rate_files_per_sec=([0-9.]+)", line)
+            if match:
+                try:
+                    return float(match.group(1))
+                except ValueError:
+                    continue
+    return None
+
+
+def _resolve_hotels(target: str) -> Iterable[tuple[str, dict]]:
+    if target == "all":
+        return HOTELS.items()
+    if target not in HOTELS:
+        raise ValueError(f"Unknown hotel: {target}")
+    return [(target, HOTELS[target])]
+
+
+def _run_fast(hotel_id: str, cfg: dict, target_months: list[str], buffer_days: int) -> None:
+    layout = cfg.get("layout", "auto")
+    latest_asof = get_latest_asof_date(hotel_id)
+    asof_min = latest_asof - pd.Timedelta(days=buffer_days) if latest_asof is not None else None
+
     logging.info(
-        ("run params -> hotel=%s, mode=%s, target_months=%s, asof_min=%s, asof_max=%s, stay_min=%s, stay_max=%s, buffer_days=%s"),
-        hotels_str,
-        mode,
+        "Running FAST: hotel=%s target_months=%s buffer_days=%s asof_min=%s",
+        hotel_id,
         target_months,
-        asof_min,
-        asof_max,
-        stay_min,
-        stay_max,
         buffer_days,
+        asof_min,
+    )
+
+    build_daily_snapshots_fast(
+        input_dir=cfg["input_dir"],
+        hotel_id=hotel_id,
+        target_months=target_months,
+        asof_min=asof_min,
+        asof_max=None,
+        layout=layout,
+        output_dir=None,
+        glob=EXCEL_GLOB,
+    )
+
+
+def _run_full_months(hotel_id: str, cfg: dict, target_months: list[str]) -> None:
+    layout = cfg.get("layout", "auto")
+    logging.info("Running FULL_MONTHS: hotel=%s target_months=%s", hotel_id, target_months)
+
+    build_daily_snapshots_full_months(
+        input_dir=cfg["input_dir"],
+        hotel_id=hotel_id,
+        target_months=target_months,
+        layout=layout,
+        output_dir=None,
+        glob=EXCEL_GLOB,
+    )
+
+
+def _run_full_all(hotel_id: str, cfg: dict) -> None:
+    layout = cfg.get("layout", "auto")
+    input_dir = Path(cfg["input_dir"])
+    file_count = _count_excel_files(input_dir, EXCEL_GLOB)
+    historical_rate = _load_historical_full_all_rate(LOGS_DIR)
+    rate = historical_rate if historical_rate and historical_rate > 0 else DEFAULT_FULL_ALL_RATE
+    estimated_seconds = file_count / rate if rate > 0 and file_count else None
+
+    logging.info(
+        "FULL_ALL precheck: hotel=%s files=%s input_dir=%s",
+        hotel_id,
+        file_count,
+        input_dir,
+    )
+    if estimated_seconds is not None:
+        logging.info("Estimated duration: ~%.1f seconds (rate %.2f files/sec)", estimated_seconds, rate)
+    else:
+        logging.info("Estimated duration unavailable; using rate %.2f files/sec", rate)
+
+    start = time.monotonic()
+    build_daily_snapshots_full_all(
+        input_dir=input_dir,
+        hotel_id=hotel_id,
+        layout=layout,
+        output_dir=None,
+        glob=EXCEL_GLOB,
+    )
+    duration = time.monotonic() - start
+    actual_rate = file_count / duration if duration > 0 and file_count else 0.0
+
+    logging.info(
+        "FULL_ALL completed: files=%s duration_sec=%.1f rate_files_per_sec=%.2f",
+        file_count,
+        duration,
+        actual_rate,
     )
 
 
@@ -101,105 +192,54 @@ def _parse_args() -> argparse.Namespace:
         "--hotel",
         choices=[*HOTELS.keys(), "all"],
         default="all",
-        help="Hotel identifier to process (default: all)",
+        help="Hotel identifier to process",
     )
     parser.add_argument(
         "--mode",
-        choices=["full", "partial"],
-        default="partial",
-        help="Build mode: full or partial (default: partial)",
+        choices=["FAST", "FULL_MONTHS", "FULL_ALL"],
+        default="FAST",
+        type=str.upper,
+        help="Execution mode",
     )
-    parser.add_argument("--from-ym", help="Stay month range start in YYYYMM", dest="from_ym")
-    parser.add_argument("--to-ym", help="Stay month range end in YYYYMM", dest="to_ym")
     parser.add_argument(
         "--target-months",
-        help="Comma separated stay months (YYYYMM). Takes precedence over from/to range",
+        help="Comma separated stay months (YYYYMM,YYYYMM,...). Required for FAST and FULL_MONTHS.",
     )
-    parser.add_argument("--asof-min", help="Minimum as_of_date in YYYY-MM-DD")
-    parser.add_argument("--asof-max", help="Maximum as_of_date in YYYY-MM-DD")
     parser.add_argument(
         "--buffer-days",
         type=int,
         default=14,
-        help="Buffer days when computing asof_min automatically (default: 14)",
-    )
-    parser.add_argument(
-        "--auto-asof-from-csv",
-        action="store_true",
-        help="Infer asof_min from existing daily_snapshots CSV when not specified",
+        help="Buffer days for FAST mode when inferring asof_min",
     )
     return parser.parse_args()
 
 
 def main() -> None:
-    # ログ設定（必要に応じてレベルを INFO/WARNING に調整）
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
-    )
-
     args = _parse_args()
-    target_months, stay_min, stay_max = _parse_target_months(args.target_months, args.from_ym, args.to_ym)
 
-    hotels_to_process: Iterable[tuple[str, dict]]
-    if args.hotel == "all":
-        hotels_to_process = HOTELS.items()
-    else:
-        hotels_to_process = [(args.hotel, HOTELS[args.hotel])]
+    log_file: Path | None = None
+    if args.mode == "FULL_ALL":
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+        log_file = LOGS_DIR / f"full_all_{timestamp}.log"
+
+    _configure_logging(log_file)
+
+    target_months: list[str] | None = None
+    if args.mode in {"FAST", "FULL_MONTHS"}:
+        target_months = _parse_target_months_arg(args.target_months)
+
+    hotels_to_process = _resolve_hotels(args.hotel)
 
     for hotel_id, cfg in hotels_to_process:
-        input_dir = cfg["input_dir"]
-        layout = cfg.get("layout", "auto")
-
-        asof_min = args.asof_min
-        asof_max = args.asof_max
-        if args.mode == "partial" and args.auto_asof_from_csv and not args.asof_min and not args.asof_max:
-            last_asof = get_latest_asof_date(hotel_id)
-            if last_asof is not None:
-                asof_min = last_asof - pd.Timedelta(days=args.buffer_days)
-
-        stay_filter_used = stay_min is not None or stay_max is not None
-        asof_filter_used = asof_min is not None or asof_max is not None
-        if args.mode == "partial" and stay_filter_used and not asof_filter_used:
-            raise ValueError(
-                "stay filter requires asof filter: specify asof_min/asof_max or enable --auto-asof-from-csv",
-            )
-
-        _log_run_parameters(
-            [hotel_id],
-            args.mode,
-            target_months,
-            asof_min,
-            asof_max,
-            stay_min,
-            stay_max,
-            args.buffer_days,
-        )
-        logging.info("ホテル %s の N@FACE 生データを処理します (layout=%s)", hotel_id, layout)
-
-        if args.mode == "full":
-            build_daily_snapshots_from_folder(
-                input_dir=input_dir,
-                hotel_id=hotel_id,
-                layout=layout,  # "auto" / "shifted" / "inline"
-                output_dir=None,  # None -> booking_curve.config.OUTPUT_DIR が使われる
-                glob="*.xls*",  # .xls / .xlsx 両方を対象
-            )
+        if args.mode == "FAST":
+            _run_fast(hotel_id, cfg, target_months or [], args.buffer_days)
+        elif args.mode == "FULL_MONTHS":
+            _run_full_months(hotel_id, cfg, target_months or [])
         else:
-            build_daily_snapshots_from_folder_partial(
-                input_dir=input_dir,
-                hotel_id=hotel_id,
-                target_months=target_months,
-                asof_min=asof_min,
-                asof_max=asof_max,
-                stay_min=stay_min,
-                stay_max=stay_max,
-                layout=layout,
-                output_dir=None,
-                glob="*.xls*",
-            )
+            _run_full_all(hotel_id, cfg)
 
-    logging.info("すべてのホテルの処理が完了しました。")
+        rebuild_asof_dates_from_daily_snapshots(hotel_id)
+        logging.info("Completed asof_dates rebuild for hotel=%s", hotel_id)
 
 
 if __name__ == "__main__":

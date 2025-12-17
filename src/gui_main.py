@@ -2127,6 +2127,12 @@ class BookingCurveApp(tk.Tk):
             lt_source = self.lt_source_var.get() or "daily_snapshots"
             # 必要に応じて daily snapshots を先に更新
             if self.update_daily_snapshots_var.get() and lt_source == "daily_snapshots":
+                if not target_months:
+                    messagebox.showwarning(
+                        "LT_DATA生成エラー",
+                        "対象月が未指定のため、daily snapshots の更新をスキップします。",
+                    )
+                    return
                 run_daily_snapshots_for_gui(
                     hotel_tag,
                     target_months=target_months,
@@ -2271,6 +2277,12 @@ class BookingCurveApp(tk.Tk):
         try:
             lt_source = self.lt_source_var.get() or "daily_snapshots"
             if self.update_daily_snapshots_var.get() and lt_source == "daily_snapshots":
+                if not target_months:
+                    messagebox.showwarning(
+                        "LT_DATA生成エラー",
+                        "対象月が未指定のため、daily snapshots の更新をスキップします。",
+                    )
+                    return
                 run_daily_snapshots_for_gui(
                     hotel_tag,
                     target_months=target_months,

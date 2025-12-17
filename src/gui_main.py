@@ -717,13 +717,7 @@ class BookingCurveApp(tk.Tk):
             else f"概算時間: 不明 (rate {rate:.2f} files/sec)"
         )
 
-        message = (
-            "Daily snapshots を全量再生成します。\n"
-            f"ホテル: {hotel_tag}\n"
-            f"対象ファイル数: {file_count}\n"
-            f"{estimate_text}\n"
-            f"ログ: {log_file}"
-        )
+        message = f"Daily snapshots を全量再生成します。\nホテル: {hotel_tag}\n対象ファイル数: {file_count}\n{estimate_text}\nログ: {log_file}"
 
         messagebox.showinfo("FULL_ALL 事前確認", message)
 

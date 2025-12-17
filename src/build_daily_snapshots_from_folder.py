@@ -77,16 +77,23 @@ def _log_run_parameters(
     target_months: list[str] | None,
     asof_min: pd.Timestamp | str | None,
     asof_max: pd.Timestamp | str | None,
+    stay_min: pd.Timestamp | str | None,
+    stay_max: pd.Timestamp | str | None,
     buffer_days: int,
 ) -> None:
     hotels_str = ",".join(hotel_ids)
     logging.info(
-        "run params -> hotel=%s, mode=%s, target_months=%s, asof_min=%s, asof_max=%s, buffer_days=%s",
+        (
+            "run params -> hotel=%s, mode=%s, target_months=%s, asof_min=%s, "
+            "asof_max=%s, stay_min=%s, stay_max=%s, buffer_days=%s"
+        ),
         hotels_str,
         mode,
         target_months,
         asof_min,
         asof_max,
+        stay_min,
+        stay_max,
         buffer_days,
     )
 
@@ -154,12 +161,21 @@ def main() -> None:
             if last_asof is not None:
                 asof_min = last_asof - pd.Timedelta(days=args.buffer_days)
 
+        stay_filter_used = stay_min is not None or stay_max is not None
+        asof_filter_used = asof_min is not None or asof_max is not None
+        if args.mode == "partial" and stay_filter_used and not asof_filter_used:
+            raise ValueError(
+                "stay filter requires asof filter: specify asof_min/asof_max or enable --auto-asof-from-csv",
+            )
+
         _log_run_parameters(
             [hotel_id],
             args.mode,
             target_months,
             asof_min,
             asof_max,
+            stay_min,
+            stay_max,
             args.buffer_days,
         )
         logging.info("ホテル %s の N@FACE 生データを処理します (layout=%s)", hotel_id, layout)

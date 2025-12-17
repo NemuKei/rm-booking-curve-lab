@@ -164,6 +164,11 @@ def upsert_daily_snapshots_range(
     stay_min: "pd.Timestamp | str | None" = None,
     stay_max: "pd.Timestamp | str | None" = None,
 ) -> Path:
+    if (stay_min is not None or stay_max is not None) and asof_min is None and asof_max is None:
+        raise ValueError(
+            "stay filter requires asof filter: specify asof_min/asof_max when using stay_min/stay_max",
+        )
+
     df_existing = read_daily_snapshots_csv(path)
     df_new_norm = normalize_daily_snapshots_df(df_new)
 

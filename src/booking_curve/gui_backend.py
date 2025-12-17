@@ -1237,14 +1237,19 @@ def run_build_lt_data_for_gui(
 
 def run_daily_snapshots_for_gui(
     hotel_tag: str,
-    target_months: list[str] | None = None,
     mode: str = "FAST",
+    target_months: list[str] | None = None,
     buffer_days: int = 14,
 ) -> None:
     """Tkinter GUI から daily snapshots 更新を実行するための薄いラッパー。"""
 
     if hotel_tag not in NFACE_HOTELS:
         raise ValueError(f"Unknown hotel_tag for N@FACE snapshots: {hotel_tag}")
+
+    if isinstance(mode, (list, tuple, set, dict)):
+        raise ValueError(
+            "mode must be a string; did you swap positional arguments for mode and target_months?"
+        )
 
     mode_normalized = mode.upper()
     if mode_normalized not in {"FAST", "FULL_MONTHS", "FULL_ALL"}:

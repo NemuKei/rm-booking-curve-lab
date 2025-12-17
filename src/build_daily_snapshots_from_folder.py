@@ -10,10 +10,7 @@ from typing import Iterable
 
 import pandas as pd
 
-from booking_curve.daily_snapshots import (
-    get_latest_asof_date,
-    rebuild_asof_dates_from_daily_snapshots,
-)
+from booking_curve.daily_snapshots import get_latest_asof_date
 from booking_curve.pms_adapter_nface import (
     build_daily_snapshots_fast,
     build_daily_snapshots_full_all,
@@ -253,9 +250,6 @@ def main() -> None:
             _run_full_months(hotel_id, cfg, target_months or [])
         else:
             _run_full_all(hotel_id, cfg)
-
-        rebuild_asof_dates_from_daily_snapshots(hotel_id)
-        logging.info("Completed asof_dates rebuild for hotel=%s", hotel_id)
 
 
 if __name__ == "__main__":

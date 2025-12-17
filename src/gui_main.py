@@ -2287,7 +2287,6 @@ class BookingCurveApp(tk.Tk):
                     hotel_tag,
                     mode="FULL_MONTHS",
                     target_months=target_months,
-                    buffer_days=14,
                 )
             elif self.update_daily_snapshots_var.get():
                 logging.info("LT生成: source=timeseries のため daily snapshots 更新はスキップ")

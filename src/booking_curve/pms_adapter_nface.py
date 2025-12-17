@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Literal, Optional
 
 import pandas as pd
-from booking_curve.config import OUTPUT_DIR
 
+from booking_curve.config import OUTPUT_DIR
 from booking_curve.daily_snapshots import (
     append_daily_snapshots,
     normalize_daily_snapshots_df,
@@ -94,9 +94,7 @@ def _iter_stay_rows(df: pd.DataFrame) -> list[tuple[int, pd.Timestamp]]:
     return stay_rows
 
 
-def _normalize_boundary_timestamp(
-    value: pd.Timestamp | str | None, param_name: str
-) -> pd.Timestamp | None:
+def _normalize_boundary_timestamp(value: pd.Timestamp | str | None, param_name: str) -> pd.Timestamp | None:
     if value is None:
         return None
 

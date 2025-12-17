@@ -95,9 +95,7 @@ def append_daily_snapshots(path: Path, df_new: pd.DataFrame) -> Path:
 
     df_existing = read_daily_snapshots_csv(path)
     df_combined = pd.concat([df_existing, df_new_norm], ignore_index=True)
-    df_combined = df_combined.drop_duplicates(
-        subset=["hotel_id", "as_of_date", "stay_date"], keep="last"
-    )
+    df_combined = df_combined.drop_duplicates(subset=["hotel_id", "as_of_date", "stay_date"], keep="last")
 
     df_combined = df_combined.sort_values(["hotel_id", "as_of_date", "stay_date"])
     write_daily_snapshots_csv(df_combined, path)
@@ -176,9 +174,7 @@ def upsert_daily_snapshots_range(
     df_filtered = df_existing.loc[~removal_mask]
 
     df_combined = pd.concat([df_filtered, df_new_norm], ignore_index=True)
-    df_combined = df_combined.drop_duplicates(
-        subset=["hotel_id", "as_of_date", "stay_date"], keep="last"
-    )
+    df_combined = df_combined.drop_duplicates(subset=["hotel_id", "as_of_date", "stay_date"], keep="last")
     df_combined = df_combined.sort_values(["hotel_id", "as_of_date", "stay_date"])
 
     write_daily_snapshots_csv(df_combined, path)

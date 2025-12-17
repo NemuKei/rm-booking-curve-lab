@@ -83,10 +83,7 @@ def _log_run_parameters(
 ) -> None:
     hotels_str = ",".join(hotel_ids)
     logging.info(
-        (
-            "run params -> hotel=%s, mode=%s, target_months=%s, asof_min=%s, "
-            "asof_max=%s, stay_min=%s, stay_max=%s, buffer_days=%s"
-        ),
+        ("run params -> hotel=%s, mode=%s, target_months=%s, asof_min=%s, asof_max=%s, stay_min=%s, stay_max=%s, buffer_days=%s"),
         hotels_str,
         mode,
         target_months,

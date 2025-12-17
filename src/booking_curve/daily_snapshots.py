@@ -195,17 +195,24 @@ def get_latest_asof_date(hotel_id: str, output_dir: Optional[Path] = None) -> pd
         raise ValueError("hotel_id must be a non-empty string")
 
     base_dir = OUTPUT_DIR if output_dir is None else Path(output_dir)
-    csv_path = base_dir / f"daily_snapshots_{hotel_id}.csv"
+    asof_path = base_dir / f"asof_dates_{hotel_id}.csv"
+    if asof_path.exists():
+        df = pd.read_csv(asof_path, usecols=["as_of_date"])
+        asof_series = pd.to_datetime(df.get("as_of_date"), errors="coerce")
+        latest = asof_series.max()
+        if pd.notna(latest):
+            return pd.Timestamp(latest).normalize()
 
+    csv_path = base_dir / f"daily_snapshots_{hotel_id}.csv"
     if not csv_path.exists():
         return None
 
     df = pd.read_csv(csv_path, usecols=["as_of_date"])
-    asof_series = pd.to_datetime(df["as_of_date"], errors="coerce")
-    asof_max = asof_series.max()
-    if pd.isna(asof_max):
+    asof_series = pd.to_datetime(df.get("as_of_date"), errors="coerce")
+    latest = asof_series.max()
+    if pd.isna(latest):
         return None
-    return asof_max.normalize()
+    return pd.Timestamp(latest).normalize()
 
 
 def rebuild_asof_dates_from_daily_snapshots(hotel_id: str, output_dir: Optional[Path] = None) -> Path | None:
@@ -256,7 +263,16 @@ def upsert_daily_snapshots_range_by_hotel(
     base_dir = OUTPUT_DIR if output_dir is None else Path(output_dir)
     path = base_dir / f"daily_snapshots_{hotel_id}.csv"
     df_new_with_hotel = normalize_daily_snapshots_df(df_new, hotel_id=hotel_id)
-    return upsert_daily_snapshots_range(path, df_new_with_hotel, asof_min, asof_max, stay_min, stay_max)
+    result_path = upsert_daily_snapshots_range(
+        path,
+        df_new_with_hotel,
+        asof_min,
+        asof_max,
+        stay_min,
+        stay_max,
+    )
+    rebuild_asof_dates_from_daily_snapshots(hotel_id, output_dir=base_dir)
+    return result_path
 
 
 def read_daily_snapshots(

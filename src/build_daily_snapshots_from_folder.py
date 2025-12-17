@@ -81,11 +81,11 @@ def _parse_target_months_arg(target_months: str | None) -> list[str]:
     return months
 
 
-def _count_excel_files(input_dir: Path, glob: str = EXCEL_GLOB) -> int:
+def count_excel_files(input_dir: Path, glob: str = EXCEL_GLOB) -> int:
     return sum(1 for p in input_dir.glob(glob) if p.is_file() and p.suffix.lower() in {".xls", ".xlsx"})
 
 
-def _load_historical_full_all_rate(logs_dir: Path) -> float | None:
+def load_historical_full_all_rate(logs_dir: Path) -> float | None:
     if not logs_dir.exists():
         return None
 
@@ -151,8 +151,8 @@ def _run_full_months(hotel_id: str, cfg: dict, target_months: list[str]) -> None
 def _run_full_all(hotel_id: str, cfg: dict) -> None:
     layout = cfg.get("layout", "auto")
     input_dir = Path(cfg["input_dir"])
-    file_count = _count_excel_files(input_dir, EXCEL_GLOB)
-    historical_rate = _load_historical_full_all_rate(LOGS_DIR)
+    file_count = count_excel_files(input_dir, EXCEL_GLOB)
+    historical_rate = load_historical_full_all_rate(LOGS_DIR)
     rate = historical_rate if historical_rate and historical_rate > 0 else DEFAULT_FULL_ALL_RATE
     estimated_seconds = file_count / rate if rate > 0 and file_count else None
 
@@ -211,6 +211,15 @@ def _parse_args() -> argparse.Namespace:
         default=14,
         help="Buffer days for FAST mode when inferring asof_min",
     )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Confirm FULL_ALL execution without interactive prompt",
+    )
+    parser.add_argument(
+        "--confirm-full-all",
+        help='Additional confirmation string required for FULL_ALL (expects "FULL_ALL")',
+    )
     return parser.parse_args()
 
 
@@ -227,6 +236,13 @@ def main() -> None:
     target_months: list[str] | None = None
     if args.mode in {"FAST", "FULL_MONTHS"}:
         target_months = _parse_target_months_arg(args.target_months)
+
+    confirmed_full_all = bool(args.yes) or (args.confirm_full_all or "").strip().upper() == "FULL_ALL"
+    if args.mode == "FULL_ALL" and not confirmed_full_all:
+        logging.warning(
+            "FULL_ALL mode requires confirmation. Specify --yes or --confirm-full-all FULL_ALL to proceed.",
+        )
+        return
 
     hotels_to_process = _resolve_hotels(args.hotel)
 

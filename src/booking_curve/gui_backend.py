@@ -11,11 +11,7 @@ import pandas as pd
 import build_calendar_features
 import run_build_lt_csv
 import run_forecast_batch
-from booking_curve.daily_snapshots import (
-    get_latest_asof_date,
-    read_daily_snapshots_for_month,
-    rebuild_asof_dates_from_daily_snapshots,
-)
+from booking_curve.daily_snapshots import get_latest_asof_date, read_daily_snapshots_for_month
 from booking_curve.forecast_simple import (
     moving_average_3months,
     moving_average_recent_90days,
@@ -1241,8 +1237,8 @@ def run_build_lt_data_for_gui(
 
 def run_daily_snapshots_for_gui(
     hotel_tag: str,
-    mode: str,
     target_months: list[str] | None = None,
+    mode: str = "FAST",
     buffer_days: int = 14,
 ) -> None:
     """Tkinter GUI から daily snapshots 更新を実行するための薄いラッパー。"""
@@ -1253,11 +1249,6 @@ def run_daily_snapshots_for_gui(
     mode_normalized = mode.upper()
     if mode_normalized not in {"FAST", "FULL_MONTHS", "FULL_ALL"}:
         raise ValueError(f"Invalid mode: {mode}")
-
-    config = NFACE_HOTELS[hotel_tag]
-    input_dir = config["input_dir"]
-    layout = config.get("layout", "auto")
-    output_csv_path = OUTPUT_DIR / f"daily_snapshots_{hotel_tag}.csv"
 
     validated_target_months: list[str] | None = None
     if mode_normalized in {"FAST", "FULL_MONTHS"}:
@@ -1271,9 +1262,13 @@ def run_daily_snapshots_for_gui(
                 raise ValueError(f"Invalid target_month format: {ym}") from exc
             validated_target_months.append(period.strftime("%Y%m"))
 
+    config = NFACE_HOTELS[hotel_tag]
+    input_dir = config["input_dir"]
+    layout = config.get("layout", "auto")
+
     asof_min = None
     if mode_normalized == "FAST":
-        latest_asof = get_latest_asof_date(hotel_tag, output_dir=output_csv_path.parent)
+        latest_asof = get_latest_asof_date(hotel_tag, output_dir=OUTPUT_DIR)
         asof_min = latest_asof - pd.Timedelta(days=buffer_days) if latest_asof is not None else None
 
     logging.info(
@@ -1285,36 +1280,39 @@ def run_daily_snapshots_for_gui(
         asof_min,
     )
 
-    if mode_normalized == "FAST":
-        build_daily_snapshots_fast(
-            input_dir=input_dir,
-            hotel_id=hotel_tag,
-            target_months=validated_target_months or [],
-            asof_min=asof_min,
-            asof_max=None,
-            layout=layout,
-            output_dir=output_csv_path.parent,
-            glob="*.xls*",
-        )
-    elif mode_normalized == "FULL_MONTHS":
-        build_daily_snapshots_full_months(
-            input_dir=input_dir,
-            hotel_id=hotel_tag,
-            target_months=validated_target_months or [],
-            layout=layout,
-            output_dir=output_csv_path.parent,
-            glob="*.xls*",
-        )
-    else:
-        build_daily_snapshots_full_all(
-            input_dir=input_dir,
-            hotel_id=hotel_tag,
-            layout=layout,
-            output_dir=output_csv_path.parent,
-            glob="*.xls*",
-        )
+    try:
+        if mode_normalized == "FAST":
+            build_daily_snapshots_fast(
+                input_dir=input_dir,
+                hotel_id=hotel_tag,
+                target_months=validated_target_months or [],
+                asof_min=asof_min,
+                asof_max=None,
+                layout=layout,
+                output_dir=OUTPUT_DIR,
+                glob="*.xls*",
+            )
+        elif mode_normalized == "FULL_MONTHS":
+            build_daily_snapshots_full_months(
+                input_dir=input_dir,
+                hotel_id=hotel_tag,
+                target_months=validated_target_months or [],
+                layout=layout,
+                output_dir=OUTPUT_DIR,
+                glob="*.xls*",
+            )
+        else:
+            build_daily_snapshots_full_all(
+                input_dir=input_dir,
+                hotel_id=hotel_tag,
+                layout=layout,
+                output_dir=OUTPUT_DIR,
+                glob="*.xls*",
+            )
+    except Exception:
+        logging.exception("Failed to build daily snapshots for GUI: hotel_tag=%s", hotel_tag)
+        raise
 
-    rebuild_asof_dates_from_daily_snapshots(hotel_tag, output_dir=output_csv_path.parent)
     logging.info("Completed daily snapshots build: hotel_tag=%s", hotel_tag)
 
 

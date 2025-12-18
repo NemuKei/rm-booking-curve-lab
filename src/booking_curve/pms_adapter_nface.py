@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime
 import logging
 import re
 import warnings
@@ -164,8 +165,36 @@ def _detect_layout(df: pd.DataFrame, file_path: Path) -> Literal["shifted", "inl
     """A列の日付行インデックス間隔から 'shifted' / 'inline' を判定する。"""
 
     col = df.iloc[:, 0]
-    dates = pd.to_datetime(col, errors="coerce")
-    date_idxs = dates[dates.notna()].index.to_numpy()
+    non_null = col[~col.isna()]
+    sample = non_null.iloc[:200]
+
+    parsed_indices: list[int] = []
+    for idx, value in sample.items():
+        parsed_ts: pd.Timestamp | None = None
+
+        if isinstance(value, (pd.Timestamp, datetime, date)):
+            parsed_ts = pd.to_datetime(value, errors="coerce")
+        else:
+            numeric_value = pd.to_numeric(value, errors="coerce")
+            if pd.notna(numeric_value):
+                parsed_ts = pd.to_datetime(float(numeric_value), unit="D", origin="1899-12-30", errors="coerce")
+            elif isinstance(value, str):
+                v = value.strip()
+                for fmt in ("%Y/%m/%d", "%Y-%m-%d", "%Y/%m/%d %H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M"):
+                    parsed_ts = pd.to_datetime(v, format=fmt, errors="coerce")
+                    if not pd.isna(parsed_ts):
+                        break
+
+        if parsed_ts is None or pd.isna(parsed_ts):
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message="Could not infer format.*", category=UserWarning)
+                fallback_ts = pd.to_datetime(value, errors="coerce")
+            parsed_ts = fallback_ts
+
+        if parsed_ts is not None and not pd.isna(parsed_ts):
+            parsed_indices.append(idx)
+
+    date_idxs = pd.Index(parsed_indices).to_numpy()
 
     if len(date_idxs) < 3:
         logger.error("%s: 日付行が少なすぎるためレイアウトを自動判定できません", file_path)

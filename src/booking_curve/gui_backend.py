@@ -11,7 +11,11 @@ import pandas as pd
 import build_calendar_features
 import run_build_lt_csv
 import run_forecast_batch
-from booking_curve.daily_snapshots import get_latest_asof_date, read_daily_snapshots_for_month
+from booking_curve.daily_snapshots import (
+    get_latest_asof_date,
+    list_stay_months_from_daily_snapshots,
+    read_daily_snapshots_for_month,
+)
 from booking_curve.forecast_simple import (
     moving_average_3months,
     moving_average_recent_90days,
@@ -1233,6 +1237,19 @@ def run_build_lt_data_for_gui(
         )
     except Exception:
         raise
+
+
+def get_all_target_months_for_lt_from_daily_snapshots(hotel_tag: str) -> list[str]:
+    months = list_stay_months_from_daily_snapshots(hotel_tag, output_dir=OUTPUT_DIR)
+    if not months:
+        raise ValueError("daily snapshots が存在しないため全期間LT_DATAを生成できません")
+    return months
+
+
+def run_build_lt_data_all_for_gui(hotel_tag: str, source: str = "daily_snapshots") -> list[str]:
+    months = get_all_target_months_for_lt_from_daily_snapshots(hotel_tag)
+    run_build_lt_data_for_gui(hotel_tag, months, source=source)
+    return months
 
 
 def run_daily_snapshots_for_gui(

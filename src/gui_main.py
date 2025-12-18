@@ -3157,9 +3157,7 @@ class BookingCurveApp(tk.Tk):
                 skipped_months.append(month_str)
                 continue
             except Exception as e:
-                logging.exception(
-                    "Failed to load monthly curve for %s (%s).", month_str, hotel_tag
-                )
+                logging.exception("Failed to load monthly curve for %s (%s).", month_str, hotel_tag)
                 if month_str == ym:
                     messagebox.showerror(
                         "Error",
@@ -3205,9 +3203,7 @@ class BookingCurveApp(tk.Tk):
                     curves.append((f"{prev_month_str} (prev)", df_prev, color, "--", 1.6))
 
         if skipped_months:
-            logging.warning(
-                "Monthly curves were skipped for months: %s", ", ".join(sorted(skipped_months))
-            )
+            logging.warning("Monthly curves were skipped for months: %s", ", ".join(sorted(skipped_months)))
         if skipped_prev_months:
             logging.warning(
                 "Previous-year monthly curves were skipped for months: %s",

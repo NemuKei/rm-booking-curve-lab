@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
+import time
 import tkinter as tk
 from datetime import date, datetime
 from pathlib import Path
@@ -27,6 +29,7 @@ from booking_curve.gui_backend import (
     get_best_model_for_month,
     get_booking_curve_data,
     get_calendar_coverage,
+    get_all_target_months_for_lt_from_daily_snapshots,
     get_daily_forecast_table,
     get_eval_monthly_by_asof,
     get_eval_overview_by_asof,
@@ -35,6 +38,7 @@ from booking_curve.gui_backend import (
     get_model_evaluation_table,
     get_monthly_curve_data,
     get_monthly_forecast_scenarios,
+    run_build_lt_data_all_for_gui,
     run_build_lt_data_for_gui,
     run_daily_snapshots_for_gui,
     run_forecast_for_gui,
@@ -526,6 +530,15 @@ class BookingCurveApp(tk.Tk):
         self.full_all_status_var = tk.StringVar(value="")
         ttk.Label(advanced_frame, textvariable=self.full_all_status_var).grid(row=1, column=1, padx=4, pady=4, sticky="w")
 
+        self.lt_all_button = ttk.Button(
+            advanced_frame,
+            text="LT_DATA 全期間生成（危険）",
+            command=self._on_run_lt_all,
+        )
+        self.lt_all_button.grid(row=2, column=0, padx=4, pady=4, sticky="w")
+        self.lt_all_status_var = tk.StringVar(value="")
+        ttk.Label(advanced_frame, textvariable=self.lt_all_status_var).grid(row=2, column=1, padx=4, pady=4, sticky="w")
+
         # 初期表示
         self._refresh_calendar_coverage()
         self._refresh_master_daily_caps()
@@ -693,6 +706,24 @@ class BookingCurveApp(tk.Tk):
 
         messagebox.showinfo("保存完了", "キャパシティ設定を保存しました。")
 
+    def _load_historical_lt_all_rate(self) -> float | None:
+        if not LOGS_DIR.exists():
+            return None
+
+        for log_path in sorted(LOGS_DIR.glob("lt_all_*.log"), reverse=True):
+            try:
+                lines = log_path.read_text(encoding="utf-8").splitlines()
+            except Exception:
+                continue
+            for line in reversed(lines):
+                match = re.search(r"rate_months_per_sec=([0-9.]+)", line)
+                if match:
+                    try:
+                        return float(match.group(1))
+                    except ValueError:
+                        continue
+        return None
+
     def _on_run_full_all_snapshots(self) -> None:
         hotel_tag = self.hotel_var.get().strip()
         if not hotel_tag:
@@ -765,9 +796,9 @@ class BookingCurveApp(tk.Tk):
             except Exception:
                 logging.warning("FULL_ALL ログファイルのクローズに失敗しました", exc_info=True)
 
-        self.after(0, lambda: self._on_full_all_complete(success, log_file, error))
+        self.after(0, lambda: self._on_full_all_complete(success, hotel_tag, log_file, error))
 
-    def _on_full_all_complete(self, success: bool, log_file: Path, error: Exception | None) -> None:
+    def _on_full_all_complete(self, success: bool, hotel_tag: str, log_file: Path, error: Exception | None) -> None:
         self.full_all_button.state(["!disabled"])
         self.full_all_status_var.set("")
         try:
@@ -778,10 +809,153 @@ class BookingCurveApp(tk.Tk):
 
         if success:
             messagebox.showinfo("完了", f"Daily snapshots FULL_ALL が完了しました。\nログ: {log_file}")
+            proceed = messagebox.askyesno("確認", "続けて全期間LT_DATA生成を実行しますか？")
+            if proceed:
+                self._on_run_lt_all(hotel_tag)
         else:
             messagebox.showerror(
                 "エラー",
                 f"FULL_ALL 実行に失敗しました。\n{error}\nログ: {log_file}",
+            )
+
+    def _on_run_lt_all(self, hotel_tag: str | None = None) -> None:
+        target_hotel = hotel_tag or self.hotel_var.get().strip()
+        if not target_hotel:
+            messagebox.showerror("エラー", "ホテルが選択されていません。")
+            return
+
+        try:
+            months = get_all_target_months_for_lt_from_daily_snapshots(target_hotel)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("エラー", f"全期間LT_DATA生成の対象月取得に失敗しました:\n{exc}")
+            return
+
+        if not months:
+            messagebox.showerror("エラー", "対象月を取得できませんでした。daily snapshots を確認してください。")
+            return
+
+        rate = self._load_historical_lt_all_rate()
+        estimate_sec = len(months) / rate if rate and rate > 0 else None
+        log_file = LOGS_DIR / f"lt_all_{datetime.now().strftime('%Y%m%d_%H%M')}.log"
+        estimate_text = (
+            f"概算時間: ~{estimate_sec:.1f} 秒 (rate {rate:.3f} months/sec)"
+            if estimate_sec is not None
+            else "概算時間: 不明"
+        )
+
+        precheck_message = (
+            "LT_DATA を全期間生成します。\n"
+            f"ホテル: {target_hotel}\n"
+            f"対象月数: {len(months)}\n"
+            f"範囲: {months[0]}〜{months[-1]}\n"
+            f"{estimate_text}\n"
+            f"ログ: {log_file}"
+        )
+        messagebox.showinfo("LT_ALL 事前確認", precheck_message)
+
+        confirm = simpledialog.askstring("最終確認", '続行するには "LT_ALL" と入力してください。')
+        if confirm is None or confirm.strip().upper() != "LT_ALL":
+            messagebox.showinfo("中断", "LT_ALL を入力しなかったため処理を中止しました。")
+            return
+
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("エラー", f"ログファイルを開けませんでした。\n{exc}")
+            return
+        file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s - %(message)s"))
+
+        if hasattr(self, "lt_all_button"):
+            self.lt_all_button.state(["disabled"])
+        if hasattr(self, "lt_all_status_var"):
+            self.lt_all_status_var.set("実行中...")
+
+        threading.Thread(
+            target=self._run_lt_all_async,
+            args=(target_hotel, log_file, file_handler),
+            daemon=True,
+        ).start()
+
+    def _run_lt_all_async(self, hotel_tag: str, log_file: Path, file_handler: logging.Handler) -> None:
+        root_logger = logging.getLogger()
+        root_logger.addHandler(file_handler)
+
+        success = True
+        error: Exception | None = None
+        months: list[str] = []
+        duration_sec: float | None = None
+        rate: float | None = None
+
+        start = time.monotonic()
+        try:
+            months = run_build_lt_data_all_for_gui(hotel_tag, source="daily_snapshots")
+            duration_sec = time.monotonic() - start
+            rate = (len(months) / duration_sec) if duration_sec and duration_sec > 0 else 0.0
+            logging.info(
+                "LT_ALL completed: months=%s duration_sec=%.3f rate_months_per_sec=%.3f",
+                len(months),
+                duration_sec,
+                rate,
+            )
+        except Exception as exc:  # noqa: BLE001
+            success = False
+            error = exc
+            logging.exception("LT_ALL 実行中にエラーが発生しました")
+        finally:
+            root_logger.removeHandler(file_handler)
+            try:
+                file_handler.close()
+            except Exception:
+                logging.warning("LT_ALL ログファイルのクローズに失敗しました", exc_info=True)
+
+        self.after(
+            0,
+            lambda: self._on_lt_all_complete(
+                success,
+                hotel_tag,
+                months,
+                log_file,
+                error,
+                duration_sec,
+                rate,
+            ),
+        )
+
+    def _on_lt_all_complete(
+        self,
+        success: bool,
+        hotel_tag: str,
+        months: list[str],
+        log_file: Path,
+        error: Exception | None,
+        duration_sec: float | None,
+        rate: float | None,
+    ) -> None:
+        if hasattr(self, "lt_all_button"):
+            self.lt_all_button.state(["!disabled"])
+        if hasattr(self, "lt_all_status_var"):
+            self.lt_all_status_var.set("")
+
+        try:
+            self._update_bc_latest_asof_label(update_asof_if_empty=False)
+            self._update_df_latest_asof_label(update_asof_if_empty=False)
+        except Exception:
+            logging.warning("最新ASOF表示の更新に失敗しました", exc_info=True)
+
+        if success:
+            range_text = f"{months[0]}〜{months[-1]}" if months else "N/A"
+            extra = ""
+            if duration_sec is not None and rate is not None:
+                extra = f"\n所要時間: {duration_sec:.1f} 秒 (rate {rate:.3f} months/sec)"
+            messagebox.showinfo(
+                "完了",
+                f"LT_DATA 全期間生成が完了しました。\nホテル: {hotel_tag}\n対象月: {range_text} ({len(months)}ヶ月)\nログ: {log_file}{extra}",
+            )
+        else:
+            messagebox.showerror(
+                "エラー",
+                f"LT_DATA 全期間生成に失敗しました。\n{error}\nログ: {log_file}",
             )
 
     # =========================

@@ -238,6 +238,30 @@ def get_latest_asof_date(hotel_id: str, output_dir: Optional[Path] = None) -> pd
     return pd.Timestamp(latest).normalize()
 
 
+def list_stay_months_from_daily_snapshots(hotel_id: str, output_dir: Optional[Path] = None) -> list[str]:
+    if not hotel_id:
+        raise ValueError("hotel_id must be a non-empty string")
+
+    base_dir = OUTPUT_DIR if output_dir is None else Path(output_dir)
+    csv_path = base_dir / f"daily_snapshots_{hotel_id}.csv"
+
+    if not csv_path.exists():
+        return []
+
+    try:
+        df = pd.read_csv(csv_path, usecols=["stay_date"])
+    except (FileNotFoundError, ValueError, pd.errors.EmptyDataError):
+        return []
+
+    stay_series = pd.to_datetime(df.get("stay_date"), errors="coerce")
+    periods = pd.PeriodIndex(stay_series.dropna().dt.to_period("M"))
+    if periods.empty:
+        return []
+
+    unique_periods = pd.PeriodIndex(periods.unique()).sort_values()
+    return [p.strftime("%Y%m") for p in unique_periods]
+
+
 def upsert_asof_dates_index(
     hotel_id: str,
     df_new: pd.DataFrame,
@@ -368,6 +392,7 @@ __all__ = [
     "append_daily_snapshots_by_hotel",
     "upsert_daily_snapshots_range_by_hotel",
     "upsert_asof_dates_index",
+    "list_stay_months_from_daily_snapshots",
     "_read_asof_dates_csv",
     "_write_asof_dates_csv",
 ]

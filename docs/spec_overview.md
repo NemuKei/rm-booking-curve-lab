@@ -114,7 +114,7 @@ PMS 生データを正規化し、ホテル共通で扱える形として定義�
   - ASOF より先の日付について、実績（ACT）が存在しないのに「埋まっているように見える」挙動は禁止。
   - グラフ上の ACT は ASOF 時点までで止まること。
 - モデルロジック（avg / recent90 / recent90w 等）・評価ロジック（MAE / MAPE / Bias / RMSE / MPE 等）は、
-  - 既存実装（`booking_curve/forecast_simple.py`, `booking_curve/evaluation_multi.py` 等）に揃える。
+  - 既存実装（`booking_curve/forecast_simple.py`, `run_full_evaluation.py` 等）に揃える。
 
 ### 3-3. 運用・ユーザーロール
 

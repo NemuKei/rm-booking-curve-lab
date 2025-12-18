@@ -47,6 +47,7 @@ ASOF_TYPES = ["M-2_END", "M-1_END", "M10", "M20"]
 LT_MIN = -1
 LT_MAX = 90
 CAPACITY = 168.0
+RECENT90_MIN_COUNT_WEEKDAY = 6
 
 
 def resolve_asof_dates_for_month(target_month: str) -> list[tuple[str, str]]:
@@ -204,13 +205,21 @@ def build_monthly_forecast(
             history_all = pd.concat(history_dfs, axis=0)
             history_all.index = pd.to_datetime(history_all.index)
             avg_curve = moving_average_recent_90days(
-                lt_df=history_all, as_of_date=as_of_ts, lt_min=LT_MIN, lt_max=LT_MAX
+                lt_df=history_all,
+                as_of_date=as_of_ts,
+                lt_min=LT_MIN,
+                lt_max=LT_MAX,
+                min_count=RECENT90_MIN_COUNT_WEEKDAY,
             )
         elif model_name in {"recent90w", "recent90w_adj"}:
             history_all = pd.concat(history_dfs, axis=0)
             history_all.index = pd.to_datetime(history_all.index)
             avg_curve = moving_average_recent_90days_weighted(
-                lt_df=history_all, as_of_date=as_of_ts, lt_min=LT_MIN, lt_max=LT_MAX
+                lt_df=history_all,
+                as_of_date=as_of_ts,
+                lt_min=LT_MIN,
+                lt_max=LT_MAX,
+                min_count=RECENT90_MIN_COUNT_WEEKDAY,
             )
         else:
             raise ValueError(f"Unknown model_name: {model_name}")
@@ -260,14 +269,19 @@ def build_monthly_forecast(
 
 def build_evaluation_detail(hotel_tag: str, target_months: list[str]) -> pd.DataFrame:
     records: list[dict] = []
+    today = date.today()
 
     for target_month in target_months:
+        month_period = pd.Period(target_month, freq="M")
+        month_end = month_period.to_timestamp(how="end").date()
+        is_landed_month = month_end < today
         lt_csv_path = Path(OUTPUT_DIR) / f"lt_data_{target_month}_{hotel_tag}.csv"
         lt_df = pd.read_csv(lt_csv_path, index_col=0)
 
         all_dates = pd.to_datetime(lt_df.index)
         actual_series = _get_actual_series(lt_df, all_dates)
         actual_total_rooms = float(pd.to_numeric(actual_series, errors="coerce").sum(skipna=True))
+        actual_nan_days = int(pd.isna(actual_series).sum())
 
         for asof_type, asof_date_str in resolve_asof_dates_for_month(target_month):
             asof_ts = pd.to_datetime(asof_date_str)
@@ -288,13 +302,26 @@ def build_evaluation_detail(hotel_tag: str, target_months: list[str]) -> pd.Data
                 forecast_total_rooms = float(
                     pd.to_numeric(forecast_series, errors="coerce").sum(skipna=True)
                 )
+                forecast_nan_days = int(pd.isna(forecast_series).sum())
 
-                error = forecast_total_rooms - actual_total_rooms
-                if actual_total_rooms > 0:
-                    error_pct = (error / actual_total_rooms) * 100.0
+                status = "OK"
+                error = float("nan")
+                error_pct = float("nan")
+                abs_error_pct = float("nan")
+
+                if not is_landed_month:
+                    status = "INCOMPLETE_MONTH"
+                elif actual_nan_days > 0:
+                    status = "ACT_MISSING"
+                elif forecast_nan_days > 0:
+                    status = "FORECAST_NAN"
                 else:
-                    error_pct = 0.0
-                abs_error_pct = abs(error_pct)
+                    error = forecast_total_rooms - actual_total_rooms
+                    if actual_total_rooms > 0:
+                        error_pct = (error / actual_total_rooms) * 100.0
+                    else:
+                        error_pct = 0.0
+                    abs_error_pct = abs(error_pct)
 
                 records.append(
                     {
@@ -304,6 +331,8 @@ def build_evaluation_detail(hotel_tag: str, target_months: list[str]) -> pd.Data
                         "model": model_name,
                         "actual_total_rooms": actual_total_rooms,
                         "forecast_total_rooms": forecast_total_rooms,
+                        "status": status,
+                        "forecast_nan_days": forecast_nan_days,
                         "error": error,
                         "error_pct": error_pct,
                         "abs_error_pct": abs_error_pct,

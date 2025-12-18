@@ -733,51 +733,60 @@ class BookingCurveApp(tk.Tk):
             return
 
         LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("エラー", f"ログファイルを開けませんでした。\n{exc}")
+            return
+        file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s - %(message)s"))
         self.full_all_button.state(["disabled"])
         self.full_all_status_var.set("実行中...")
 
-        def _run_full_all_worker() -> None:
-            file_handler = logging.FileHandler(log_file, encoding="utf-8")
-            file_handler.setFormatter(
-                logging.Formatter("%(asctime)s [%(levelname)s] %(name)s - %(message)s")
-            )
-            root_logger = logging.getLogger()
-            root_logger.addHandler(file_handler)
+        threading.Thread(
+            target=self._run_full_all_snapshots_async,
+            args=(hotel_tag, log_file, file_handler),
+            daemon=True,
+        ).start()
 
-            success = True
-            error: Exception | None = None
+    def _run_full_all_snapshots_async(
+        self, hotel_tag: str, log_file: Path, file_handler: logging.Handler
+    ) -> None:
+        root_logger = logging.getLogger()
+        root_logger.addHandler(file_handler)
+
+        success = True
+        error: Exception | None = None
+        try:
+            run_daily_snapshots_for_gui(hotel_tag=hotel_tag, mode="FULL_ALL")
+        except Exception as exc:  # noqa: BLE001
+            success = False
+            error = exc
+            logging.exception("FULL_ALL 実行中にエラーが発生しました")
+        finally:
+            root_logger.removeHandler(file_handler)
             try:
-                run_daily_snapshots_for_gui(hotel_tag=hotel_tag, mode="FULL_ALL")
-            except Exception as exc:  # noqa: BLE001
-                success = False
-                error = exc
-                logging.exception("FULL_ALL 実行中にエラーが発生しました")
-            finally:
-                root_logger.removeHandler(file_handler)
                 file_handler.close()
+            except Exception:
+                logging.warning("FULL_ALL ログファイルのクローズに失敗しました", exc_info=True)
 
-            def _on_complete() -> None:
-                self.full_all_button.state(["!disabled"])
-                self.full_all_status_var.set("")
-                try:
-                    self._update_bc_latest_asof_label(update_asof_if_empty=False)
-                    self._update_df_latest_asof_label(update_asof_if_empty=False)
-                except Exception:
-                    logging.warning("最新ASOF表示の更新に失敗しました", exc_info=True)
+        self.after(0, lambda: self._on_full_all_complete(success, log_file, error))
 
-                if success:
-                    messagebox.showinfo(
-                        "完了", f"Daily snapshots FULL_ALL が完了しました。\nログ: {log_file}"
-                    )
-                else:
-                    messagebox.showerror(
-                        "エラー",
-                        f"FULL_ALL 実行に失敗しました。\n{error}\nログ: {log_file}",
-                    )
+    def _on_full_all_complete(self, success: bool, log_file: Path, error: Exception | None) -> None:
+        self.full_all_button.state(["!disabled"])
+        self.full_all_status_var.set("")
+        try:
+            self._update_bc_latest_asof_label(update_asof_if_empty=False)
+            self._update_df_latest_asof_label(update_asof_if_empty=False)
+        except Exception:
+            logging.warning("最新ASOF表示の更新に失敗しました", exc_info=True)
 
-            self.after(0, _on_complete)
-
-        threading.Thread(target=_run_full_all_worker, daemon=True).start()
+        if success:
+            messagebox.showinfo("完了", f"Daily snapshots FULL_ALL が完了しました。\nログ: {log_file}")
+        else:
+            messagebox.showerror(
+                "エラー",
+                f"FULL_ALL 実行に失敗しました。\n{error}\nログ: {log_file}",
+            )
 
     # =========================
     # 3) 日別フォーキャスト一覧タブ

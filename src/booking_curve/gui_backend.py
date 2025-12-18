@@ -490,93 +490,120 @@ def get_monthly_curve_data(
 
     優先順位:
     1. monthly_curve_{target_month}_{hotel_tag}.csv が存在すればそれを読み込む。
-    2. 無い場合は LT_DATA から月次合計カーブをオンザフライで集計する。
+    2. 無ければ daily_snapshots_{hotel_tag}.csv から monthly_curve を生成して保存し、保存した CSV を読み込む。
 
+    daily_snapshots / monthly_curve が無い、もしくは生成結果が空の場合は ValueError を送出する。
     as_of_date 引数は現在は使用しない（互換性＆将来拡張のために残している）。
     """
 
-    # 1) monthly_curve CSV を優先して読み込む
+    csv_path = _ensure_monthly_curve_csv_from_daily_snapshots(
+        hotel_tag=hotel_tag,
+        target_month=target_month,
+    )
+
+    if csv_path is None:
+        daily_snapshots_path = OUTPUT_DIR / f"daily_snapshots_{hotel_tag}.csv"
+        if not daily_snapshots_path.exists():
+            raise ValueError(
+                f"daily_snapshots_{hotel_tag}.csv が存在しません。マスタ設定の daily snapshots 更新を実行してください。"
+            )
+        raise ValueError(
+            "monthly_curve が存在せず、daily_snapshots からも生成できませんでした。"
+            "先に daily snapshots を更新（FAST/FULL_MONTHS/FULL_ALL）してください。"
+        )
+
+    df = pd.read_csv(csv_path)
+    if df.empty:
+        raise ValueError(
+            "monthly_curve が存在せず、daily_snapshots からも生成できませんでした。"
+            "先に daily snapshots を更新（FAST/FULL_MONTHS/FULL_ALL）してください。"
+        )
+
+    # 列/インデックス整形
+    if "lt" in df.columns:
+        df = df.set_index("lt")
+    elif df.columns[0] != "lt":
+        df = df.set_index(df.columns[0])
+
+    try:
+        df.index = df.index.astype(int)
+    except Exception as exc:
+        raise ValueError(f"Invalid LT index in monthly curve csv: {csv_path}") from exc
+
+    if "rooms_total" in df.columns:
+        df = df[["rooms_total"]]
+    elif len(df.columns) == 1:
+        df.columns = ["rooms_total"]
+    else:
+        raise ValueError(f"Unexpected columns in monthly curve csv: {list(df.columns)}")
+
+    df = df.sort_index()
+    if not df.empty:
+        act_row = df.loc[[-1]] if -1 in df.index else None
+        df_no_act = df.loc[df.index != -1]
+        df_no_act = apply_nocb_along_lt(df_no_act, axis="index", max_gap=None)
+        parts = [df_no_act]
+        if act_row is not None:
+            parts.append(act_row)
+        df = pd.concat(parts).sort_index()
+    return df
+
+
+def _ensure_monthly_curve_csv_from_daily_snapshots(
+    hotel_tag: str, target_month: str
+) -> Path | None:
     csv_path = OUTPUT_DIR / f"monthly_curve_{target_month}_{hotel_tag}.csv"
     if csv_path.exists():
-        df = pd.read_csv(csv_path)
-        if df.empty:
-            raise ValueError(f"Monthly curve csv is empty: {csv_path}")
+        return csv_path
 
-        # 列/インデックス整形
-        if "lt" in df.columns:
-            df = df.set_index("lt")
-        elif df.columns[0] != "lt":
-            # 最初の列が LT の場合はそれを index にする
-            df = df.set_index(df.columns[0])
+    logging.info(
+        "monthly_curve CSV not found for %s (%s). Generating from daily_snapshots.",
+        hotel_tag,
+        target_month,
+    )
 
-        try:
-            df.index = df.index.astype(int)
-        except Exception as exc:
-            raise ValueError(f"Invalid LT index in monthly curve csv: {csv_path}") from exc
+    try:
+        df_monthly = run_build_lt_csv.build_monthly_curve_from_daily_snapshots(
+            hotel_id=hotel_tag,
+            target_month=target_month,
+            output_dir=OUTPUT_DIR,
+            max_lt=run_build_lt_csv.MAX_LT,
+        )
+    except Exception:
+        logging.exception(
+            "Failed to build monthly_curve from daily_snapshots for %s (%s).",
+            hotel_tag,
+            target_month,
+        )
+        return None
 
-        # 列は "rooms_total" 一列に揃える
-        if "rooms_total" in df.columns:
-            df = df[["rooms_total"]]
-        elif len(df.columns) == 1:
-            df.columns = ["rooms_total"]
-        else:
-            raise ValueError(f"Unexpected columns in monthly curve csv: {list(df.columns)}")
+    if df_monthly is None or df_monthly.empty:
+        logging.warning(
+            "Monthly curve generated from daily_snapshots is empty for %s (%s).",
+            hotel_tag,
+            target_month,
+        )
+        return None
 
-        df = df.sort_index()
-        if not df.empty:
-            # LT 方向に NOCB を適用してギザつきを緩和（ACT(-1) は除外）
-            act_row = df.loc[[-1]] if -1 in df.index else None
-            df_no_act = df.loc[df.index != -1]
-            df_no_act = apply_nocb_along_lt(df_no_act, axis="index", max_gap=None)
-            parts = [df_no_act]
-            if act_row is not None:
-                parts.append(act_row)
-            df = pd.concat(parts).sort_index()
-        return df
+    try:
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        df_monthly.to_csv(csv_path, index=False, encoding="utf-8-sig")
+    except Exception:
+        logging.exception(
+            "Failed to save monthly_curve CSV for %s (%s) to %s.",
+            hotel_tag,
+            target_month,
+            csv_path,
+        )
+        return None
 
-    # 2) フォールバック: LT_DATA から月次合計カーブを集計する（旧ロジック）
-    lt_df = _load_lt_data(hotel_tag=hotel_tag, target_month=target_month)
-    if lt_df is None or lt_df.empty:
-        raise ValueError(f"No monthly curve csv and LT_DATA is empty for {hotel_tag}, {target_month}")
-
-    # 列ラベルを int に変換できるものだけに限定
-    lt_columns: dict[str, int] = {}
-    for col in lt_df.columns:
-        try:
-            lt_columns[col] = int(col)
-        except Exception:
-            continue
-
-    if not lt_columns:
-        raise ValueError(f"No valid LT columns in LT_DATA for {hotel_tag}, {target_month}")
-
-    # 対象月の宿泊日のみに念のためフィルタ
-    ym = int(target_month)
-    year = ym // 100
-    month = ym % 100
-    mask = (lt_df.index.year == year) & (lt_df.index.month == month)
-    lt_month = lt_df.loc[mask, list(lt_columns.keys())]
-    if lt_month.empty:
-        raise ValueError(f"No stay dates for {hotel_tag}, {target_month} in LT_DATA")
-
-    # LT昇順で列を並べ替え、列合計を取る
-    ordered_cols = [c for c, _ in sorted(lt_columns.items(), key=lambda kv: kv[1])]
-    lt_month = lt_month[ordered_cols]
-    agg = lt_month.sum(axis=0, skipna=True)
-
-    result = pd.DataFrame({"rooms_total": agg})
-    result.index = result.index.map(lambda c: lt_columns[c]).astype(int)
-    result = result.sort_index()
-    if not result.empty:
-        # LT 方向に NOCB を適用して欠損を補完（ACT(-1) は除外）
-        result_act = result.loc[[-1]] if -1 in result.index else None
-        result_no_act = result.loc[result.index != -1]
-        result_no_act = apply_nocb_along_lt(result_no_act, axis="index", max_gap=None)
-        parts = [result_no_act]
-        if result_act is not None:
-            parts.append(result_act)
-        result = pd.concat(parts).sort_index()
-    return result
+    logging.info(
+        "Monthly curve generated and saved to %s for %s (%s).",
+        csv_path,
+        hotel_tag,
+        target_month,
+    )
+    return csv_path
 
 
 def run_forecast_for_gui(

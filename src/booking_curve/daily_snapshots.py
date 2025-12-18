@@ -29,6 +29,28 @@ def _ensure_standard_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df_copy[STANDARD_COLUMNS + remaining_columns]
 
 
+def _read_asof_dates_csv(path: Path) -> pd.Series:
+    if not path.exists():
+        return pd.Series(dtype="datetime64[ns]")
+
+    try:
+        df = pd.read_csv(path, usecols=["as_of_date"])
+    except (FileNotFoundError, ValueError, pd.errors.EmptyDataError):
+        return pd.Series(dtype="datetime64[ns]")
+
+    asof_series = pd.to_datetime(df.get("as_of_date"), errors="coerce")
+    return asof_series.dropna().dt.normalize().drop_duplicates().sort_values().reset_index(drop=True)
+
+
+def _write_asof_dates_csv(path: Path, asof_list: list[pd.Timestamp]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    series = pd.Series(asof_list, name="as_of_date")
+    series = pd.to_datetime(series, errors="coerce").dropna().dt.normalize().drop_duplicates().sort_values()
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    series.to_csv(tmp_path, index=False)
+    tmp_path.replace(path)
+
+
 def normalize_daily_snapshots_df(
     df: pd.DataFrame,
     hotel_id: Optional[str] = None,
@@ -196,12 +218,13 @@ def get_latest_asof_date(hotel_id: str, output_dir: Optional[Path] = None) -> pd
 
     base_dir = OUTPUT_DIR if output_dir is None else Path(output_dir)
     asof_path = base_dir / f"asof_dates_{hotel_id}.csv"
-    if asof_path.exists():
-        df = pd.read_csv(asof_path, usecols=["as_of_date"])
-        asof_series = pd.to_datetime(df.get("as_of_date"), errors="coerce")
+    try:
+        asof_series = _read_asof_dates_csv(asof_path)
         latest = asof_series.max()
         if pd.notna(latest):
             return pd.Timestamp(latest).normalize()
+    except Exception:
+        logger.warning("Failed to read asof_dates CSV for hotel %s", hotel_id)
 
     csv_path = base_dir / f"daily_snapshots_{hotel_id}.csv"
     if not csv_path.exists():
@@ -213,6 +236,28 @@ def get_latest_asof_date(hotel_id: str, output_dir: Optional[Path] = None) -> pd
     if pd.isna(latest):
         return None
     return pd.Timestamp(latest).normalize()
+
+
+def upsert_asof_dates_index(
+    hotel_id: str,
+    df_new: pd.DataFrame,
+    output_dir: Optional[Path] = None,
+) -> Path:
+    if not hotel_id:
+        raise ValueError("hotel_id must be a non-empty string")
+
+    base_dir = OUTPUT_DIR if output_dir is None else Path(output_dir)
+    asof_path = base_dir / f"asof_dates_{hotel_id}.csv"
+
+    new_asof_series = pd.to_datetime(df_new.get("as_of_date"), errors="coerce")
+    new_asof_series = new_asof_series.dropna().dt.normalize().drop_duplicates().sort_values()
+
+    existing_asof_series = _read_asof_dates_csv(asof_path)
+    combined = pd.concat([existing_asof_series, new_asof_series], ignore_index=True)
+    combined = combined.drop_duplicates().sort_values().reset_index(drop=True)
+
+    _write_asof_dates_csv(asof_path, combined.tolist())
+    return asof_path
 
 
 def rebuild_asof_dates_from_daily_snapshots(hotel_id: str, output_dir: Optional[Path] = None) -> Path | None:
@@ -230,10 +275,8 @@ def rebuild_asof_dates_from_daily_snapshots(hotel_id: str, output_dir: Optional[
     asof_series = pd.to_datetime(df.get("as_of_date"), errors="coerce")
     asof_list = asof_series.dropna().dt.normalize().drop_duplicates().sort_values().tolist() if not asof_series.empty else []
 
-    asof_df = pd.DataFrame({"as_of_date": asof_list})
     asof_path = base_dir / f"asof_dates_{hotel_id}.csv"
-    asof_path.parent.mkdir(parents=True, exist_ok=True)
-    asof_df.to_csv(asof_path, index=False)
+    _write_asof_dates_csv(asof_path, asof_list)
     logger.info("Rebuilt asof_dates CSV from daily snapshots: %s", asof_path)
     return asof_path
 
@@ -247,7 +290,7 @@ def append_daily_snapshots_by_hotel(
     path = base_dir / f"daily_snapshots_{hotel_id}.csv"
     df_new_with_hotel = normalize_daily_snapshots_df(df_new, hotel_id=hotel_id)
     result_path = append_daily_snapshots(path, df_new_with_hotel)
-    rebuild_asof_dates_from_daily_snapshots(hotel_id, output_dir=base_dir)
+    upsert_asof_dates_index(hotel_id, df_new_with_hotel, output_dir=base_dir)
     return result_path
 
 
@@ -271,7 +314,7 @@ def upsert_daily_snapshots_range_by_hotel(
         stay_min,
         stay_max,
     )
-    rebuild_asof_dates_from_daily_snapshots(hotel_id, output_dir=base_dir)
+    upsert_asof_dates_index(hotel_id, df_new_with_hotel, output_dir=base_dir)
     return result_path
 
 
@@ -324,4 +367,7 @@ __all__ = [
     "write_daily_snapshots_csv",
     "append_daily_snapshots_by_hotel",
     "upsert_daily_snapshots_range_by_hotel",
+    "upsert_asof_dates_index",
+    "_read_asof_dates_csv",
+    "_write_asof_dates_csv",
 ]

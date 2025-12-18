@@ -3111,6 +3111,8 @@ class BookingCurveApp(tk.Tk):
         curves: list[tuple[str, pd.DataFrame, str, str, float]] = []
         max_lt = -1
         has_act = False
+        skipped_months: list[str] = []
+        skipped_prev_months: list[str] = []
 
         def load_month_df(month_str: str) -> pd.DataFrame:
             """月次カーブ用DFを読み込み、LT・ACT情報を更新する。"""
@@ -3139,15 +3141,33 @@ class BookingCurveApp(tk.Tk):
         for idx, month_str in enumerate(main_months):
             try:
                 df_m = load_month_df(month_str)
-            except FileNotFoundError:
-                # その月のCSVが無ければスキップ
+            except FileNotFoundError as exc:
+                logging.warning(
+                    "Monthly curve not available for %s (%s): %s",
+                    month_str,
+                    hotel_tag,
+                    exc,
+                )
+                if month_str == ym:
+                    messagebox.showerror(
+                        "Error",
+                        f"対象月の月次カーブが取得できませんでした: {month_str}\n{exc}",
+                    )
+                    return
+                skipped_months.append(month_str)
                 continue
             except Exception as e:
-                messagebox.showerror(
-                    "Error",
-                    f"月次カーブ取得に失敗しました: {month_str}\n{e}",
+                logging.exception(
+                    "Failed to load monthly curve for %s (%s).", month_str, hotel_tag
                 )
-                return
+                if month_str == ym:
+                    messagebox.showerror(
+                        "Error",
+                        f"月次カーブ取得に失敗しました: {month_str}\n{e}",
+                    )
+                    return
+                skipped_months.append(month_str)
+                continue
 
             color = line_colors[min(idx, len(line_colors) - 1)]
             linewidth = 2.0 if month_str == ym else 1.6
@@ -3162,17 +3182,37 @@ class BookingCurveApp(tk.Tk):
                 try:
                     df_prev = load_month_df(prev_month_str)
                 except FileNotFoundError:
+                    logging.warning(
+                        "Previous-year monthly curve not available for %s (%s).",
+                        prev_month_str,
+                        hotel_tag,
+                    )
+                    skipped_prev_months.append(prev_month_str)
                     continue
                 except Exception as e:
-                    messagebox.showerror(
-                        "Error",
-                        f"前年同月の取得に失敗しました: {prev_month_str}\n{e}",
+                    logging.warning(
+                        "Failed to load previous-year monthly curve for %s (%s): %s",
+                        prev_month_str,
+                        hotel_tag,
+                        e,
                     )
-                    return
+                    logging.debug("Previous-year monthly curve error", exc_info=True)
+                    skipped_prev_months.append(prev_month_str)
+                    continue
 
                 if df_prev is not None and not df_prev.empty:
                     color = line_colors[min(idx, len(line_colors) - 1)]
                     curves.append((f"{prev_month_str} (prev)", df_prev, color, "--", 1.6))
+
+        if skipped_months:
+            logging.warning(
+                "Monthly curves were skipped for months: %s", ", ".join(sorted(skipped_months))
+            )
+        if skipped_prev_months:
+            logging.warning(
+                "Previous-year monthly curves were skipped for months: %s",
+                ", ".join(sorted(skipped_prev_months)),
+            )
 
         if not curves:
             self.mc_ax.clear()
@@ -3185,6 +3225,7 @@ class BookingCurveApp(tk.Tk):
                 transform=self.mc_ax.transAxes,
             )
             self.mc_canvas.draw()
+            messagebox.showerror("Error", "月次カーブの描画対象データがありません。")
             return
 
         # ---- ここから描画ロジック ----

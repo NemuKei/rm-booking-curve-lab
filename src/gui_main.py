@@ -3141,30 +3141,18 @@ class BookingCurveApp(tk.Tk):
         for idx, month_str in enumerate(main_months):
             try:
                 df_m = load_month_df(month_str)
-            except FileNotFoundError as exc:
+            except Exception as exc:
                 logging.warning(
                     "Monthly curve not available for %s (%s): %s",
                     month_str,
                     hotel_tag,
                     exc,
                 )
-                if month_str == ym:
-                    messagebox.showerror(
-                        "Error",
-                        f"対象月の月次カーブが取得できませんでした: {month_str}\n{exc}",
-                    )
-                    return
-                skipped_months.append(month_str)
+                skipped_months.append(f"{month_str}: {exc}")
                 continue
-            except Exception as e:
-                logging.exception("Failed to load monthly curve for %s (%s).", month_str, hotel_tag)
-                if month_str == ym:
-                    messagebox.showerror(
-                        "Error",
-                        f"月次カーブ取得に失敗しました: {month_str}\n{e}",
-                    )
-                    return
-                skipped_months.append(month_str)
+
+            if df_m is None or df_m.empty:
+                skipped_months.append(f"{month_str}: no data")
                 continue
 
             color = line_colors[min(idx, len(line_colors) - 1)]
@@ -3179,28 +3167,22 @@ class BookingCurveApp(tk.Tk):
 
                 try:
                     df_prev = load_month_df(prev_month_str)
-                except FileNotFoundError:
+                except Exception as exc:
                     logging.warning(
-                        "Previous-year monthly curve not available for %s (%s).",
+                        "Previous-year monthly curve not available for %s (%s): %s",
                         prev_month_str,
                         hotel_tag,
+                        exc,
                     )
-                    skipped_prev_months.append(prev_month_str)
-                    continue
-                except Exception as e:
-                    logging.warning(
-                        "Failed to load previous-year monthly curve for %s (%s): %s",
-                        prev_month_str,
-                        hotel_tag,
-                        e,
-                    )
-                    logging.debug("Previous-year monthly curve error", exc_info=True)
-                    skipped_prev_months.append(prev_month_str)
+                    skipped_prev_months.append(f"{prev_month_str}: {exc}")
                     continue
 
-                if df_prev is not None and not df_prev.empty:
-                    color = line_colors[min(idx, len(line_colors) - 1)]
-                    curves.append((f"{prev_month_str} (prev)", df_prev, color, "--", 1.6))
+                if df_prev is None or df_prev.empty:
+                    skipped_prev_months.append(f"{prev_month_str}: no data")
+                    continue
+
+                color = line_colors[min(idx, len(line_colors) - 1)]
+                curves.append((f"{prev_month_str} (prev)", df_prev, color, "--", 1.6))
 
         if skipped_months:
             logging.warning("Monthly curves were skipped for months: %s", ", ".join(sorted(skipped_months)))
@@ -3221,8 +3203,19 @@ class BookingCurveApp(tk.Tk):
                 transform=self.mc_ax.transAxes,
             )
             self.mc_canvas.draw()
-            messagebox.showerror("Error", "月次カーブの描画対象データがありません。")
+            skipped_msg = "\n".join(skipped_months + skipped_prev_months)
+            detail = f"\n{skipped_msg}" if skipped_msg else ""
+            messagebox.showerror("Error", f"月次カーブの描画対象データがありません。{detail}")
             return
+
+        if skipped_months or skipped_prev_months:
+            warn_parts: list[str] = []
+            if skipped_months:
+                warn_parts.append("取得できなかった月次カーブ: " + ", ".join(sorted(skipped_months)))
+            if skipped_prev_months:
+                warn_parts.append("取得できなかった前年同月: " + ", ".join(sorted(skipped_prev_months)))
+            warn_parts.append("必要なら daily snapshots を更新してください。")
+            messagebox.showwarning("Warning", "\n".join(warn_parts))
 
         # ---- ここから描画ロジック ----
         self.mc_ax.clear()

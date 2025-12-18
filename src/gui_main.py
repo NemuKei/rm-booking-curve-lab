@@ -26,10 +26,10 @@ from booking_curve.gui_backend import (
     HOTEL_CONFIG,
     OUTPUT_DIR,
     build_calendar_for_gui,
+    get_all_target_months_for_lt_from_daily_snapshots,
     get_best_model_for_month,
     get_booking_curve_data,
     get_calendar_coverage,
-    get_all_target_months_for_lt_from_daily_snapshots,
     get_daily_forecast_table,
     get_eval_monthly_by_asof,
     get_eval_overview_by_asof,
@@ -837,11 +837,7 @@ class BookingCurveApp(tk.Tk):
         rate = self._load_historical_lt_all_rate()
         estimate_sec = len(months) / rate if rate and rate > 0 else None
         log_file = LOGS_DIR / f"lt_all_{datetime.now().strftime('%Y%m%d_%H%M')}.log"
-        estimate_text = (
-            f"概算時間: ~{estimate_sec:.1f} 秒 (rate {rate:.3f} months/sec)"
-            if estimate_sec is not None
-            else "概算時間: 不明"
-        )
+        estimate_text = f"概算時間: ~{estimate_sec:.1f} 秒 (rate {rate:.3f} months/sec)" if estimate_sec is not None else "概算時間: 不明"
 
         precheck_message = (
             "LT_DATA を全期間生成します。\n"

@@ -490,36 +490,150 @@ def get_monthly_curve_data(
 
     優先順位:
     1. monthly_curve_{target_month}_{hotel_tag}.csv が存在すればそれを読み込む。
-    2. 無ければ daily_snapshots_{hotel_tag}.csv から monthly_curve を生成して保存し、保存した CSV を読み込む。
+    2. 無ければ daily_snapshots_{hotel_tag}.csv から monthly_curve を生成して保存し、そのデータを返す。
 
-    daily_snapshots / monthly_curve が無い、もしくは生成結果が空の場合は ValueError を送出する。
-    as_of_date 引数は現在は使用しない（互換性＆将来拡張のために残している）。
+    daily_snapshots / monthly_curve が無い、もしくは生成結果が空の場合は FileNotFoundError を送出する。
+    as_of_date 引数が与えられた場合は、その日付以前の daily_snapshots にトリミングして集計する。
     """
 
-    csv_path = _ensure_monthly_curve_csv_from_daily_snapshots(
-        hotel_tag=hotel_tag,
-        target_month=target_month,
-    )
+    csv_path = OUTPUT_DIR / f"monthly_curve_{target_month}_{hotel_tag}.csv"
+    cutoff_ts = pd.to_datetime(as_of_date).normalize() if as_of_date else None
 
-    if csv_path is None:
-        daily_snapshots_path = OUTPUT_DIR / f"daily_snapshots_{hotel_tag}.csv"
-        if not daily_snapshots_path.exists():
-            raise ValueError(
-                f"daily_snapshots_{hotel_tag}.csv が存在しません。マスタ設定の daily snapshots 更新を実行してください。"
+    if csv_path.exists():
+        df_source = _load_monthly_curve_csv(csv_path)
+    else:
+        df_source = _build_monthly_curve_from_daily_snapshots(
+            hotel_tag=hotel_tag,
+            target_month=target_month,
+            cutoff_ts=cutoff_ts,
+            output_path=csv_path,
+        )
+
+    return _prepare_monthly_curve_df(df_source, csv_path)
+
+
+def _build_monthly_curve_from_daily_snapshots(
+    hotel_tag: str,
+    target_month: str,
+    cutoff_ts: pd.Timestamp | None,
+    output_path: Path,
+) -> pd.DataFrame:
+    try:
+        df_month = read_daily_snapshots_for_month(
+            hotel_id=hotel_tag, target_month=target_month, output_dir=OUTPUT_DIR
+        )
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(
+            f"daily_snapshots_{hotel_tag}.csv が存在しないため monthly_curve を生成できません: {exc}"
+        ) from exc
+    except Exception as exc:
+        raise FileNotFoundError(
+            f"daily_snapshots_{hotel_tag}.csv の読み込みに失敗しました: {exc}"
+        ) from exc
+
+    required_cols = {"stay_date", "as_of_date", "rooms_oh"}
+    missing = required_cols.difference(df_month.columns)
+    if missing:
+        raise FileNotFoundError(
+            f"daily_snapshots_{hotel_tag}.csv に必須列が不足しています: {sorted(missing)}"
+        )
+
+    df_month = df_month.copy()
+    df_month["stay_date"] = pd.to_datetime(df_month["stay_date"], errors="coerce").dt.normalize()
+    df_month["as_of_date"] = pd.to_datetime(df_month["as_of_date"], errors="coerce").dt.normalize()
+    df_month["rooms_oh"] = pd.to_numeric(df_month["rooms_oh"], errors="coerce")
+    df_month = df_month.dropna(subset=["stay_date", "as_of_date", "rooms_oh"])
+    if df_month.empty:
+        raise FileNotFoundError(
+            f"daily_snapshots_{hotel_tag}.csv に対象月 {target_month} のデータが見つかりません。"
+        )
+
+    if cutoff_ts is not None:
+        df_month = df_month[df_month["as_of_date"] <= cutoff_ts]
+        if df_month.empty:
+            raise FileNotFoundError(
+                f"ASOF {cutoff_ts.date()} 以前の daily_snapshots にデータが無いため monthly_curve を生成できません。"
             )
-        raise ValueError(
-            "monthly_curve が存在せず、daily_snapshots からも生成できませんでした。"
-            "先に daily snapshots を更新（FAST/FULL_MONTHS/FULL_ALL）してください。"
+
+    df_month["lt"] = (df_month["stay_date"] - df_month["as_of_date"]).dt.days
+    df_month_lt = df_month[df_month["lt"] >= 0].copy()
+    if df_month_lt.empty:
+        raise FileNotFoundError(
+            f"daily_snapshots_{hotel_tag}.csv に非負のLTを持つデータが無いため monthly_curve を生成できません。"
         )
 
-    df = pd.read_csv(csv_path)
-    if df.empty:
-        raise ValueError(
-            "monthly_curve が存在せず、daily_snapshots からも生成できませんでした。"
-            "先に daily snapshots を更新（FAST/FULL_MONTHS/FULL_ALL）してください。"
+    monthly_series = df_month_lt.groupby("lt")["rooms_oh"].sum()
+
+    act_total: float | None = None
+    if cutoff_ts is not None:
+        month_end = pd.Period(target_month, freq="M").to_timestamp(how="end").normalize()
+        if cutoff_ts.normalize() >= month_end:
+            latest_by_stay = (
+                df_month.sort_values(["stay_date", "as_of_date"])
+                .groupby("stay_date")
+                .tail(1)
+            )
+            if not latest_by_stay.empty:
+                act_total = float(latest_by_stay["rooms_oh"].sum())
+
+    rows: list[tuple[int, float]] = []
+    for lt, total in monthly_series.items():
+        try:
+            lt_int = int(lt)
+            total_f = float(total)
+        except Exception as exc:
+            raise ValueError(f"LT もしくは rooms_total の変換に失敗しました: {lt}, {total}") from exc
+        rows.append((lt_int, total_f))
+
+    if act_total is not None:
+        rows.append((-1, float(act_total)))
+
+    if not rows:
+        raise FileNotFoundError(
+            f"monthly_curve not found and cannot be built from daily_snapshots for {target_month} ({hotel_tag})."
         )
 
-    # 列/インデックス整形
+    df_out = pd.DataFrame(rows, columns=["lt", "rooms_total"]).sort_values("lt").reset_index(drop=True)
+
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        df_out.to_csv(output_path, index=False, encoding="utf-8-sig")
+    except Exception as exc:
+        logging.exception(
+            "Failed to save monthly_curve CSV for %s (%s) to %s.",
+            hotel_tag,
+            target_month,
+            output_path,
+        )
+        raise FileNotFoundError(
+            f"monthly_curve を {output_path} に保存できませんでした: {exc}"
+        ) from exc
+
+    logging.info(
+        "Monthly curve generated from daily_snapshots and saved to %s for %s (%s).",
+        output_path,
+        hotel_tag,
+        target_month,
+    )
+    return df_out
+
+
+def _load_monthly_curve_csv(csv_path: Path) -> pd.DataFrame:
+    try:
+        df = pd.read_csv(csv_path)
+    except FileNotFoundError:
+        raise
+    except Exception as exc:
+        raise ValueError(f"Failed to read monthly_curve csv: {csv_path}") from exc
+    return df
+
+
+def _prepare_monthly_curve_df(df: pd.DataFrame, csv_path: Path) -> pd.DataFrame:
+    if df is None or df.empty:
+        raise FileNotFoundError(
+            f"monthly_curve が存在せず、daily_snapshots からも生成できませんでした: {csv_path}"
+        )
+
     if "lt" in df.columns:
         df = df.set_index("lt")
     elif df.columns[0] != "lt":
@@ -538,64 +652,18 @@ def get_monthly_curve_data(
         raise ValueError(f"Unexpected columns in monthly curve csv: {list(df.columns)}")
 
     df = df.sort_index()
-    if not df.empty:
-        act_row = df.loc[[-1]] if -1 in df.index else None
-        df_no_act = df.loc[df.index != -1]
-        df_no_act = apply_nocb_along_lt(df_no_act, axis="index", max_gap=None)
-        parts = [df_no_act]
-        if act_row is not None:
-            parts.append(act_row)
-        df = pd.concat(parts).sort_index()
-    return df
-
-
-def _ensure_monthly_curve_csv_from_daily_snapshots(
-    hotel_tag: str, target_month: str
-) -> Path | None:
-    csv_path = OUTPUT_DIR / f"monthly_curve_{target_month}_{hotel_tag}.csv"
-    if csv_path.exists():
-        return csv_path
-
-    logging.info(
-        "monthly_curve CSV not found for %s (%s). Generating from daily_snapshots.",
-        hotel_tag,
-        target_month,
-    )
-
-    try:
-        df_monthly = run_build_lt_csv.build_monthly_curve_from_daily_snapshots(
-            hotel_id=hotel_tag,
-            target_month=target_month,
-            output_dir=OUTPUT_DIR,
-            max_lt=run_build_lt_csv.MAX_LT,
+    if df.empty:
+        raise FileNotFoundError(
+            f"monthly_curve が存在せず、daily_snapshots からも生成できませんでした: {csv_path}"
         )
-    except Exception:
-        logging.exception(
-            "Failed to build monthly_curve from daily_snapshots for %s (%s).",
-            hotel_tag,
-            target_month,
-        )
-        return None
 
-    if df_monthly is None or df_monthly.empty:
-        logging.warning(
-            "Monthly curve generated from daily_snapshots is empty for %s (%s).",
-            hotel_tag,
-            target_month,
-        )
-        return None
-
-    try:
-        csv_path.parent.mkdir(parents=True, exist_ok=True)
-        df_monthly.to_csv(csv_path, index=False, encoding="utf-8-sig")
-    except Exception:
-        logging.exception(
-            "Failed to save monthly_curve CSV for %s (%s) to %s.",
-            hotel_tag,
-            target_month,
-            csv_path,
-        )
-        return None
+    act_row = df.loc[[-1]] if -1 in df.index else None
+    df_no_act = df.loc[df.index != -1]
+    df_no_act = apply_nocb_along_lt(df_no_act, axis="index", max_gap=None)
+    parts = [df_no_act]
+    if act_row is not None:
+        parts.append(act_row)
+    return pd.concat(parts).sort_index()
 
     logging.info(
         "Monthly curve generated and saved to %s for %s (%s).",

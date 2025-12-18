@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
-import tkinter as tk
 import threading
+import tkinter as tk
 from datetime import date, datetime
 from pathlib import Path
 from tkinter import messagebox, simpledialog, ttk
@@ -524,9 +524,7 @@ class BookingCurveApp(tk.Tk):
         )
         self.full_all_button.grid(row=1, column=0, padx=4, pady=4, sticky="w")
         self.full_all_status_var = tk.StringVar(value="")
-        ttk.Label(advanced_frame, textvariable=self.full_all_status_var).grid(
-            row=1, column=1, padx=4, pady=4, sticky="w"
-        )
+        ttk.Label(advanced_frame, textvariable=self.full_all_status_var).grid(row=1, column=1, padx=4, pady=4, sticky="w")
 
         # 初期表示
         self._refresh_calendar_coverage()
@@ -748,9 +746,7 @@ class BookingCurveApp(tk.Tk):
             daemon=True,
         ).start()
 
-    def _run_full_all_snapshots_async(
-        self, hotel_tag: str, log_file: Path, file_handler: logging.Handler
-    ) -> None:
+    def _run_full_all_snapshots_async(self, hotel_tag: str, log_file: Path, file_handler: logging.Handler) -> None:
         root_logger = logging.getLogger()
         root_logger.addHandler(file_handler)
 

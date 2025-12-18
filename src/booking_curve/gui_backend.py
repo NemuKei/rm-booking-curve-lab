@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import date, datetime
+from calendar import monthrange
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -544,32 +545,52 @@ def _build_monthly_curve_from_daily_snapshots(
         if df_month.empty:
             raise ValueError(f"ASOF {cutoff_ts.date()} 以前の daily_snapshots にデータが無いため monthly_curve を生成できません。")
 
-    df_month["lt"] = (df_month["stay_date"] - df_month["as_of_date"]).dt.days
-    df_month_lt = df_month[df_month["lt"] >= 0].copy()
-    if df_month_lt.empty:
-        raise ValueError(f"daily_snapshots_{hotel_tag}.csv に非負のLTを持つデータが無いため monthly_curve を生成できません。")
+    year = int(target_month[:4])
+    month = int(target_month[4:])
+    last_day = monthrange(year, month)[1]
+    month_end = datetime(year, month, last_day)
+    act_asof = month_end + timedelta(days=1)
 
-    monthly_series = df_month_lt.groupby("lt")["rooms_oh"].sum(min_count=1)
+    df_monthly = df_month.groupby("as_of_date")["rooms_oh"].sum(min_count=1).reset_index()
+    df_monthly = df_monthly.rename(columns={"rooms_oh": "rooms_total"})
+    df_monthly["lt"] = (act_asof - df_monthly["as_of_date"]).dt.days - 1
 
-    act_total: float | None = None
-    latest_by_stay = df_month.sort_values(["stay_date", "as_of_date"]).groupby("stay_date").tail(1)
-    if not latest_by_stay.empty:
-        act_total_raw = latest_by_stay["rooms_oh"].sum(min_count=1)
-        if not pd.isna(act_total_raw):
-            act_total = float(act_total_raw)
+    max_lt = getattr(run_build_lt_csv, "MAX_LT", None)
+    if max_lt is not None:
+        df_monthly = df_monthly[(df_monthly["lt"] >= -1) & (df_monthly["lt"] <= max_lt)]
+    else:
+        df_monthly = df_monthly[df_monthly["lt"] >= -1]
 
-    df_out = pd.DataFrame({"lt": monthly_series.index.astype(int), "rooms_total": monthly_series.values})
-    if act_total is not None:
-        df_out = pd.concat(
-            [df_out, pd.DataFrame([{"lt": -1, "rooms_total": act_total}])],
-            ignore_index=True,
+    if df_monthly.empty:
+        raise ValueError(
+            f"monthly_curve が存在せず、daily_snapshots から {target_month}（{hotel_tag}）向けに生成できません。"
         )
+
+    df_out = (
+        df_monthly.groupby("lt")["rooms_total"]
+        .sum(min_count=1)
+        .reset_index()
+        .sort_values("lt")
+        .reset_index(drop=True)
+    )
+
+    has_act_lt = (df_out["lt"] == -1).any()
+    if not has_act_lt:
+        latest_by_stay = df_month.sort_values(["stay_date", "as_of_date"]).groupby("stay_date").tail(1)
+        if not latest_by_stay.empty:
+            act_total_raw = latest_by_stay["rooms_oh"].sum(min_count=1)
+            if not pd.isna(act_total_raw):
+                df_out = pd.concat(
+                    [df_out, pd.DataFrame([{"lt": -1, "rooms_total": float(act_total_raw)}])],
+                    ignore_index=True,
+                )
 
     if df_out.empty:
         raise ValueError(
-            f"monthly_curve not found and cannot be built from daily_snapshots for {target_month} ({hotel_tag})."
+            f"monthly_curve が存在せず、daily_snapshots から {target_month}（{hotel_tag}）向けに生成できません。"
         )
 
+    df_out["lt"] = df_out["lt"].astype(int)
     return df_out.sort_values("lt").reset_index(drop=True)
 
 

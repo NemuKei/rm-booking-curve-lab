@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import subprocess
+import sys
 import threading
 import time
 import tkinter as tk
@@ -44,6 +47,7 @@ from booking_curve.gui_backend import (
     run_daily_snapshots_for_gui,
     run_forecast_for_gui,
     run_full_evaluation_for_gui_range,
+    run_missing_check_for_gui,
 )
 from booking_curve.plot_booking_curve import LEAD_TIME_PITCHES
 from build_daily_snapshots_from_folder import (
@@ -59,6 +63,19 @@ from build_daily_snapshots_from_folder import (
 # デフォルトホテル (現状は大国町のみ想定)
 DEFAULT_HOTEL = next(iter(HOTEL_CONFIG.keys()), "daikokucho")
 SETTINGS_FILE = OUTPUT_DIR / "gui_settings.json"
+
+
+def open_file(path: str | Path) -> None:
+    path_obj = Path(path)
+    path_str = str(path_obj)
+    if sys.platform.startswith("win"):
+        os.startfile(path_str)  # type: ignore[attr-defined]
+        return
+
+    if sys.platform == "darwin":
+        subprocess.run(["open", path_str], check=False)
+    else:
+        subprocess.run(["xdg-open", path_str], check=False)
 
 
 class BookingCurveApp(tk.Tk):
@@ -540,6 +557,12 @@ class BookingCurveApp(tk.Tk):
         self.lt_all_status_var = tk.StringVar(value="")
         ttk.Label(advanced_frame, textvariable=self.lt_all_status_var).grid(row=2, column=1, padx=4, pady=4, sticky="w")
 
+        ttk.Button(
+            advanced_frame,
+            text="欠損チェック（CSV）",
+            command=self._on_run_missing_check,
+        ).grid(row=3, column=0, padx=4, pady=4, sticky="w")
+
         # 初期表示
         self._refresh_calendar_coverage()
         self._refresh_master_daily_caps()
@@ -704,6 +727,19 @@ class BookingCurveApp(tk.Tk):
             self.bc_forecast_cap_var.set(str(fc_val))
 
         messagebox.showinfo("保存完了", "キャパシティ設定を保存しました。")
+
+    def _on_run_missing_check(self) -> None:
+        hotel_tag = self.hotel_var.get().strip()
+        if not hotel_tag:
+            messagebox.showerror("エラー", "ホテルが選択されていません。")
+            return
+
+        try:
+            csv_path = run_missing_check_for_gui(hotel_tag)
+            open_file(csv_path)
+        except Exception as e:
+            logging.exception("欠損チェックに失敗しました")
+            messagebox.showerror("エラー", f"欠損チェックに失敗しました:\n{e}")
 
     def _load_historical_lt_all_rate(self) -> float | None:
         if not LOGS_DIR.exists():

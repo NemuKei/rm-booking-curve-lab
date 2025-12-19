@@ -13,6 +13,7 @@ import build_calendar_features
 import run_build_lt_csv
 import run_forecast_batch
 from booking_curve.daily_snapshots import (
+    get_daily_snapshots_path,
     get_latest_asof_date,
     list_stay_months_from_daily_snapshots,
     read_daily_snapshots_for_month,
@@ -23,6 +24,7 @@ from booking_curve.forecast_simple import (
     moving_average_recent_90days_weighted,
 )
 from booking_curve.pms_adapter_nface import build_daily_snapshots_fast, build_daily_snapshots_full_all, build_daily_snapshots_full_months
+from booking_curve.missing_report import build_missing_report
 from booking_curve.utils import apply_nocb_along_lt
 from build_daily_snapshots_from_folder import HOTELS as NFACE_HOTELS
 from run_full_evaluation import resolve_asof_dates_for_month, run_full_evaluation_for_gui
@@ -1409,6 +1411,7 @@ def run_daily_snapshots_for_gui(
                 layout=layout,
                 output_dir=OUTPUT_DIR,
                 glob="*.xls*",
+                recursive=True,
             )
         elif mode_normalized == "FULL_MONTHS":
             build_daily_snapshots_full_months(
@@ -1418,6 +1421,7 @@ def run_daily_snapshots_for_gui(
                 layout=layout,
                 output_dir=OUTPUT_DIR,
                 glob="*.xls*",
+                recursive=True,
             )
         else:
             build_daily_snapshots_full_all(
@@ -1426,6 +1430,7 @@ def run_daily_snapshots_for_gui(
                 layout=layout,
                 output_dir=OUTPUT_DIR,
                 glob="*.xls*",
+                recursive=True,
             )
     except Exception:
         logging.exception("Failed to build daily snapshots for GUI: hotel_tag=%s", hotel_tag)
@@ -1445,6 +1450,13 @@ def run_full_evaluation_for_gui_range(
         target_months=months,
     )
     return detail_path, summary_path
+
+
+def run_missing_check_for_gui(hotel_tag: str) -> Path:
+    config = NFACE_HOTELS[hotel_tag]
+    input_dir = config["input_dir"]
+    daily_path = get_daily_snapshots_path(hotel_tag)
+    return build_missing_report(hotel_tag, input_dir, daily_path, recursive=True, months_ahead=3)
 
 
 def get_nearest_asof_type_for_gui(target_month: str, asof_date_str: str, calendar_df: pd.DataFrame | None = None) -> str | None:

@@ -81,8 +81,9 @@ def _parse_target_months_arg(target_months: str | None) -> list[str]:
     return months
 
 
-def count_excel_files(input_dir: Path, glob: str = EXCEL_GLOB) -> int:
-    return sum(1 for p in input_dir.glob(glob) if p.is_file() and p.suffix.lower() in {".xls", ".xlsx"})
+def count_excel_files(input_dir: Path, glob: str = EXCEL_GLOB, recursive: bool = False) -> int:
+    candidates = input_dir.rglob(glob) if recursive else input_dir.glob(glob)
+    return sum(1 for p in candidates if p.is_file() and p.suffix.lower() in {".xls", ".xlsx"})
 
 
 def load_historical_full_all_rate(logs_dir: Path) -> float | None:
@@ -109,7 +110,7 @@ def _resolve_hotels(target: str) -> Iterable[tuple[str, dict]]:
     return [(target, HOTELS[target])]
 
 
-def _run_fast(hotel_id: str, cfg: dict, target_months: list[str], buffer_days: int) -> None:
+def _run_fast(hotel_id: str, cfg: dict, target_months: list[str], buffer_days: int, recursive: bool) -> None:
     layout = cfg.get("layout", "auto")
     latest_asof = get_latest_asof_date(hotel_id)
     asof_min = latest_asof - pd.Timedelta(days=buffer_days) if latest_asof is not None else None
@@ -131,10 +132,11 @@ def _run_fast(hotel_id: str, cfg: dict, target_months: list[str], buffer_days: i
         layout=layout,
         output_dir=None,
         glob=EXCEL_GLOB,
+        recursive=recursive,
     )
 
 
-def _run_full_months(hotel_id: str, cfg: dict, target_months: list[str]) -> None:
+def _run_full_months(hotel_id: str, cfg: dict, target_months: list[str], recursive: bool) -> None:
     layout = cfg.get("layout", "auto")
     logging.info("Running FULL_MONTHS: hotel=%s target_months=%s", hotel_id, target_months)
 
@@ -145,13 +147,14 @@ def _run_full_months(hotel_id: str, cfg: dict, target_months: list[str]) -> None
         layout=layout,
         output_dir=None,
         glob=EXCEL_GLOB,
+        recursive=recursive,
     )
 
 
-def _run_full_all(hotel_id: str, cfg: dict) -> None:
+def _run_full_all(hotel_id: str, cfg: dict, recursive: bool) -> None:
     layout = cfg.get("layout", "auto")
     input_dir = Path(cfg["input_dir"])
-    file_count = count_excel_files(input_dir, EXCEL_GLOB)
+    file_count = count_excel_files(input_dir, EXCEL_GLOB, recursive=recursive)
     historical_rate = load_historical_full_all_rate(LOGS_DIR)
     rate = historical_rate if historical_rate and historical_rate > 0 else DEFAULT_FULL_ALL_RATE
     estimated_seconds = file_count / rate if rate > 0 and file_count else None
@@ -174,6 +177,7 @@ def _run_full_all(hotel_id: str, cfg: dict) -> None:
         layout=layout,
         output_dir=None,
         glob=EXCEL_GLOB,
+        recursive=recursive,
     )
     duration = time.monotonic() - start
     actual_rate = file_count / duration if duration > 0 and file_count else 0.0
@@ -225,6 +229,11 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Rebuild asof_dates CSV after processing each hotel",
     )
+    parser.add_argument(
+        "--recursive",
+        action="store_true",
+        help="Search Excel files recursively under input_dir (supports monthly subfolders).",
+    )
     return parser.parse_args()
 
 
@@ -253,11 +262,11 @@ def main() -> None:
 
     for hotel_id, cfg in hotels_to_process:
         if args.mode == "FAST":
-            _run_fast(hotel_id, cfg, target_months or [], args.buffer_days)
+            _run_fast(hotel_id, cfg, target_months or [], args.buffer_days, args.recursive)
         elif args.mode == "FULL_MONTHS":
-            _run_full_months(hotel_id, cfg, target_months or [])
+            _run_full_months(hotel_id, cfg, target_months or [], args.recursive)
         else:
-            _run_full_all(hotel_id, cfg)
+            _run_full_all(hotel_id, cfg, args.recursive)
 
         if args.rebuild_asof_index:
             rebuild_asof_dates_from_daily_snapshots(hotel_id)

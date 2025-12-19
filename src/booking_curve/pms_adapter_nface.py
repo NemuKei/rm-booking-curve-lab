@@ -97,6 +97,37 @@ def _parse_nface_filename(file_path: Path) -> tuple[str | None, str | None]:
     return m.group("ym"), m.group("asof")
 
 
+def _discover_excel_files(input_path: Path, glob: str, *, recursive: bool) -> list[Path]:
+    """Discover Excel files under the input path with optional recursion."""
+    if recursive:
+        candidates = input_path.glob(glob) if "**" in glob else input_path.rglob("*.xls*")
+    else:
+        candidates = input_path.glob(glob)
+
+    files = sorted(
+        p
+        for p in candidates
+        if p.is_file() and p.suffix.lower() in {".xls", ".xlsx"} and not p.name.startswith("~$")
+    )
+    return files
+
+
+def _validate_no_duplicate_keys(files: list[Path]) -> None:
+    """Validate that there are no duplicate (target_month, asof_date) keys among files."""
+    seen: dict[tuple[str, str], Path] = {}
+    for file_path in files:
+        target_month, asof_ymd = _parse_nface_filename(file_path)
+        if target_month is None or asof_ymd is None:
+            continue
+        key = (target_month, asof_ymd)
+        if key in seen:
+            existing = seen[key]
+            raise ValueError(
+                f"Duplicate key detected for {key}: {existing} and {file_path}",
+            )
+        seen[key] = file_path
+
+
 def _iter_stay_rows(df: pd.DataFrame) -> list[tuple[int, pd.Timestamp]]:
     """Return list of (row_idx, stay_date) where column A is a valid date."""
     stay_rows: list[tuple[int, pd.Timestamp]] = []
@@ -366,8 +397,12 @@ def build_daily_snapshots_fast(
     layout: LayoutType = "auto",
     output_dir: Optional[Path] = None,
     glob: str = "*.xls*",
+    recursive: bool = False,
 ) -> None:
-    """Build snapshots quickly by filename filtering and single append."""
+    """Build snapshots quickly by filename filtering and single append.
+
+    Supports optional recursive discovery of raw Excel files.
+    """
 
     input_path = Path(input_dir)
     if not input_path.exists() or not input_path.is_dir():
@@ -377,7 +412,8 @@ def build_daily_snapshots_fast(
     asof_min_ts = _normalize_boundary_timestamp(asof_min, "asof_min") if asof_min is not None else None
     asof_max_ts = _normalize_boundary_timestamp(asof_max, "asof_max") if asof_max is not None else None
 
-    files = sorted(p for p in input_path.glob(glob) if p.is_file() and p.suffix.lower() in {".xls", ".xlsx"})
+    files = _discover_excel_files(input_path, glob, recursive=recursive)
+    _validate_no_duplicate_keys(files)
 
     filtered: list[tuple[Path, str]] = []
     for file in files:
@@ -435,15 +471,20 @@ def build_daily_snapshots_full_months(
     layout: LayoutType = "auto",
     output_dir: Optional[Path] = None,
     glob: str = "*.xls*",
+    recursive: bool = False,
 ) -> None:
-    """Append snapshots for specified months using single append."""
+    """Append snapshots for specified months using single append.
+
+    Supports optional recursive discovery of raw Excel files.
+    """
 
     input_path = Path(input_dir)
     if not input_path.exists() or not input_path.is_dir():
         logger.error("%s が存在しないかディレクトリではありません", input_path)
         return
 
-    files = sorted(p for p in input_path.glob(glob) if p.is_file() and p.suffix.lower() in {".xls", ".xlsx"})
+    files = _discover_excel_files(input_path, glob, recursive=recursive)
+    _validate_no_duplicate_keys(files)
 
     filtered: list[tuple[Path, str]] = []
     for file in files:
@@ -491,15 +532,20 @@ def build_daily_snapshots_full_all(
     layout: LayoutType = "auto",
     output_dir: Optional[Path] = None,
     glob: str = "*.xls*",
+    recursive: bool = False,
 ) -> None:
-    """Append snapshots for all Excel files with a single append."""
+    """Append snapshots for all Excel files with a single append.
+
+    Supports optional recursive discovery of raw Excel files.
+    """
 
     input_path = Path(input_dir)
     if not input_path.exists() or not input_path.is_dir():
         logger.error("%s が存在しないかディレクトリではありません", input_path)
         return
 
-    files = sorted(p for p in input_path.glob(glob) if p.is_file() and p.suffix.lower() in {".xls", ".xlsx"})
+    files = _discover_excel_files(input_path, glob, recursive=recursive)
+    _validate_no_duplicate_keys(files)
 
     if not files:
         logger.warning("%s 配下に対象ファイルが見つかりません", input_path)

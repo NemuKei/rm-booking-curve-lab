@@ -331,21 +331,18 @@ def forecast_month_from_recent90(
     if act_col is not None:
         actual_series = df_target[act_col]
         actual_series.index = all_dates
-        out_df["actual_rooms"] = actual_series
+        out_df["actual_rooms"] = pd.to_numeric(actual_series, errors="coerce").astype("Float64")
     else:
-        out_df["actual_rooms"] = pd.NA
+        out_df["actual_rooms"] = pd.Series(pd.NA, index=all_dates, dtype="Float64")
 
     out_df["forecast_rooms"] = result.reindex(all_dates)
     out_df["forecast_rooms_int"] = out_df["forecast_rooms"].round().astype("Int64")
 
-    projected = []
-    for dt in out_df.index:
-        if dt < as_of_ts:
-            projected.append(out_df.loc[dt, "actual_rooms"])
-        else:
-            projected.append(out_df.loc[dt, "forecast_rooms_int"])
-
-    out_df["projected_rooms"] = projected
+    out_df["projected_rooms"] = out_df["actual_rooms"].where(
+        out_df.index < as_of_ts,
+        out_df["forecast_rooms_int"].astype("Float64"),
+    )
+    out_df["projected_rooms"] = pd.to_numeric(out_df["projected_rooms"], errors="coerce").astype("Float64")
 
     hotel_tag_value = hotel_tag or HOTEL_TAG
     out_df = apply_segment_adjustment(out_df, hotel_tag=hotel_tag_value)

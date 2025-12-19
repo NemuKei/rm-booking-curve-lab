@@ -23,8 +23,8 @@ from booking_curve.forecast_simple import (
     moving_average_recent_90days,
     moving_average_recent_90days_weighted,
 )
-from booking_curve.pms_adapter_nface import build_daily_snapshots_fast, build_daily_snapshots_full_all, build_daily_snapshots_full_months
 from booking_curve.missing_report import build_missing_report
+from booking_curve.pms_adapter_nface import build_daily_snapshots_fast, build_daily_snapshots_full_all, build_daily_snapshots_full_months
 from booking_curve.utils import apply_nocb_along_lt
 from build_daily_snapshots_from_folder import HOTELS as NFACE_HOTELS
 from run_full_evaluation import resolve_asof_dates_for_month, run_full_evaluation_for_gui
@@ -579,17 +579,9 @@ def _build_monthly_curve_from_daily_snapshots(
         df_monthly = df_monthly[df_monthly["lt"] >= -1]
 
     if df_monthly.empty:
-        raise ValueError(
-            f"monthly_curve が存在せず、daily_snapshots から {target_month}（{hotel_tag}）向けに生成できません。"
-        )
+        raise ValueError(f"monthly_curve が存在せず、daily_snapshots から {target_month}（{hotel_tag}）向けに生成できません。")
 
-    df_out = (
-        df_monthly.groupby("lt")["rooms_total"]
-        .sum(min_count=1)
-        .reset_index()
-        .sort_values("lt")
-        .reset_index(drop=True)
-    )
+    df_out = df_monthly.groupby("lt")["rooms_total"].sum(min_count=1).reset_index().sort_values("lt").reset_index(drop=True)
 
     has_act_lt = (df_out["lt"] == -1).any()
     if not has_act_lt:
@@ -603,9 +595,7 @@ def _build_monthly_curve_from_daily_snapshots(
                 )
 
     if df_out.empty:
-        raise ValueError(
-            f"monthly_curve が存在せず、daily_snapshots から {target_month}（{hotel_tag}）向けに生成できません。"
-        )
+        raise ValueError(f"monthly_curve が存在せず、daily_snapshots から {target_month}（{hotel_tag}）向けに生成できません。")
 
     df_out["lt"] = df_out["lt"].astype(int)
     return df_out.sort_values("lt").reset_index(drop=True)

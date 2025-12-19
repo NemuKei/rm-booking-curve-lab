@@ -31,6 +31,7 @@ from booking_curve.gui_backend import (
     get_booking_curve_data,
     get_calendar_coverage,
     get_daily_forecast_table,
+    clear_evaluation_detail_cache,
     get_eval_monthly_by_asof,
     get_eval_overview_by_asof,
     get_latest_asof_for_hotel,
@@ -1683,6 +1684,8 @@ class BookingCurveApp(tk.Tk):
             messagebox.showerror("エラー", f"評価CSVの再計算に失敗しました:\n{e}")
             return
 
+        clear_evaluation_detail_cache(hotel)
+
         try:
             self._on_load_model_eval()
         except Exception:
@@ -1963,8 +1966,8 @@ class BookingCurveApp(tk.Tk):
             from_ym = self.asof_from_ym_var.get().strip() or None
             to_ym = self.asof_to_ym_var.get().strip() or None
 
-            overview_df = get_eval_overview_by_asof(hotel, from_ym=from_ym, to_ym=to_ym)
-            detail_df = get_eval_monthly_by_asof(hotel, from_ym=from_ym, to_ym=to_ym)
+            overview_df = get_eval_overview_by_asof(hotel, from_ym=from_ym, to_ym=to_ym, force_reload=True)
+            detail_df = get_eval_monthly_by_asof(hotel, from_ym=from_ym, to_ym=to_ym, force_reload=True)
         except Exception as exc:
             self._asof_overview_df = None
             self._asof_detail_df = None

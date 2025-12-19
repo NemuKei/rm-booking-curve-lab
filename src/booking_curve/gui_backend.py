@@ -33,7 +33,7 @@ OUTPUT_DIR = PROJECT_ROOT / "output"
 CONFIG_DIR = PROJECT_ROOT / "config"
 HOTEL_CONFIG_PATH = CONFIG_DIR / "hotels.json"
 
-_evaluation_detail_cache: dict[str, pd.DataFrame] = {}
+_EVALUATION_DETAIL_CACHE: dict[str, tuple[float, pd.DataFrame]] = {}
 
 
 def _load_default_hotel_config() -> Dict[str, Dict[str, float]]:
@@ -189,13 +189,18 @@ def get_calendar_coverage(hotel_tag: str) -> Dict[str, Optional[str]]:
     return {"min_date": min_str, "max_date": max_str}
 
 
-def _get_evaluation_detail_df(hotel_tag: str) -> pd.DataFrame:
-    if hotel_tag in _evaluation_detail_cache:
-        return _evaluation_detail_cache[hotel_tag].copy()
+def _get_evaluation_detail_df(hotel_tag: str, *, force_reload: bool = False) -> pd.DataFrame:
+    cached = _EVALUATION_DETAIL_CACHE.get(hotel_tag)
 
     csv_path = OUTPUT_DIR / f"evaluation_{hotel_tag}_detail.csv"
     if not csv_path.exists():
         raise FileNotFoundError(f"evaluation detail csv not found: {csv_path}")
+
+    mtime = csv_path.stat().st_mtime
+    if not force_reload and cached is not None:
+        cached_mtime, cached_df = cached
+        if cached_mtime == mtime:
+            return cached_df.copy()
 
     df_detail = pd.read_csv(csv_path)
     df_detail = df_detail.copy()
@@ -207,8 +212,18 @@ def _get_evaluation_detail_df(hotel_tag: str) -> pd.DataFrame:
     df_detail["error_pct"] = pd.to_numeric(df_detail["error_pct"], errors="coerce")
     df_detail["abs_error_pct"] = pd.to_numeric(df_detail["abs_error_pct"], errors="coerce")
 
-    _evaluation_detail_cache[hotel_tag] = df_detail
+    _EVALUATION_DETAIL_CACHE[hotel_tag] = (mtime, df_detail)
     return df_detail.copy()
+
+
+def clear_evaluation_detail_cache(hotel_tag: str | None = None) -> None:
+    """evaluation detail のキャッシュをクリアする。"""
+
+    if hotel_tag is None:
+        _EVALUATION_DETAIL_CACHE.clear()
+        return
+
+    _EVALUATION_DETAIL_CACHE.pop(hotel_tag, None)
 
 
 def _get_capacity(hotel_tag: str, capacity: Optional[float]) -> float:
@@ -1196,6 +1211,7 @@ def get_eval_overview_by_asof(
     hotel_tag: str,
     from_ym: str | None = None,
     to_ym: str | None = None,
+    force_reload: bool = False,
 ) -> pd.DataFrame:
     """
     モデル×ASOFタイプ別の期間トータル評価指標を返す。
@@ -1215,7 +1231,7 @@ def get_eval_overview_by_asof(
         model 昇順, asof_type 昇順。
     """
 
-    df_detail = _get_evaluation_detail_df(hotel_tag)
+    df_detail = _get_evaluation_detail_df(hotel_tag, force_reload=force_reload)
     df_detail = _filter_by_target_month(df_detail, from_ym=from_ym, to_ym=to_ym)
 
     records = []
@@ -1261,6 +1277,7 @@ def get_eval_monthly_by_asof(
     to_ym: str | None = None,
     asof_types: list[str] | None = None,
     models: list[str] | None = None,
+    force_reload: bool = False,
 ) -> pd.DataFrame:
     """
     月別×ASOF×モデルの評価ログを返す（1行=1 target_month×asof_type×model）。
@@ -1280,7 +1297,7 @@ def get_eval_monthly_by_asof(
         target_month 昇順, asof_type 昇順, model 昇順。
     """
 
-    df_detail = _get_evaluation_detail_df(hotel_tag)
+    df_detail = _get_evaluation_detail_df(hotel_tag, force_reload=force_reload)
     df_detail = _filter_by_target_month(df_detail, from_ym=from_ym, to_ym=to_ym)
 
     if asof_types is not None:

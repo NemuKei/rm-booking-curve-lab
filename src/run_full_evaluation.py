@@ -88,52 +88,74 @@ def get_avg_history_months(target_month: str, months_back: int = 3) -> list[str]
     return months
 
 
-def _load_lt_data_csv(path: Path) -> pd.DataFrame:
+def _load_lt_data_csv(csv_path: Path, target_month: str, hotel_tag: str) -> pd.DataFrame:
     try:
-        df = pd.read_csv(path, index_col=0)
+        raw_df = pd.read_csv(csv_path)
     except FileNotFoundError as exc:
-        raise FileNotFoundError(f"LT_DATA CSV not found: {path}") from exc
+        raise FileNotFoundError(f"LT_DATA CSV not found: {csv_path}") from exc
     except Exception as exc:
-        raise ValueError(f"Failed to read LT_DATA CSV: {path}") from exc
+        raise ValueError(f"Failed to read LT_DATA CSV: {csv_path}") from exc
 
-    numeric_index = pd.to_numeric(df.index, errors="coerce")
-    invalid_index = numeric_index.isna()
-    if invalid_index.any():
-        df = df.loc[~invalid_index].copy()
-        numeric_index = numeric_index[~invalid_index]
+    if "stay_date" not in raw_df.columns:
+        if raw_df.empty or raw_df.shape[1] == 0:
+            raise ValueError(
+                f"LT_DATA CSV missing stay_date column: {csv_path} (target_month={target_month}, hotel={hotel_tag})"
+            )
+        raw_df = raw_df.rename(columns={raw_df.columns[0]: "stay_date"})
 
-    invalid_dates = pd.to_datetime(numeric_index, errors="coerce").isna()
-    if invalid_dates.any():
-        df = df.loc[~invalid_dates].copy()
-        numeric_index = numeric_index[~invalid_dates]
-
+    raw_df["stay_date"] = pd.to_datetime(raw_df["stay_date"], errors="coerce")
+    df = raw_df.dropna(subset=["stay_date"]).copy()
     if df.empty:
-        raise ValueError(f"LT_DATA CSV has no valid index rows after cleaning: {path}")
+        sample = raw_df.head(3).to_dict(orient="list")
+        raise ValueError(
+            f"LT_DATA CSV has no valid index rows after cleaning: {csv_path} "
+            f"(target_month={target_month}, hotel={hotel_tag}; head={sample})"
+        )
 
-    df.index = numeric_index.astype("int64")
+    df = df.set_index("stay_date")
 
-    asof_ts = pd.to_datetime(df.columns, errors="coerce")
-    invalid_cols = asof_ts.isna()
-    if invalid_cols.any():
-        df = df.loc[:, ~invalid_cols].copy()
-        asof_ts = asof_ts[~invalid_cols]
+    lt_columns: list[str] = []
+    for col in df.columns:
+        try:
+            int(col)
+        except (TypeError, ValueError):
+            continue
+        lt_columns.append(str(col))
 
-    if df.empty or asof_ts.empty:
-        raise ValueError(f"LT_DATA CSV has no valid ASOF columns after cleaning: {path}")
+    if not lt_columns:
+        raise ValueError(
+            f"LT_DATA CSV has no LT columns convertible to int: {csv_path} "
+            f"(target_month={target_month}, hotel={hotel_tag}; columns={list(raw_df.columns)})"
+        )
 
-    df.columns = [ts.date().isoformat() for ts in asof_ts]
+    df_lt = df[lt_columns].apply(pd.to_numeric, errors="coerce")
 
-    # Self-checks:
-    # - LT_DATA index may include empty/NaN rows; they are dropped safely.
-    # - ASOF columns may include empty strings; they are removed while keeping NaNs in values.
-    return df
+    target_month_str = str(target_month).replace("-", "").replace("/", "")
+    if len(target_month_str) < 6:
+        raise ValueError(
+            f"Invalid target_month format: {target_month} (expected YYYYMM) "
+            f"for hotel={hotel_tag}, file={csv_path}"
+        )
+    target_period = pd.Period(target_month_str[:6], freq="M")
+    df_lt = df_lt.loc[df_lt.index.to_period("M") == target_period]
+
+    df_lt = df_lt.dropna(how="all", subset=lt_columns)
+
+    if df_lt.empty:
+        sample = raw_df.head(3).to_dict(orient="list")
+        raise ValueError(
+            f"LT_DATA CSV has no valid index rows after cleaning: {csv_path} "
+            f"(target_month={target_month}, hotel={hotel_tag}; head={sample})"
+        )
+
+    return df_lt
 
 
 def load_lt_csv(month: str, hotel_tag: str) -> pd.DataFrame:
     file_name = f"lt_data_{month}_{hotel_tag}.csv"
     file_path = Path(OUTPUT_DIR) / file_name
     try:
-        return _load_lt_data_csv(file_path)
+        return _load_lt_data_csv(file_path, target_month=month, hotel_tag=hotel_tag)
     except FileNotFoundError as exc:
         raise FileNotFoundError(
             f"LT_DATA CSV not found for month={month}, hotel={hotel_tag}: {file_path}"
@@ -327,7 +349,11 @@ def build_evaluation_detail(hotel_tag: str, target_months: list[str]) -> pd.Data
         is_landed_month = month_end < today
         lt_csv_path = Path(OUTPUT_DIR) / f"lt_data_{target_month}_{hotel_tag}.csv"
         try:
-            lt_df = _load_lt_data_csv(lt_csv_path)
+            lt_df = _load_lt_data_csv(
+                lt_csv_path,
+                target_month=target_month,
+                hotel_tag=hotel_tag,
+            )
         except FileNotFoundError as exc:
             raise FileNotFoundError(
                 f"{exc} (target_month={target_month}, hotel={hotel_tag})"

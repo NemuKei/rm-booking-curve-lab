@@ -569,13 +569,11 @@ class BookingCurveApp(tk.Tk):
             self._update_df_best_model_label()
 
             if hasattr(self, "df_tree"):
+                self._reset_df_selection_state()
                 for item in self.df_tree.get_children():
                     self.df_tree.delete(item)
             self.df_daily_forecast_df = None
             self.df_table_df = None
-            self._df_cell_anchor = None
-            self._df_cell_end = None
-            self._clear_df_selection_rect()
 
         if hasattr(self, "bc_hotel_var"):
             fc_cap, _ = self._get_daily_caps_for_hotel(hotel_tag)
@@ -1340,9 +1338,7 @@ class BookingCurveApp(tk.Tk):
             messagebox.showerror("エラー", f"日別フォーキャスト読み込みに失敗しました:\n{e}")
             return
 
-        self._df_cell_anchor = None
-        self._df_cell_end = None
-        self._clear_df_selection_rect()
+        self._reset_df_selection_state()
 
         # 既存行クリア
         for row_id in self.df_tree.get_children():
@@ -1471,27 +1467,50 @@ class BookingCurveApp(tk.Tk):
         """リサイズ時の再描画フック（Canvasなし版: 何もしない）。"""
         return
 
+    def _reset_df_selection_state(self) -> None:
+        self._df_cell_anchor = None
+        self._df_cell_end = None
+        self._clear_df_selection_rect()
+        if hasattr(self, "df_tree"):
+            self.df_tree.focus("")
+            selection = self.df_tree.selection()
+            if selection:
+                self.df_tree.selection_remove(selection)
+
     def _on_df_tree_copy(self, event=None) -> None:
         """選択セル範囲をTSV形式でクリップボードにコピーする。"""
         if self._df_cell_anchor is None or self._df_cell_end is None:
+            return
+        if not hasattr(self, "df_tree"):
+            return
+
+        anchor_row, anchor_col = self._df_cell_anchor
+        end_row, end_col = self._df_cell_end
+        if not anchor_row or not anchor_col or not end_row or not end_col:
+            return
+        if not self.df_tree.exists(anchor_row) or not self.df_tree.exists(end_row):
             return
 
         rows = list(self.df_tree.get_children(""))
         if not rows:
             return
 
-        a_r, a_c = self._df_get_row_col_index(*self._df_cell_anchor)
-        e_r, e_c = self._df_get_row_col_index(*self._df_cell_end)
+        a_r, a_c = self._df_get_row_col_index(anchor_row, anchor_col)
+        e_r, e_c = self._df_get_row_col_index(end_row, end_col)
         if a_r < 0 or e_r < 0 or a_c < 0 or e_c < 0:
             return
 
         r_lo, r_hi = sorted((a_r, e_r))
         c_lo, c_hi = sorted((a_c, e_c))
         columns = list(self.df_tree["columns"])
+        if not columns:
+            return
 
         lines: list[str] = []
         for r_idx in range(r_lo, r_hi + 1):
             row_id = rows[r_idx]
+            if not self.df_tree.exists(row_id):
+                continue
             row_values = []
             for c_idx in range(c_lo, c_hi + 1):
                 if not (0 <= c_idx < len(columns)):

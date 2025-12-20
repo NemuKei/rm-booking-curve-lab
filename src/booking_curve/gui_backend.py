@@ -25,8 +25,8 @@ from booking_curve.forecast_simple import (
 )
 from booking_curve.missing_report import build_missing_report
 from booking_curve.pms_adapter_nface import (
-    build_daily_snapshots_for_pairs,
     build_daily_snapshots_fast,
+    build_daily_snapshots_for_pairs,
     build_daily_snapshots_full_all,
     build_daily_snapshots_full_months,
 )

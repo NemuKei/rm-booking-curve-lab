@@ -47,9 +47,8 @@ from booking_curve.gui_backend import (
     run_daily_snapshots_for_gui,
     run_forecast_for_gui,
     run_full_evaluation_for_gui_range,
-    run_missing_check_for_gui,
     run_import_missing_only,
-    run_missing_report,
+    run_missing_check_for_gui,
 )
 from booking_curve.plot_booking_curve import LEAD_TIME_PITCHES
 from build_daily_snapshots_from_folder import (

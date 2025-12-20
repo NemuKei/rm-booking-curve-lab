@@ -49,6 +49,7 @@ from booking_curve.gui_backend import (
     run_full_evaluation_for_gui_range,
     run_import_missing_only,
     run_missing_check_for_gui,
+    run_missing_audit_for_gui,
 )
 from booking_curve.plot_booking_curve import LEAD_TIME_PITCHES
 from build_daily_snapshots_from_folder import (
@@ -560,14 +561,19 @@ class BookingCurveApp(tk.Tk):
 
         ttk.Button(
             advanced_frame,
-            text="欠損チェック（CSV）",
+            text="欠損チェック（運用）",
             command=self._on_run_missing_check,
         ).grid(row=3, column=0, padx=4, pady=4, sticky="w")
         ttk.Button(
             advanced_frame,
+            text="欠損監査（全期間）",
+            command=self._on_run_missing_audit,
+        ).grid(row=4, column=0, padx=4, pady=4, sticky="w")
+        ttk.Button(
+            advanced_frame,
             text="欠損だけ取り込み",
             command=self._on_run_import_missing_only,
-        ).grid(row=4, column=0, padx=4, pady=4, sticky="w")
+        ).grid(row=5, column=0, padx=4, pady=4, sticky="w")
 
         # 初期表示
         self._refresh_calendar_coverage()
@@ -742,10 +748,24 @@ class BookingCurveApp(tk.Tk):
 
         try:
             csv_path = run_missing_check_for_gui(hotel_tag)
+            self._show_stale_asof_warning(csv_path)
             open_file(csv_path)
         except Exception as e:
             logging.exception("欠損チェックに失敗しました")
             messagebox.showerror("エラー", f"欠損チェックに失敗しました:\n{e}")
+
+    def _on_run_missing_audit(self) -> None:
+        hotel_tag = self.hotel_var.get().strip()
+        if not hotel_tag:
+            messagebox.showerror("エラー", "ホテルが選択されていません。")
+            return
+
+        try:
+            csv_path = run_missing_audit_for_gui(hotel_tag)
+            open_file(csv_path)
+        except Exception as e:
+            logging.exception("欠損監査に失敗しました")
+            messagebox.showerror("エラー", f"欠損監査に失敗しました:\n{e}")
 
     def _on_run_import_missing_only(self) -> None:
         hotel_tag = self.hotel_var.get().strip()
@@ -766,10 +786,12 @@ class BookingCurveApp(tk.Tk):
 
         processed_pairs = result.get("processed_pairs", 0)
         skipped_raw = result.get("skipped_missing_raw_pairs", 0)
+        skipped_asof_missing = result.get("skipped_asof_missing_rows", 0)
         updated = len(result.get("updated_pairs", []))
         msg_lines = [
             f"処理対象ペア数: {processed_pairs}",
             f"raw欠損でスキップ: {skipped_raw}",
+            f"ASOF丸抜けでスキップ: {skipped_asof_missing}",
             f"更新したペア数: {updated}",
         ]
         messagebox.showinfo("完了", "\n".join(msg_lines))
@@ -780,6 +802,29 @@ class BookingCurveApp(tk.Tk):
                 open_file(report_path)
             except Exception:
                 pass
+
+    def _show_stale_asof_warning(self, csv_path: str | Path) -> None:
+        try:
+            df = pd.read_csv(csv_path, dtype=str)
+        except Exception:
+            return
+
+        if df.empty or "kind" not in df.columns:
+            return
+
+        stale_rows = df[df["kind"] == "stale_latest_asof"]
+        if stale_rows.empty:
+            return
+
+        row = stale_rows.iloc[0]
+        asof_date = str(row.get("asof_date", "") or "")
+        message = str(row.get("message", "") or "")
+        msg_lines = ["最新ASOFが古い可能性があります。"]
+        if asof_date:
+            msg_lines.append(f"最新ASOF: {asof_date}")
+        if message:
+            msg_lines.append(message)
+        messagebox.showwarning("警告", "\n".join(msg_lines))
 
     def _load_historical_lt_all_rate(self) -> float | None:
         if not LOGS_DIR.exists():

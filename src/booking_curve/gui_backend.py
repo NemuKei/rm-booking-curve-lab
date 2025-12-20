@@ -1448,10 +1448,14 @@ def run_full_evaluation_for_gui_range(
 
 
 def run_missing_check_for_gui(hotel_tag: str) -> Path:
-    return run_missing_report(hotel_tag)
+    return run_missing_report(hotel_tag, mode="ops")
 
 
-def run_missing_report(hotel_tag: str) -> Path:
+def run_missing_audit_for_gui(hotel_tag: str) -> Path:
+    return run_missing_report(hotel_tag, mode="audit")
+
+
+def run_missing_report(hotel_tag: str, *, mode: str = "ops") -> Path:
     config = NFACE_HOTELS[hotel_tag]
     input_dir = config["input_dir"]
     daily_path = get_daily_snapshots_path(hotel_tag)
@@ -1459,9 +1463,13 @@ def run_missing_report(hotel_tag: str) -> Path:
         hotel_tag,
         input_dir,
         daily_path,
+        mode=mode,
+        asof_window_days=180,
+        lt_days=120,
+        forward_months=3,
+        output_dir=OUTPUT_DIR,
         recursive=True,
         glob_pattern="**/*.xls*",
-        months_ahead=3,
     )
 
 
@@ -1470,31 +1478,45 @@ def run_import_missing_only(hotel_tag: str) -> dict[str, object]:
     input_dir = config["input_dir"]
     layout = config.get("layout", "auto")
 
-    csv_path = run_missing_report(hotel_tag)
+    csv_path = run_missing_report(hotel_tag, mode="ops")
     df = pd.read_csv(csv_path, dtype=str)
-    missing_kinds = {"onhand_missing", "act_missing", "act_missing_month_end_critical"}
-    df = df[df["kind"].isin(missing_kinds)]
 
-    if df.empty:
+    kind_series = df.get("kind")
+    if kind_series is None:
+        kind_series = pd.Series([], dtype=str)
+
+    raw_df = df[kind_series == "raw_missing"]
+    asof_missing_count = int((kind_series == "asof_missing").sum())
+
+    if raw_df.empty:
         return {
             "processed_pairs": 0,
             "skipped_missing_raw_pairs": 0,
             "skipped_parse_fail_files": 0,
             "updated_pairs": [],
-            "message": "no missing keys",
+            "skipped_asof_missing_rows": asof_missing_count,
+            "message": "no missing raw keys",
             "missing_report_path": csv_path,
         }
 
-    pairs: list[tuple[str, str]] = []
-    for _, row in df.iterrows():
+    pairs_set: set[tuple[str, str]] = set()
+    for _, row in raw_df.iterrows():
         target_month = str(row.get("target_month", "")).strip()
         asof_raw = str(row.get("asof_date", "")).strip()
         if not target_month or not asof_raw:
             continue
-        asof_ymd = asof_raw.replace("-", "")
-        if len(asof_ymd) != 8 or not asof_ymd.isdigit():
+        try:
+            tm_int = int(target_month)
+            tm_clean = f"{tm_int:06d}"
+        except Exception:
             continue
-        pairs.append((target_month, asof_ymd))
+        asof_ts = pd.to_datetime(asof_raw, errors="coerce")
+        if pd.isna(asof_ts):
+            continue
+        asof_ymd = asof_ts.strftime("%Y%m%d")
+        pairs_set.add((tm_clean, asof_ymd))
+
+    pairs: list[tuple[str, str]] = sorted(pairs_set)
 
     if not pairs:
         return {
@@ -1502,7 +1524,8 @@ def run_import_missing_only(hotel_tag: str) -> dict[str, object]:
             "skipped_missing_raw_pairs": 0,
             "skipped_parse_fail_files": 0,
             "updated_pairs": [],
-            "message": "no valid missing keys",
+            "skipped_asof_missing_rows": asof_missing_count,
+            "message": "no valid missing raw keys",
             "missing_report_path": csv_path,
         }
 
@@ -1515,8 +1538,9 @@ def run_import_missing_only(hotel_tag: str) -> dict[str, object]:
         glob="**/*.xls*",
     )
 
-    latest_report = run_missing_report(hotel_tag)
+    latest_report = run_missing_report(hotel_tag, mode="ops")
     result["missing_report_path"] = latest_report
+    result["skipped_asof_missing_rows"] = asof_missing_count
     return result
 
 

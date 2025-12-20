@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -77,32 +78,173 @@ def _format_asof(asof_str: str) -> str:
     return asof_ts.strftime("%Y-%m-%d") if not pd.isna(asof_ts) else asof_str
 
 
-def _build_raw_missing_records(
+def _build_raw_index(raw_files: dict[tuple[str, str], Path]) -> tuple[set[str], set[str], defaultdict[str, set[str]]]:
+    asof_dates: set[str] = set()
+    target_months: set[str] = set()
+    asof_to_targets: defaultdict[str, set[str]] = defaultdict(set)
+
+    for target_month, asof_date in raw_files:
+        asof_dates.add(asof_date)
+        target_months.add(target_month)
+        asof_to_targets[asof_date].add(target_month)
+
+    return asof_dates, target_months, asof_to_targets
+
+
+def _build_ops_missing_records(
     raw_files: dict[tuple[str, str], Path],
     input_dir: Path,
     hotel_id: str,
-    months_ahead: int,
+    asof_window_days: int,
+    forward_months: int,
 ) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
-    asof_to_targets: defaultdict[str, set[str]] = defaultdict(set)
-    for target_month, asof_date in raw_files:
-        asof_to_targets[asof_date].add(target_month)
+    asof_dates, _, asof_to_targets = _build_raw_index(raw_files)
 
-    for asof_date, target_months in asof_to_targets.items():
-        asof_yyyymm = asof_date[:6]
-        expected = {add_months_yyyymm(asof_yyyymm, i) for i in range(months_ahead + 1)}
-        missing_targets = sorted(expected - target_months)
+    if asof_window_days <= 0:
+        return records
+
+    end_date = date.today()
+    start_date = end_date - timedelta(days=asof_window_days - 1)
+    expected_asof_dates = {
+        (start_date + timedelta(days=i)).strftime("%Y%m%d") for i in range(asof_window_days)
+    }
+
+    observed_asof_dates = {
+        asof
+        for asof in asof_dates
+        if pd.notna(pd.to_datetime(asof, format="%Y%m%d", errors="coerce"))
+    }
+    missing_asof_dates = sorted(expected_asof_dates - observed_asof_dates)
+
+    for asof in missing_asof_dates:
+        records.append(
+            {
+                "kind": "asof_missing",
+                "hotel_id": hotel_id,
+                "asof_date": _format_asof(asof),
+                "target_month": "",
+                "missing_count": 1,
+                "missing_sample": "",
+                "message": "",
+                "path": str(input_dir),
+                "severity": "ERROR",
+            },
+        )
+
+    for asof in sorted(observed_asof_dates):
+        asof_ts = pd.to_datetime(asof, format="%Y%m%d", errors="coerce")
+        if pd.isna(asof_ts):
+            continue
+
+        asof_dt = asof_ts.date()
+        if asof_dt < start_date or asof_dt > end_date:
+            continue
+
+        asof_yyyymm = asof[:6]
+        expected_targets = {add_months_yyyymm(asof_yyyymm, i) for i in range(forward_months + 1)}
+        observed_targets = asof_to_targets.get(asof, set())
+        missing_targets = sorted(expected_targets - observed_targets)
         for missing_target in missing_targets:
             records.append(
                 {
                     "kind": "raw_missing",
                     "hotel_id": hotel_id,
-                    "asof_date": _format_asof(asof_date),
+                    "asof_date": _format_asof(asof),
                     "target_month": missing_target,
                     "missing_count": 1,
                     "missing_sample": missing_target,
                     "message": "",
                     "path": str(input_dir),
+                    "severity": "ERROR",
+                },
+            )
+
+    if observed_asof_dates:
+        valid_asof_ts = [
+            pd.to_datetime(asof, format="%Y%m%d", errors="coerce") for asof in observed_asof_dates
+        ]
+        valid_asof_ts = [ts for ts in valid_asof_ts if not pd.isna(ts)]
+        if valid_asof_ts:
+            latest_ts = max(valid_asof_ts).date()
+            if latest_ts < end_date:
+                delta_days = (end_date - latest_ts).days
+                records.append(
+                    {
+                        "kind": "stale_latest_asof",
+                        "hotel_id": hotel_id,
+                        "asof_date": latest_ts.strftime("%Y-%m-%d"),
+                        "target_month": "",
+                        "missing_count": 0,
+                        "missing_sample": "",
+                        "message": f"最新ASOFが {delta_days} 日前です",
+                        "path": str(input_dir),
+                        "severity": "WARN",
+                    },
+                )
+
+    return records
+
+
+def _iter_months_range(min_month: str, max_month: str) -> list[str]:
+    try:
+        start = pd.Period(min_month, freq="M")
+        end = pd.Period(max_month, freq="M")
+    except Exception:
+        return []
+
+    months: list[str] = []
+    for p in pd.period_range(start=start, end=end, freq="M"):
+        months.append(f"{p.year}{p.month:02d}")
+    return months
+
+
+def _build_audit_raw_missing_records(
+    raw_files: dict[tuple[str, str], Path],
+    input_dir: Path,
+    hotel_id: str,
+    lt_days: int,
+) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    _, target_months, _ = _build_raw_index(raw_files)
+
+    if not target_months or lt_days <= 0:
+        return records
+
+    min_month = min(target_months)
+    max_month = max(target_months)
+    months = _iter_months_range(min_month, max_month)
+
+    for target_month in months:
+        month_start = pd.to_datetime(f"{target_month}01", format="%Y%m%d", errors="coerce")
+        if pd.isna(month_start):
+            continue
+
+        month_end = pd.Timestamp(month_start) + pd.offsets.MonthEnd(0)
+        start_asof = (month_end - pd.Timedelta(days=lt_days)).normalize()
+        expected_asof_dates = pd.date_range(start=start_asof, end=month_end, freq="D")
+        observed_asof_dates = {
+            asof
+            for tm, asof in raw_files
+            if tm == target_month
+            and pd.notna(pd.to_datetime(asof, format="%Y%m%d", errors="coerce"))
+        }
+
+        for asof_ts in expected_asof_dates:
+            asof_key = asof_ts.strftime("%Y%m%d")
+            if asof_key in observed_asof_dates:
+                continue
+            records.append(
+                {
+                    "kind": "raw_missing",
+                    "hotel_id": hotel_id,
+                    "asof_date": asof_ts.strftime("%Y-%m-%d"),
+                    "target_month": target_month,
+                    "missing_count": 1,
+                    "missing_sample": target_month,
+                    "message": "",
+                    "path": str(input_dir),
+                    "severity": "ERROR",
                 },
             )
 
@@ -142,6 +284,7 @@ def _build_onhand_missing_records(df: pd.DataFrame, hotel_id: str, daily_snapsho
                 "missing_sample": sample,
                 "message": "",
                 "path": str(daily_snapshots_path),
+                "severity": "ERROR",
             },
         )
 
@@ -209,6 +352,7 @@ def _build_act_missing_records(
                     "missing_sample": "(no snapshot for closing_asof)",
                     "message": "",
                     "path": str(daily_snapshots_path),
+                    "severity": "ERROR",
                 },
             )
             continue
@@ -237,6 +381,7 @@ def _build_act_missing_records(
                 "missing_sample": sample,
                 "message": "",
                 "path": str(daily_snapshots_path),
+                "severity": "ERROR",
             },
         )
 
@@ -248,15 +393,29 @@ def build_missing_report(
     input_dir: Path,
     daily_snapshots_path: Path,
     *,
+    mode: str = "ops",
+    asof_window_days: int = 180,
+    lt_days: int = 120,
+    forward_months: int = 3,
+    output_dir: Path | str = OUTPUT_DIR,
     recursive: bool = True,
     glob_pattern: str = "*.xls*",
-    months_ahead: int = 3,
 ) -> Path:
-    """Generate missing report for raw PMS files and daily snapshots."""
+    """Generate missing report for raw PMS files and daily snapshots.
+
+    mode:
+        - \"ops\": 運用モード。ASOF窓で最新の取りこぼしを検知。
+        - \"audit\": 監査モード。歴史的なギャップをSTAY MONTH全域で検知。
+    """
     raw_files = discover_raw_nface_files(input_dir, recursive=recursive, glob_pattern=glob_pattern)
 
     records: list[dict[str, object]] = []
-    records.extend(_build_raw_missing_records(raw_files, input_dir, hotel_id, months_ahead))
+    mode_normalized = (mode or "ops").strip().lower()
+
+    if mode_normalized == "audit":
+        records.extend(_build_audit_raw_missing_records(raw_files, input_dir, hotel_id, lt_days))
+    else:
+        records.extend(_build_ops_missing_records(raw_files, input_dir, hotel_id, asof_window_days, forward_months))
 
     if not daily_snapshots_path.exists():
         records.append(
@@ -269,6 +428,7 @@ def build_missing_report(
                 "missing_sample": "",
                 "message": "daily_snapshots file is missing",
                 "path": str(daily_snapshots_path),
+                "severity": "ERROR",
             },
         )
     else:
@@ -276,8 +436,12 @@ def build_missing_report(
         records.extend(_build_onhand_missing_records(df_snapshots, hotel_id, daily_snapshots_path))
         records.extend(_build_act_missing_records(df_snapshots, hotel_id, daily_snapshots_path, raw_files))
 
-    output_path = OUTPUT_DIR / f"missing_report_{hotel_id}.csv"
+    output_dir_path = Path(output_dir)
+    output_path = output_dir_path / f"missing_report_{hotel_id}.csv"
     output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    for rec in records:
+        rec.setdefault("severity", "INFO")
 
     df_output = pd.DataFrame(
         records,
@@ -290,6 +454,7 @@ def build_missing_report(
             "missing_sample",
             "message",
             "path",
+            "severity",
         ],
     )
     df_output.to_csv(output_path, index=False)

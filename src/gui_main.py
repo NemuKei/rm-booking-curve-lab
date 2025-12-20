@@ -48,6 +48,8 @@ from booking_curve.gui_backend import (
     run_forecast_for_gui,
     run_full_evaluation_for_gui_range,
     run_missing_check_for_gui,
+    run_import_missing_only,
+    run_missing_report,
 )
 from booking_curve.plot_booking_curve import LEAD_TIME_PITCHES
 from build_daily_snapshots_from_folder import (
@@ -562,6 +564,11 @@ class BookingCurveApp(tk.Tk):
             text="欠損チェック（CSV）",
             command=self._on_run_missing_check,
         ).grid(row=3, column=0, padx=4, pady=4, sticky="w")
+        ttk.Button(
+            advanced_frame,
+            text="欠損だけ取り込み",
+            command=self._on_run_import_missing_only,
+        ).grid(row=4, column=0, padx=4, pady=4, sticky="w")
 
         # 初期表示
         self._refresh_calendar_coverage()
@@ -740,6 +747,40 @@ class BookingCurveApp(tk.Tk):
         except Exception as e:
             logging.exception("欠損チェックに失敗しました")
             messagebox.showerror("エラー", f"欠損チェックに失敗しました:\n{e}")
+
+    def _on_run_import_missing_only(self) -> None:
+        hotel_tag = self.hotel_var.get().strip()
+        if not hotel_tag:
+            messagebox.showerror("エラー", "ホテルが選択されていません。")
+            return
+
+        try:
+            result = run_import_missing_only(hotel_tag)
+        except ValueError as e:
+            logging.exception("欠損だけ取り込みに失敗しました")
+            messagebox.showerror("エラー", f"欠損だけ取り込みに失敗しました:\n{e}")
+            return
+        except Exception as e:  # noqa: BLE001
+            logging.exception("欠損だけ取り込みに失敗しました")
+            messagebox.showerror("エラー", f"欠損だけ取り込みに失敗しました:\n{e}")
+            return
+
+        processed_pairs = result.get("processed_pairs", 0)
+        skipped_raw = result.get("skipped_missing_raw_pairs", 0)
+        updated = len(result.get("updated_pairs", []))
+        msg_lines = [
+            f"処理対象ペア数: {processed_pairs}",
+            f"raw欠損でスキップ: {skipped_raw}",
+            f"更新したペア数: {updated}",
+        ]
+        messagebox.showinfo("完了", "\n".join(msg_lines))
+
+        report_path = result.get("missing_report_path")
+        if report_path:
+            try:
+                open_file(report_path)
+            except Exception:
+                pass
 
     def _load_historical_lt_all_rate(self) -> float | None:
         if not LOGS_DIR.exists():

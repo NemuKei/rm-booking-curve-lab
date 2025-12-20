@@ -82,11 +82,10 @@ def _parse_asof_date(df: pd.DataFrame, file_path: Path, filename_asof_ymd: str |
     return None
 
 
-def _parse_nface_filename(file_path: Path) -> tuple[str | None, str | None]:
+def parse_nface_filename(file_path: Path) -> tuple[str | None, str | None]:
     """Extract target month and as-of date from filename.
 
-    The expected pattern is "YYYYMM_YYYYMMDD". If parsing fails, returns
-    (None, None) with a warning log.
+    The expected pattern is ``YYYYMM_YYYYMMDD``.
     """
 
     m = re.search(r"(?P<ym>\d{6})_(?P<asof>\d{8})", file_path.name)
@@ -97,17 +96,25 @@ def _parse_nface_filename(file_path: Path) -> tuple[str | None, str | None]:
     return m.group("ym"), m.group("asof")
 
 
+def _parse_nface_filename(file_path: Path) -> tuple[str | None, str | None]:
+    """Backward-compatible wrapper for :func:`parse_nface_filename`.
+
+    Deprecated: use :func:`parse_nface_filename` instead.
+    """
+
+    return parse_nface_filename(file_path)
+
+
 def _discover_excel_files(input_path: Path, glob: str, *, recursive: bool) -> list[Path]:
     """Discover Excel files under the input path with optional recursion."""
-    if recursive:
-        candidates = input_path.glob(glob) if "**" in glob else input_path.rglob("*.xls*")
-    else:
-        candidates = input_path.glob(glob)
+    candidates = input_path.rglob(glob) if recursive else input_path.glob(glob)
 
     files = sorted(
         p
         for p in candidates
-        if p.is_file() and p.suffix.lower() in {".xls", ".xlsx"} and not p.name.startswith("~$")
+        if p.is_file()
+        and p.suffix.lower().startswith(".xls")
+        and not p.name.startswith("~$")
     )
     return files
 
@@ -116,7 +123,7 @@ def _validate_no_duplicate_keys(files: list[Path]) -> None:
     """Validate that there are no duplicate (target_month, asof_date) keys among files."""
     seen: dict[tuple[str, str], Path] = {}
     for file_path in files:
-        target_month, asof_ymd = _parse_nface_filename(file_path)
+        target_month, asof_ymd = parse_nface_filename(file_path)
         if target_month is None or asof_ymd is None:
             continue
         key = (target_month, asof_ymd)
@@ -282,7 +289,7 @@ def parse_nface_file(
         Normalized dataframe of daily snapshots extracted from the file.
     """
     path = Path(file_path)
-    filename_stay_ym, parsed_filename_asof = _parse_nface_filename(path)
+    filename_stay_ym, parsed_filename_asof = parse_nface_filename(path)
     if filename_asof_ymd is None:
         filename_asof_ymd = parsed_filename_asof
     df_raw = pd.read_excel(path, header=None)
@@ -388,6 +395,112 @@ def build_daily_snapshots_from_folder(
     )
 
 
+def build_daily_snapshots_for_pairs(
+    input_dir: str | Path,
+    hotel_id: str,
+    pairs: list[tuple[str, str]],
+    *,
+    layout: LayoutType = "auto",
+    output_dir: Optional[Path] = None,
+    glob: str = "**/*.xls*",
+) -> dict[str, object]:
+    """Build daily snapshots only for specified (target_month, asof_date) pairs.
+
+    Each pair is processed independently and upserted with tightly scoped
+    asof/stay ranges to avoid unintended overwrites.
+    """
+
+    input_path = Path(input_dir)
+    if not input_path.exists() or not input_path.is_dir():
+        raise FileNotFoundError(f"{input_path} が存在しないかディレクトリではありません")
+
+    target_keys = {(t, a) for t, a in pairs}
+    if not target_keys:
+        return {
+            "processed_pairs": 0,
+            "skipped_missing_raw_pairs": 0,
+            "skipped_parse_fail_files": 0,
+            "updated_pairs": [],
+        }
+
+    raw_map: dict[tuple[str, str], Path] = {}
+    skipped_parse_fail_files = 0
+
+    for path in input_path.glob(glob):
+        if not path.is_file() or not path.suffix.lower().startswith(".xls") or path.name.startswith("~$"):
+            continue
+        target_month, asof_date = parse_nface_filename(path)
+        if target_month is None or asof_date is None:
+            skipped_parse_fail_files += 1
+            continue
+        key = (target_month, asof_date)
+        if key not in target_keys:
+            continue
+        if key in raw_map:
+            existing = raw_map[key]
+            raise ValueError(f"Duplicate raw files for {key}: {existing} / {path}")
+        raw_map[key] = path
+
+    processed_pairs = 0
+    skipped_missing_raw_pairs = 0
+    updated_pairs: list[dict[str, object]] = []
+    base_dir = Path(output_dir) if output_dir is not None else OUTPUT_DIR
+
+    for target_month, asof_date in sorted(target_keys):
+        raw_path = raw_map.get((target_month, asof_date))
+        if raw_path is None:
+            skipped_missing_raw_pairs += 1
+            continue
+
+        processed_pairs += 1
+        asof_ts = pd.to_datetime(asof_date, format="%Y%m%d", errors="coerce")
+        if pd.isna(asof_ts):
+            raise ValueError(f"Invalid asof_date format: {asof_date}")
+        asof_ts = pd.Timestamp(asof_ts).normalize()
+
+        stay_start = pd.to_datetime(f"{target_month}01", format="%Y%m%d", errors="coerce")
+        if pd.isna(stay_start):
+            raise ValueError(f"Invalid target_month format: {target_month}")
+        stay_start = pd.Timestamp(stay_start).normalize()
+        stay_end = stay_start + pd.offsets.MonthEnd(0)
+
+        df = parse_nface_file(
+            raw_path,
+            hotel_id=hotel_id,
+            layout=layout,
+            output_dir=output_dir,
+            save=False,
+            filename_asof_ymd=asof_date,
+        )
+        if df.empty:
+            continue
+
+        output_path = upsert_daily_snapshots_range_by_hotel(
+            df,
+            hotel_id,
+            asof_min=asof_ts,
+            asof_max=asof_ts,
+            stay_min=stay_start,
+            stay_max=stay_end,
+            output_dir=base_dir,
+        )
+        updated_pairs.append(
+            {
+                "target_month": target_month,
+                "asof_date": asof_date,
+                "path": str(raw_path),
+                "output_path": str(output_path),
+            }
+        )
+
+    return {
+        "processed_pairs": processed_pairs,
+        "skipped_missing_raw_pairs": skipped_missing_raw_pairs,
+        "skipped_parse_fail_files": skipped_parse_fail_files,
+        "updated_pairs": updated_pairs,
+    }
+
+
 def build_daily_snapshots_fast(
     input_dir: str | Path,
     hotel_id: str,
@@ -417,7 +530,7 @@ def build_daily_snapshots_fast(
 
     filtered: list[tuple[Path, str]] = []
     for file in files:
-        stay_ym, asof_ymd = _parse_nface_filename(file)
+        stay_ym, asof_ymd = parse_nface_filename(file)
         if stay_ym is None or asof_ymd is None:
             continue
         if stay_ym not in target_months:
@@ -488,7 +601,7 @@ def build_daily_snapshots_full_months(
 
     filtered: list[tuple[Path, str]] = []
     for file in files:
-        stay_ym, asof_ymd = _parse_nface_filename(file)
+        stay_ym, asof_ymd = parse_nface_filename(file)
         if stay_ym is None or asof_ymd is None:
             continue
         if stay_ym not in target_months:
@@ -553,7 +666,7 @@ def build_daily_snapshots_full_all(
 
     df_list: list[pd.DataFrame] = []
     for file in files:
-        stay_ym, asof_ymd = _parse_nface_filename(file)
+        stay_ym, asof_ymd = parse_nface_filename(file)
         if stay_ym is None or asof_ymd is None:
             continue
         try:
@@ -618,7 +731,7 @@ def build_daily_snapshots_from_folder_partial(
 
     filtered_files: list[tuple[Path, str]] = []
     for file in files:
-        target_month_ym, asof_ymd = _parse_nface_filename(file)
+        target_month_ym, asof_ymd = parse_nface_filename(file)
         if target_month_ym is None or asof_ymd is None:
             continue
 
@@ -692,9 +805,11 @@ def build_daily_snapshots_from_folder_partial(
 
 __all__ = [
     "parse_nface_file",
+    "parse_nface_filename",
     "build_daily_snapshots_fast",
     "build_daily_snapshots_from_folder",
     "build_daily_snapshots_full_all",
     "build_daily_snapshots_full_months",
     "build_daily_snapshots_from_folder_partial",
+    "build_daily_snapshots_for_pairs",
 ]

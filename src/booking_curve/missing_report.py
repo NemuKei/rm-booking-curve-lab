@@ -128,7 +128,7 @@ def _build_ops_missing_records(
                 "missing_sample": "",
                 "message": "",
                 "path": str(input_dir),
-                "severity": "ERROR",
+                "severity": "WARN",
             },
         )
 
@@ -222,7 +222,11 @@ def _build_audit_raw_missing_records(
 
         month_end = pd.Timestamp(month_start) + pd.offsets.MonthEnd(0)
         start_asof = (month_end - pd.Timedelta(days=lt_days)).normalize()
-        expected_asof_dates = pd.date_range(start=start_asof, end=month_end, freq="D")
+        end_asof = min(month_end.normalize(), pd.Timestamp(date.today()))
+        if end_asof < start_asof:
+            continue
+
+        expected_asof_dates = pd.date_range(start=start_asof, end=end_asof, freq="D")
         observed_asof_dates = {
             asof
             for tm, asof in raw_files
@@ -437,7 +441,8 @@ def build_missing_report(
         records.extend(_build_act_missing_records(df_snapshots, hotel_id, daily_snapshots_path, raw_files))
 
     output_dir_path = Path(output_dir)
-    output_path = output_dir_path / f"missing_report_{hotel_id}.csv"
+    mode_suffix = "audit" if mode_normalized == "audit" else "ops"
+    output_path = output_dir_path / f"missing_report_{hotel_id}_{mode_suffix}.csv"
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     for rec in records:
@@ -457,5 +462,11 @@ def build_missing_report(
             "severity",
         ],
     )
-    df_output.to_csv(output_path, index=False)
+    df_output.to_csv(output_path, index=False, encoding="utf-8-sig")
     return output_path
+
+
+# Self-test notes:
+# - ops/audit を連続実行してもCSVファイル名が衝突しないこと
+# - Excelで開いた際に日本語messageが文字化けしないこと（UTF-8 BOM）
+# - auditモードで today より未来の asof_date 欠損行が出力されないこと

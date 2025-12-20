@@ -1469,7 +1469,6 @@ def run_import_missing_only(hotel_tag: str) -> dict[str, object]:
     config = NFACE_HOTELS[hotel_tag]
     input_dir = config["input_dir"]
     layout = config.get("layout", "auto")
-    daily_path = get_daily_snapshots_path(hotel_tag)
 
     csv_path = run_missing_report(hotel_tag)
     df = pd.read_csv(csv_path, dtype=str)
@@ -1493,7 +1492,7 @@ def run_import_missing_only(hotel_tag: str) -> dict[str, object]:
         if not target_month or not asof_raw:
             continue
         asof_ymd = asof_raw.replace("-", "")
-        if not re.fullmatch(r"\d{8}", asof_ymd):
+        if len(asof_ymd) != 8 or not asof_ymd.isdigit():
             continue
         pairs.append((target_month, asof_ymd))
 

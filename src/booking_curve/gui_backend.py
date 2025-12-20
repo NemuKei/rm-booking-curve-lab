@@ -24,7 +24,12 @@ from booking_curve.forecast_simple import (
     moving_average_recent_90days_weighted,
 )
 from booking_curve.missing_report import build_missing_report
-from booking_curve.pms_adapter_nface import build_daily_snapshots_fast, build_daily_snapshots_full_all, build_daily_snapshots_full_months
+from booking_curve.pms_adapter_nface import (
+    build_daily_snapshots_for_pairs,
+    build_daily_snapshots_fast,
+    build_daily_snapshots_full_all,
+    build_daily_snapshots_full_months,
+)
 from booking_curve.utils import apply_nocb_along_lt
 from build_daily_snapshots_from_folder import HOTELS as NFACE_HOTELS
 from run_full_evaluation import resolve_asof_dates_for_month, run_full_evaluation_for_gui
@@ -1443,10 +1448,77 @@ def run_full_evaluation_for_gui_range(
 
 
 def run_missing_check_for_gui(hotel_tag: str) -> Path:
+    return run_missing_report(hotel_tag)
+
+
+def run_missing_report(hotel_tag: str) -> Path:
     config = NFACE_HOTELS[hotel_tag]
     input_dir = config["input_dir"]
     daily_path = get_daily_snapshots_path(hotel_tag)
-    return build_missing_report(hotel_tag, input_dir, daily_path, recursive=True, months_ahead=3)
+    return build_missing_report(
+        hotel_tag,
+        input_dir,
+        daily_path,
+        recursive=True,
+        glob_pattern="**/*.xls*",
+        months_ahead=3,
+    )
+
+
+def run_import_missing_only(hotel_tag: str) -> dict[str, object]:
+    config = NFACE_HOTELS[hotel_tag]
+    input_dir = config["input_dir"]
+    layout = config.get("layout", "auto")
+    daily_path = get_daily_snapshots_path(hotel_tag)
+
+    csv_path = run_missing_report(hotel_tag)
+    df = pd.read_csv(csv_path, dtype=str)
+    missing_kinds = {"onhand_missing", "act_missing", "act_missing_month_end_critical"}
+    df = df[df["kind"].isin(missing_kinds)]
+
+    if df.empty:
+        return {
+            "processed_pairs": 0,
+            "skipped_missing_raw_pairs": 0,
+            "skipped_parse_fail_files": 0,
+            "updated_pairs": [],
+            "message": "no missing keys",
+            "missing_report_path": csv_path,
+        }
+
+    pairs: list[tuple[str, str]] = []
+    for _, row in df.iterrows():
+        target_month = str(row.get("target_month", "")).strip()
+        asof_raw = str(row.get("asof_date", "")).strip()
+        if not target_month or not asof_raw:
+            continue
+        asof_ymd = asof_raw.replace("-", "")
+        if not re.fullmatch(r"\d{8}", asof_ymd):
+            continue
+        pairs.append((target_month, asof_ymd))
+
+    if not pairs:
+        return {
+            "processed_pairs": 0,
+            "skipped_missing_raw_pairs": 0,
+            "skipped_parse_fail_files": 0,
+            "updated_pairs": [],
+            "message": "no valid missing keys",
+            "missing_report_path": csv_path,
+        }
+
+    result = build_daily_snapshots_for_pairs(
+        input_dir=input_dir,
+        hotel_id=hotel_tag,
+        pairs=pairs,
+        layout=layout,
+        output_dir=OUTPUT_DIR,
+        glob="**/*.xls*",
+    )
+
+    latest_report = run_missing_report(hotel_tag)
+    result["missing_report_path"] = latest_report
+    return result
 
 
 def get_nearest_asof_type_for_gui(target_month: str, asof_date_str: str, calendar_df: pd.DataFrame | None = None) -> str | None:

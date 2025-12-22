@@ -575,14 +575,24 @@ class BookingCurveApp(tk.Tk):
             command=self._on_run_import_missing_only,
         ).grid(row=5, column=0, padx=4, pady=4, sticky="w")
 
+        self.master_latest_asof_var = tk.StringVar(value="最新ASOF: 未確認")
+        self.master_latest_asof_label = ttk.Label(
+            advanced_frame,
+            textvariable=self.master_latest_asof_var,
+            foreground="#555555",
+        )
+        self.master_latest_asof_label.grid(row=6, column=0, columnspan=2, padx=4, pady=(8, 4), sticky="w")
+
         # 初期表示
         self._refresh_calendar_coverage()
         self._refresh_master_daily_caps()
+        self._update_master_latest_asof_status()
 
     def _on_hotel_changed(self, event=None) -> None:
         # マスタ設定タブのホテル変更時に、カレンダー範囲とキャパ設定を両方更新
         self._refresh_calendar_coverage()
         self._refresh_master_daily_caps()
+        self._update_master_latest_asof_status()
 
     def _on_global_hotel_changed(self, *args) -> None:
         """
@@ -596,6 +606,7 @@ class BookingCurveApp(tk.Tk):
 
         self._refresh_calendar_coverage()
         self._refresh_master_daily_caps()
+        self._update_master_latest_asof_status()
 
         if hasattr(self, "df_hotel_var"):
             fc_cap, occ_cap = self._get_daily_caps_for_hotel(hotel_tag)
@@ -710,6 +721,60 @@ class BookingCurveApp(tk.Tk):
         except Exception:
             self.master_occ_cap_var.set(str(occ_cap))
 
+    def _set_master_latest_asof_status(self, text: str, color: str) -> None:
+        self.master_latest_asof_var.set(text)
+        try:
+            self.master_latest_asof_label.configure(foreground=color)
+        except Exception:
+            logging.debug("最新ASOFラベルの色設定に失敗しました", exc_info=True)
+
+    def _update_master_latest_asof_status(self, csv_path: str | Path | None = None) -> None:
+        default_text = "最新ASOF: 未確認"
+        default_color = "#555555"
+
+        if not hasattr(self, "master_latest_asof_var"):
+            return
+
+        target_path: Path | None
+        if csv_path is not None:
+            target_path = Path(csv_path)
+        else:
+            hotel_tag = self.hotel_var.get().strip()
+            target_path = OUTPUT_DIR / f"missing_report_{hotel_tag}_ops.csv" if hotel_tag else None
+
+        if target_path is None or not target_path.exists():
+            self._set_master_latest_asof_status(default_text, default_color)
+            return
+
+        try:
+            df = pd.read_csv(target_path, dtype=str)
+        except Exception:
+            self._set_master_latest_asof_status(default_text, default_color)
+            return
+
+        if df.empty or "kind" not in df.columns:
+            self._set_master_latest_asof_status("最新ASOF: OK", "#2E7D32")
+            return
+
+        stale_rows = df[df["kind"] == "stale_latest_asof"]
+        if stale_rows.empty:
+            self._set_master_latest_asof_status("最新ASOF: OK", "#2E7D32")
+            return
+
+        row = stale_rows.iloc[0]
+        asof_date = str(row.get("asof_date", "") or "")
+        message = str(row.get("message", "") or "")
+        detail_parts = []
+        if asof_date:
+            detail_parts.append(asof_date)
+        if message:
+            detail_parts.append(message)
+        detail = " ".join(detail_parts)
+        text = "最新ASOF: 要確認"
+        if detail:
+            text = f"{text} ({detail})"
+        self._set_master_latest_asof_status(text, "#C62828")
+
     def _on_save_master_daily_caps(self) -> None:
         """マスタ設定タブからキャパシティを保存し、関連タブにも反映する。"""
         hotel_tag = self.hotel_var.get().strip()
@@ -750,6 +815,7 @@ class BookingCurveApp(tk.Tk):
             csv_path = run_missing_check_for_gui(hotel_tag)
             self._show_stale_asof_warning(csv_path)
             open_file(csv_path)
+            self._update_master_latest_asof_status(csv_path)
         except Exception as e:
             logging.exception("欠損チェックに失敗しました")
             messagebox.showerror("エラー", f"欠損チェックに失敗しました:\n{e}")
@@ -802,6 +868,9 @@ class BookingCurveApp(tk.Tk):
                 open_file(report_path)
             except Exception:
                 pass
+            self._update_master_latest_asof_status(report_path)
+        else:
+            self._update_master_latest_asof_status()
 
     def _show_stale_asof_warning(self, csv_path: str | Path) -> None:
         try:

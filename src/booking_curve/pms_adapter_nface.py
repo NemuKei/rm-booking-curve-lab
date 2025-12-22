@@ -16,10 +16,10 @@ from booking_curve.daily_snapshots import (
     upsert_daily_snapshots_range_by_hotel,
 )
 
-# layout="auto" 時は A〜D列の宿泊日行から行構造を自動判定する
-# "shifted": 宿泊日行(row_idx)の1行下(row_idx+1)に OH があるレイアウト (無加工/A/B)
-# "inline" : 宿泊日行(row_idx)と同じ行に OH があるレイアウト (加工C)
-# "auto"   : A〜D列の宿泊日行インデックスから自動判定
+# layout="auto" 時は A列の宿泊日行から 1行持ち/2行持ちを自動判定する
+# "shifted": 宿泊日行(row_idx)の1行下(row_idx+1)に OH があるレイアウト (2行持ち)
+# "inline" : 宿泊日行(row_idx)と同じ行に OH があるレイアウト (1行持ち)
+# "auto"   : A列の宿泊日行インデックスから自動判定
 LayoutType = Literal["shifted", "inline", "auto"]
 
 logger = logging.getLogger(__name__)
@@ -66,7 +66,7 @@ def _parse_target_month(df: pd.DataFrame, file_path: Path) -> Optional[pd.Timest
 
 
 def _parse_asof_date(df: pd.DataFrame, file_path: Path, filename_asof_ymd: str | None) -> Optional[pd.Timestamp]:
-    """Parse the as-of date prioritizing filename information."""
+    """Parse the as-of date prioritizing the cell value and falling back to filename."""
 
     try:
         raw_value = df.iloc[0, 16]
@@ -87,18 +87,18 @@ def _parse_asof_date(df: pd.DataFrame, file_path: Path, filename_asof_ymd: str |
         else:
             filename_ts = pd.Timestamp(ts).normalize()
 
-    if filename_ts is not None:
-        if cell_ts is not None and filename_ts != cell_ts:
-            logger.warning(
-                "%s: ファイル名ASOF(%s)とセルASOF(%s)が一致しません",
-                file_path,
-                filename_ts.date(),
-                cell_ts.date(),
-            )
-        return filename_ts
-
     if cell_ts is not None:
+        if filename_ts is not None and filename_ts != cell_ts:
+            logger.warning(
+                "%s: セルASOF(%s)とファイル名ASOF(%s)が一致しません",
+                file_path,
+                cell_ts.date(),
+                filename_ts.date(),
+            )
         return cell_ts
+
+    if filename_ts is not None:
+        return filename_ts
 
     for candidate in re.findall(r"\d{8}", file_path.name):
         ts = pd.to_datetime(candidate, format="%Y%m%d", errors="coerce")
@@ -184,202 +184,95 @@ def _normalize_boundary_timestamp(value: pd.Timestamp | str | None, param_name: 
     return pd.Timestamp(ts).normalize()
 
 
-def _extract_oh_values_for_row(
-    df: pd.DataFrame,
-    row_idx: int,
-    layout: LayoutType,
-    file_path: Path,
-) -> tuple[object, object, object]:
-    """宿泊日行から OH 値を抽出する。"""
-    if layout == "shifted":
-        oh_idx = row_idx + 1
-        if oh_idx >= df.shape[0]:
-            logger.warning("%s: OH行がシート末尾を超えています (row=%s)", file_path, row_idx)
-            rooms_oh = pax_oh = revenue_oh = pd.NA
-        else:
-            rooms_oh = df.iloc[oh_idx, 4] if df.shape[1] > 4 else pd.NA
-            pax_oh = df.iloc[oh_idx, 5] if df.shape[1] > 5 else pd.NA
-            revenue_oh = df.iloc[oh_idx, 6] if df.shape[1] > 6 else pd.NA
-    elif layout == "inline":
-        rooms_oh = df.iloc[row_idx, 4] if df.shape[1] > 4 else pd.NA
-        pax_oh = df.iloc[row_idx, 5] if df.shape[1] > 5 else pd.NA
-        revenue_oh = df.iloc[row_idx, 6] if df.shape[1] > 6 else pd.NA
-    else:
-        raise ValueError(f"Unknown layout: {layout!r}")
-
-    values = [rooms_oh, pax_oh, revenue_oh]
-    if all(pd.isna(v) for v in values):
-        logger.warning("%s: OH値が全てNaNです (row=%s)", file_path, row_idx)
-
-    return rooms_oh, pax_oh, revenue_oh
-
-
-def _detect_layout(df: pd.DataFrame, file_path: Path) -> Literal["shifted", "inline"]:
-    """A〜D列の宿泊日行インデックス間隔から 'shifted' / 'inline' を判定する。"""
-
-    date_rows = _collect_date_rows(df, max_scan_rows=200)
-    date_idxs = pd.Index([row_idx for row_idx, _, _ in date_rows]).to_numpy()
-
-    if len(date_idxs) < 3:
-        logger.error("%s: 日付行が少なすぎるためレイアウトを自動判定できません", file_path)
-        raise ValueError("日付行が少なすぎるためレイアウトを自動判定できません")
-
-    diffs = date_idxs[1:] - date_idxs[:-1]
-    inline_votes = (diffs == 1).sum()
-    shifted_votes = (diffs >= 2).sum()
-    total_votes = inline_votes + shifted_votes
-
-    if total_votes == 0:
-        logger.error("%s: 日付行の間隔からレイアウトを判定できません", file_path)
-        raise ValueError("日付行の間隔からレイアウトを判定できません")
-
-    inline_ratio = inline_votes / total_votes
-    if inline_ratio >= 0.8:
-        layout = "inline"
-    elif inline_ratio <= 0.2:
-        layout = "shifted"
-    else:
-        logger.error(
-            "%s: レイアウトを自動判定できません (inline_ratio=%.2f)",
-            file_path,
-            inline_ratio,
-        )
-        raise ValueError(f"レイアウトを自動判定できません (inline_ratio={inline_ratio:.2f})")
-
-    logger.info("%s: layout を自動判定しました -> %s", file_path, layout)
-    return layout
-
-
-def _collect_date_rows(df: pd.DataFrame, *, max_scan_rows: int) -> list[tuple[int, pd.Timestamp, int]]:
-    date_rows: list[tuple[int, pd.Timestamp, int]] = []
-    max_row = min(max_scan_rows, df.shape[0])
-    max_col = min(4, df.shape[1])
-    for row_idx in range(max_row):
-        for col_idx in range(max_col):
-            stay_ts = _parse_date_cell(df.iloc[row_idx, col_idx])
-            if stay_ts is None:
-                continue
-            date_rows.append((row_idx, stay_ts, col_idx))
-            break
-    return date_rows
-
-
-def _break_tie_for_pair(
-    df: pd.DataFrame,
-    left: tuple[int, pd.Timestamp, int],
-    right: tuple[int, pd.Timestamp, int],
-) -> tuple[int, pd.Timestamp, int]:
-    weekday_left = df.iloc[left[0], 2] if df.shape[1] > 2 else pd.NA
-    weekday_right = df.iloc[right[0], 2] if df.shape[1] > 2 else pd.NA
-
-    if pd.isna(weekday_left) and not pd.isna(weekday_right):
-        return left
-    if pd.isna(weekday_right) and not pd.isna(weekday_left):
-        return right
-    return right
-
-
-def _iter_actual_rows_with_layout_override(
-    date_rows: list[tuple[int, pd.Timestamp, int]],
-    df: pd.DataFrame,
-    file_path: Path,
-    layout_override: Literal["shifted", "inline"],
-) -> list[tuple[int, pd.Timestamp]]:
-    actual_rows: list[tuple[int, pd.Timestamp]] = []
-    for row_idx, stay_date, _ in date_rows:
-        if layout_override == "shifted":
-            oh_idx = row_idx + 1
-            if oh_idx >= df.shape[0]:
-                logger.warning("%s: OH行がシート末尾を超えています (row=%s)", file_path, row_idx)
-                continue
-        else:
-            oh_idx = row_idx
-        actual_rows.append((oh_idx, stay_date))
-    return actual_rows
-
-
-def _iter_actual_rows(
-    df: pd.DataFrame,
-    file_path: Path,
-    *,
-    layout_override: Literal["shifted", "inline"] | None = None,
-    max_scan_rows: int = 500,
-) -> list[tuple[int, pd.Timestamp]]:
-    date_rows = _collect_date_rows(df, max_scan_rows=max_scan_rows)
-
-    if layout_override is not None:
-        if not date_rows:
-            logger.error("%s: 日付行が少なすぎるためレイアウトを自動判定できません", file_path)
-            raise ValueError("日付行が少なすぎるためレイアウトを自動判定できません")
-        return _iter_actual_rows_with_layout_override(date_rows, df, file_path, layout_override)
+def _extract_date_rows_from_column_a(df: pd.DataFrame, file_path: Path) -> list[tuple[int, pd.Timestamp]]:
+    date_rows: list[tuple[int, pd.Timestamp]] = []
+    for row_idx, value in enumerate(df.iloc[:, 0]):
+        stay_ts = _parse_date_cell(value)
+        if stay_ts is None:
+            continue
+        date_rows.append((row_idx, stay_ts))
 
     if len(date_rows) < 3:
         logger.error("%s: 日付行が少なすぎるためレイアウトを自動判定できません", file_path)
         raise ValueError("日付行が少なすぎるためレイアウトを自動判定できません")
+    return date_rows
 
-    used_row_numbers: set[int] = set()
+
+def _determine_row_mode(
+    date_rows: list[tuple[int, pd.Timestamp]],
+    file_path: Path,
+) -> Literal["one_row", "blank_gap", "dup_date"]:
+    date_idxs = pd.Index([row_idx for row_idx, _ in date_rows]).to_numpy()
+    stay_dates = [stay_date for _, stay_date in date_rows]
+
+    diffs = date_idxs[1:] - date_idxs[:-1]
+    diff1_ratio = (diffs == 1).mean()
+    diff2_ratio = (diffs == 2).mean()
+    dup_flags = [stay_dates[i] == stay_dates[i + 1] for i in range(len(stay_dates) - 1)]
+    dup_ratio = sum(dup_flags) / len(dup_flags) if dup_flags else 0.0
+
+    if diff2_ratio >= 0.6:
+        return "blank_gap"
+    if diff1_ratio >= 0.6 and dup_ratio >= 0.6:
+        return "dup_date"
+    if diff1_ratio >= 0.8 and dup_ratio < 0.2:
+        return "one_row"
+
+    logger.error(
+        "%s: 行構造を判定できません (diff1_ratio=%.2f, diff2_ratio=%.2f, dup_ratio=%.2f)",
+        file_path,
+        diff1_ratio,
+        diff2_ratio,
+        dup_ratio,
+    )
+    raise ValueError(
+        f"行構造を判定できません (diff1_ratio={diff1_ratio:.2f}, diff2_ratio={diff2_ratio:.2f}, dup_ratio={dup_ratio:.2f})"
+    )
+
+
+def _resolve_oh_rows(
+    date_rows: list[tuple[int, pd.Timestamp]],
+    row_mode: Literal["one_row", "blank_gap", "dup_date"],
+    df: pd.DataFrame,
+    file_path: Path,
+) -> list[tuple[int, pd.Timestamp]]:
     actual_rows: list[tuple[int, pd.Timestamp]] = []
-    explicit_pairs = 0
 
-    i = 0
-    while i < len(date_rows) - 1:
-        current = date_rows[i]
-        nxt = date_rows[i + 1]
-        if current[1] == nxt[1]:
-            oh_candidate = current if current[2] > nxt[2] else nxt
-            if current[2] == nxt[2]:
-                oh_candidate = _break_tie_for_pair(df, current, nxt)
-            actual_rows.append((oh_candidate[0], oh_candidate[1]))
-            used_row_numbers.update({current[0], nxt[0]})
-            explicit_pairs += 1
-            i += 2
-            continue
-        i += 1
+    if row_mode == "one_row":
+        for row_idx, stay_date in date_rows:
+            actual_rows.append((row_idx, stay_date))
+        return actual_rows
 
-    unused_date_rows = [row for row in date_rows if row[0] not in used_row_numbers]
-    use_implicit = False
+    oh_validation_hits = 0
+    for row_idx, stay_date in date_rows:
+        oh_row = row_idx + 1
+        if oh_row >= df.shape[0]:
+            logger.error("%s: OH行がシート末尾を超えています (row=%s)", file_path, row_idx)
+            raise ValueError("OH行がシート末尾を超えています")
 
-    explicit_ratio = (explicit_pairs * 2) / len(date_rows)
+        oh_date_cell = _parse_date_cell(df.iloc[oh_row, 0])
+        if row_mode == "blank_gap":
+            if oh_date_cell is None:
+                oh_validation_hits += 1
+        elif row_mode == "dup_date":
+            if oh_date_cell is not None and oh_date_cell == stay_date:
+                oh_validation_hits += 1
+        actual_rows.append((oh_row, stay_date))
 
-    if explicit_ratio <= 0.3 and len(unused_date_rows) >= 2:
-        date_indices = pd.Index([row_idx for row_idx, _, _ in unused_date_rows]).to_numpy()
-        diffs = date_indices[1:] - date_indices[:-1]
-        shifted_votes = (diffs == 2).sum()
-        inline_votes = (diffs == 1).sum()
-        total_votes = shifted_votes + inline_votes
-        if total_votes > 0 and shifted_votes / total_votes >= 0.6:
-            use_implicit = True
-
-    date_row_index_set = {row_idx for row_idx, _, _ in date_rows}
-
-    if use_implicit:
-        for row_idx, stay_date, _ in unused_date_rows:
-            oh_idx = row_idx + 1
-            if oh_idx >= df.shape[0]:
-                logger.warning("%s: OH行がシート末尾を超えています (row=%s)", file_path, row_idx)
-                continue
-            actual_rows.append((oh_idx, stay_date))
-            used_row_numbers.add(row_idx)
-            if oh_idx in date_row_index_set:
-                used_row_numbers.add(oh_idx)
-
-    for row_idx, stay_date, _ in date_rows:
-        if row_idx in used_row_numbers:
-            continue
-        actual_rows.append((row_idx, stay_date))
+    hit_ratio = oh_validation_hits / len(date_rows)
+    if hit_ratio < 0.95:
+        logger.error(
+            "%s: OH行のペア整合性チェックに失敗しました (row_mode=%s, hit_ratio=%.2f)",
+            file_path,
+            row_mode,
+            hit_ratio,
+        )
+        raise ValueError(f"OH行のペア整合性チェックに失敗しました (row_mode={row_mode}, hit_ratio={hit_ratio:.2f})")
 
     return actual_rows
 
 
-def _extract_oh_values_from_actual_row(
-    df: pd.DataFrame,
-    row_idx: int,
-    file_path: Path,
-) -> tuple[object, object, object]:
-    if row_idx >= df.shape[0]:
-        logger.warning("%s: OH行がシート末尾を超えています (row=%s)", file_path, row_idx)
-        return pd.NA, pd.NA, pd.NA
-
+def _extract_oh_values(df: pd.DataFrame, row_idx: int, file_path: Path) -> tuple[object, object, object]:
     rooms_oh = df.iloc[row_idx, 4] if df.shape[1] > 4 else pd.NA
     pax_oh = df.iloc[row_idx, 5] if df.shape[1] > 5 else pd.NA
     revenue_oh = df.iloc[row_idx, 6] if df.shape[1] > 6 else pd.NA
@@ -426,8 +319,7 @@ def parse_nface_file(
 
     target_month = _parse_target_month(df_raw, path)
     if target_month is None:
-        logger.error("%s: target_month が取得できないためスキップします", path)
-        return normalize_daily_snapshots_df(pd.DataFrame(), hotel_id=hotel_id)
+        raise ValueError("target_month が取得できません")
 
     if filename_stay_ym is not None:
         stay_ts = pd.to_datetime(f"{filename_stay_ym}01", format="%Y%m%d", errors="coerce")
@@ -443,23 +335,27 @@ def parse_nface_file(
 
     as_of_date = _parse_asof_date(df_raw, path, filename_asof_ymd)
     if as_of_date is None:
-        logger.error("%s: ASOF不明のためこのファイルはスキップします", path)
-        return normalize_daily_snapshots_df(pd.DataFrame(), hotel_id=hotel_id)
+        raise ValueError("ASOF 日付を取得できませんでした")
 
-    layout_override: Literal["shifted", "inline"] | None = None if layout == "auto" else layout
-    actual_rows = _iter_actual_rows(df_raw, path, layout_override=layout_override)
+    date_rows = _extract_date_rows_from_column_a(df_raw, path)
+    if layout == "inline":
+        row_mode: Literal["one_row", "blank_gap", "dup_date"] = "one_row"
+    elif layout == "shifted":
+        row_mode = "blank_gap"
+    else:
+        row_mode = _determine_row_mode(date_rows, path)
+    actual_rows = _resolve_oh_rows(date_rows, row_mode, df_raw, path)
+
     records: list[dict] = []
     n_total = 0
     n_kept = 0
-    skipped_count = 0
 
     for row_idx, stay_date in actual_rows:
         n_total += 1
         if stay_date.year != target_month.year or stay_date.month != target_month.month:
-            skipped_count += 1
             continue
 
-        rooms_oh, pax_oh, revenue_oh = _extract_oh_values_from_actual_row(df_raw, row_idx, path)
+        rooms_oh, pax_oh, revenue_oh = _extract_oh_values(df_raw, row_idx, path)
         records.append(
             {
                 "hotel_id": hotel_id,
@@ -472,20 +368,11 @@ def parse_nface_file(
         )
         n_kept += 1
 
-    if n_total > 0 and n_kept / n_total < 0.5:
-        logger.warning(
-            "%s: target_month に属さない行が多数あります (kept=%s / total=%s)",
-            path,
-            n_kept,
-            n_total,
-        )
-
-    if skipped_count > 0:
-        logger.warning("%s: target_month 外の行を %s 件スキップしました", path, skipped_count)
+    if n_total > 0 and (n_total - n_kept) / n_total >= 0.8:
+        logger.warning("%s: target_month 外の行が多数あります (kept=%s / total=%s)", path, n_kept, n_total)
 
     if not records:
-        logger.warning("%s: 宿泊日行が見つからないか、target_month に一致する行がありません", path)
-        return normalize_daily_snapshots_df(pd.DataFrame(), hotel_id=hotel_id)
+        raise ValueError("宿泊日行が見つからないか、target_month に一致する行がありません")
 
     df = pd.DataFrame(records)
     df_norm = normalize_daily_snapshots_df(df, hotel_id=hotel_id, as_of_date=as_of_date)

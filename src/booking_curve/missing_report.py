@@ -8,8 +8,8 @@ from pathlib import Path
 import pandas as pd
 
 from booking_curve.config import OUTPUT_DIR
-from booking_curve.daily_snapshots import read_daily_snapshots_csv
-from booking_curve.raw_inventory import build_raw_inventory
+from booking_curve.daily_snapshots import build_month_asof_index, load_month_asof_index, read_daily_snapshots_csv
+from booking_curve.raw_inventory import RawInventoryIndex, build_raw_inventory, build_raw_inventory_index
 
 logger = logging.getLogger(__name__)
 
@@ -37,28 +37,16 @@ def _format_asof(asof_str: str) -> str:
     return asof_ts.strftime("%Y-%m-%d") if not pd.isna(asof_ts) else asof_str
 
 
-def _build_raw_index(raw_files: dict[tuple[str, str], Path]) -> tuple[set[str], set[str], defaultdict[str, set[str]]]:
-    asof_dates: set[str] = set()
-    target_months: set[str] = set()
-    asof_to_targets: defaultdict[str, set[str]] = defaultdict(set)
-
-    for target_month, asof_date in raw_files:
-        asof_dates.add(asof_date)
-        target_months.add(target_month)
-        asof_to_targets[asof_date].add(target_month)
-
-    return asof_dates, target_months, asof_to_targets
-
-
 def _build_ops_missing_records(
-    raw_files: dict[tuple[str, str], Path],
+    raw_index: RawInventoryIndex,
     raw_root_dir: Path,
     hotel_id: str,
     asof_window_days: int,
     forward_months: int,
 ) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
-    asof_dates, _, asof_to_targets = _build_raw_index(raw_files)
+    asof_dates = raw_index.asof_dates
+    asof_to_targets = raw_index.asof_to_targets
 
     if asof_window_days <= 0:
         return records
@@ -159,13 +147,13 @@ def _iter_months_range(min_month: str, max_month: str) -> list[str]:
 
 
 def _build_audit_raw_missing_records(
-    raw_files: dict[tuple[str, str], Path],
+    raw_index: RawInventoryIndex,
     raw_root_dir: Path,
     hotel_id: str,
     lt_days: int,
 ) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
-    _, target_months, _ = _build_raw_index(raw_files)
+    target_months = raw_index.target_months
 
     if not target_months or lt_days <= 0:
         return records
@@ -188,7 +176,7 @@ def _build_audit_raw_missing_records(
         expected_asof_dates = pd.date_range(start=start_asof, end=end_asof, freq="D")
         observed_asof_dates = {
             asof
-            for tm, asof in raw_files
+            for tm, asof in raw_index.pairs
             if tm == target_month
             and pd.notna(pd.to_datetime(asof, format="%Y%m%d", errors="coerce"))
         }
@@ -254,9 +242,9 @@ def _build_onhand_missing_records(df: pd.DataFrame, hotel_id: str, daily_snapsho
     return records
 
 
-def _find_closing_asof(raw_files: dict[tuple[str, str], Path]) -> dict[str, str]:
+def _find_closing_asof(raw_pairs: set[tuple[str, str]]) -> dict[str, str]:
     closing_map: dict[str, str] = {}
-    for target_month, asof_str in raw_files:
+    for target_month, asof_str in raw_pairs:
         try:
             target_ts = pd.to_datetime(f"{target_month}01", format="%Y%m%d", errors="coerce")
             asof_ts = pd.to_datetime(asof_str, format="%Y%m%d", errors="coerce")
@@ -276,10 +264,10 @@ def _build_act_missing_records(
     df: pd.DataFrame,
     hotel_id: str,
     daily_snapshots_path: Path,
-    raw_files: dict[tuple[str, str], Path],
+    raw_pairs: set[tuple[str, str]],
 ) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
-    closing_map = _find_closing_asof(raw_files)
+    closing_map = _find_closing_asof(raw_pairs)
     if not closing_map:
         return records
 
@@ -351,6 +339,46 @@ def _build_act_missing_records(
     return records
 
 
+def _build_snapshot_pair_missing_records(
+    raw_index: RawInventoryIndex,
+    snapshot_pairs: set[tuple[str, str]],
+    hotel_id: str,
+    daily_snapshots_path: Path,
+) -> list[dict[str, object]]:
+    missing_pairs = sorted(raw_index.pairs - snapshot_pairs)
+    records: list[dict[str, object]] = []
+
+    for target_month, asof in missing_pairs:
+        records.append(
+            {
+                "kind": "snapshot_pair_missing",
+                "hotel_id": hotel_id,
+                "asof_date": _format_asof(asof),
+                "target_month": target_month,
+                "missing_count": 1,
+                "missing_sample": target_month,
+                "message": "raw exists but daily snapshot is missing",
+                "path": str(daily_snapshots_path),
+                "severity": "ERROR",
+            },
+        )
+
+    return records
+
+
+def find_unconverted_raw_pairs(
+    hotel_id: str,
+    daily_snapshots_path: Path,
+    *,
+    input_dir: Path | str | None = None,
+) -> tuple[list[tuple[str, str]], RawInventoryIndex, RawInventory, set[tuple[str, str]]]:
+    raw_inventory = build_raw_inventory(hotel_id, raw_root_dir=input_dir)
+    raw_index = build_raw_inventory_index(raw_inventory)
+    snapshot_pairs = load_month_asof_index(hotel_id, daily_snapshots_path) if daily_snapshots_path.exists() else set()
+    missing_pairs = sorted(raw_index.pairs - snapshot_pairs)
+    return missing_pairs, raw_index, raw_inventory, snapshot_pairs
+
+
 def build_missing_report(
     hotel_id: str,
     daily_snapshots_path: Path,
@@ -369,7 +397,7 @@ def build_missing_report(
         - \"audit\": 監査モード。歴史的なギャップをSTAY MONTH全域で検知。
     """
     raw_inventory = build_raw_inventory(hotel_id, raw_root_dir=input_dir)
-    raw_files = raw_inventory.files
+    raw_index = build_raw_inventory_index(raw_inventory)
     raw_root_dir = raw_inventory.raw_root_dir
 
     records: list[dict[str, object]] = []
@@ -391,10 +419,10 @@ def build_missing_report(
         )
 
     if mode_normalized == "audit":
-        records.extend(_build_audit_raw_missing_records(raw_files, raw_root_dir, hotel_id, lt_days))
+        records.extend(_build_audit_raw_missing_records(raw_index, raw_root_dir, hotel_id, lt_days))
     else:
         records.extend(
-            _build_ops_missing_records(raw_files, raw_root_dir, hotel_id, asof_window_days, forward_months),
+            _build_ops_missing_records(raw_index, raw_root_dir, hotel_id, asof_window_days, forward_months),
         )
 
     if not daily_snapshots_path.exists():
@@ -413,8 +441,10 @@ def build_missing_report(
         )
     else:
         df_snapshots = read_daily_snapshots_csv(daily_snapshots_path)
+        snapshot_pairs = build_month_asof_index(df_snapshots, hotel_id)
+        records.extend(_build_snapshot_pair_missing_records(raw_index, snapshot_pairs, hotel_id, daily_snapshots_path))
         records.extend(_build_onhand_missing_records(df_snapshots, hotel_id, daily_snapshots_path))
-        records.extend(_build_act_missing_records(df_snapshots, hotel_id, daily_snapshots_path, raw_files))
+        records.extend(_build_act_missing_records(df_snapshots, hotel_id, daily_snapshots_path, raw_index.pairs))
 
     output_dir_path = Path(output_dir)
     mode_suffix = "audit" if mode_normalized == "audit" else "ops"

@@ -262,6 +262,35 @@ def list_stay_months_from_daily_snapshots(hotel_id: str, output_dir: Optional[Pa
     return [p.strftime("%Y%m") for p in unique_periods]
 
 
+def build_month_asof_index(df: pd.DataFrame, hotel_id: Optional[str] = None) -> set[tuple[str, str]]:
+    df_copy = df.copy()
+
+    if hotel_id is not None:
+        df_copy = df_copy[df_copy["hotel_id"] == hotel_id]
+
+    if df_copy.empty:
+        return set()
+
+    df_copy["stay_date"] = pd.to_datetime(df_copy["stay_date"], errors="coerce")
+    df_copy["as_of_date"] = pd.to_datetime(df_copy["as_of_date"], errors="coerce")
+    df_copy = df_copy.dropna(subset=["stay_date", "as_of_date"])
+    if df_copy.empty:
+        return set()
+
+    return {
+        (
+            pd.Timestamp(stay_dt).strftime("%Y%m"),
+            pd.Timestamp(asof_dt).strftime("%Y%m%d"),
+        )
+        for stay_dt, asof_dt in zip(df_copy["stay_date"], df_copy["as_of_date"])
+    }
+
+
+def load_month_asof_index(hotel_id: str, daily_snapshots_path: Path) -> set[tuple[str, str]]:
+    df = read_daily_snapshots_csv(daily_snapshots_path)
+    return build_month_asof_index(df, hotel_id=hotel_id)
+
+
 def upsert_asof_dates_index(
     hotel_id: str,
     df_new: pd.DataFrame,

@@ -23,7 +23,7 @@ from booking_curve.forecast_simple import (
     moving_average_recent_90days,
     moving_average_recent_90days_weighted,
 )
-from booking_curve.missing_report import build_missing_report
+from booking_curve.missing_report import build_missing_report, find_unconverted_raw_pairs
 from booking_curve.pms_adapter_nface import (
     build_daily_snapshots_fast,
     build_daily_snapshots_for_pairs,
@@ -1429,23 +1429,40 @@ def run_missing_report(hotel_tag: str, *, mode: str = "ops") -> Path:
 
 
 def run_import_missing_only(hotel_tag: str) -> dict[str, object]:
-    raw_root_dir, _, include_subfolders = _get_hotel_raw_settings(hotel_tag)
+    daily_snapshots_path = get_daily_snapshots_path(hotel_tag)
     layout = "auto"
 
-    report_path = OUTPUT_DIR / f"missing_report_{hotel_tag}_ops.csv"
-    if report_path.exists():
-        csv_path = report_path
-    else:
-        csv_path = run_missing_report(hotel_tag, mode="ops")
-
-    df = pd.read_csv(csv_path, dtype=str)
-
-    kind_series = df.get("kind")
-    if kind_series is None:
+    report_path = run_missing_report(hotel_tag, mode="ops")
+    try:
+        df_report = pd.read_csv(report_path, dtype=str)
+        kind_series = df_report.get("kind", pd.Series([], dtype=str))
+    except Exception:
         kind_series = pd.Series([], dtype=str)
 
-    raw_df = df[kind_series == "raw_missing"]
     asof_missing_count = int((kind_series == "asof_missing").sum())
+
+    missing_pairs, raw_index, raw_inventory, snapshot_pairs = find_unconverted_raw_pairs(
+        hotel_tag,
+        daily_snapshots_path,
+    )
+    total_raw_pairs = len(raw_index.pairs)
+    matched_pairs = len(raw_index.pairs & snapshot_pairs)
+    coverage_ratio = matched_pairs / total_raw_pairs if total_raw_pairs else 1.0
+
+    if coverage_ratio < 0.30:
+        raise ValueError(
+            f"{hotel_tag}: daily snapshot coverage {coverage_ratio:.1%} below stop threshold; check {daily_snapshots_path}",
+        )
+
+    coverage_warning = coverage_ratio < 0.80
+    if coverage_warning:
+        logging.warning(
+            "%s: daily snapshot coverage %s below warn threshold (raw=%s, matched=%s)",
+            hotel_tag,
+            f"{coverage_ratio:.1%}",
+            total_raw_pairs,
+            matched_pairs,
+        )
 
     result: dict[str, object] = {
         "processed_pairs": 0,
@@ -1455,43 +1472,19 @@ def run_import_missing_only(hotel_tag: str) -> dict[str, object]:
         "skipped_asof_missing_rows": asof_missing_count,
     }
 
-    if raw_df.empty:
-        result["message"] = "no missing raw keys"
-        latest_report = run_missing_report(hotel_tag, mode="ops")
-        result["missing_report_path"] = latest_report
+    if not missing_pairs:
+        result["message"] = "no unconverted raw pairs"
+        result["missing_report_path"] = report_path
+        if coverage_warning:
+            result["coverage_warning"] = coverage_ratio
         return result
 
-    pairs_set: set[tuple[str, str]] = set()
-    for _, row in raw_df.iterrows():
-        target_month = str(row.get("target_month", "")).strip()
-        asof_raw = str(row.get("asof_date", "")).strip()
-        if not target_month or not asof_raw:
-            continue
-        try:
-            tm_int = int(target_month)
-            tm_clean = f"{tm_int:06d}"
-        except Exception:
-            continue
-        asof_ts = pd.to_datetime(asof_raw, errors="coerce")
-        if pd.isna(asof_ts):
-            continue
-        asof_ymd = asof_ts.strftime("%Y%m%d")
-        pairs_set.add((tm_clean, asof_ymd))
-
-    pairs: list[tuple[str, str]] = sorted(pairs_set)
-
-    if not pairs:
-        result["message"] = "no valid missing raw keys"
-        latest_report = run_missing_report(hotel_tag, mode="ops")
-        result["missing_report_path"] = latest_report
-        return result
-
-    glob_pattern = "**/*.xls*" if include_subfolders else "*.xls*"
+    glob_pattern = "**/*.xls*" if raw_inventory.include_subfolders else "*.xls*"
 
     build_result = build_daily_snapshots_for_pairs(
-        input_dir=raw_root_dir,
+        input_dir=raw_inventory.raw_root_dir,
         hotel_id=hotel_tag,
-        pairs=pairs,
+        pairs=missing_pairs,
         layout=layout,
         output_dir=OUTPUT_DIR,
         glob=glob_pattern,
@@ -1502,6 +1495,8 @@ def run_import_missing_only(hotel_tag: str) -> dict[str, object]:
     latest_report = run_missing_report(hotel_tag, mode="ops")
     result["missing_report_path"] = latest_report
     result["skipped_asof_missing_rows"] = asof_missing_count
+    if coverage_warning:
+        result["coverage_warning"] = coverage_ratio
     return result
 
 

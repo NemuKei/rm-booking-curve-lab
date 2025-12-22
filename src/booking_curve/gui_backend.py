@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 from calendar import monthrange
 from datetime import date, datetime, timedelta
@@ -12,6 +11,7 @@ import pandas as pd
 import build_calendar_features
 import run_build_lt_csv
 import run_forecast_batch
+from booking_curve.config import HOTEL_CONFIG, OUTPUT_DIR, PROJECT_ROOT
 from booking_curve.daily_snapshots import (
     get_daily_snapshots_path,
     get_latest_asof_date,
@@ -31,72 +31,9 @@ from booking_curve.pms_adapter_nface import (
     build_daily_snapshots_full_months,
 )
 from booking_curve.utils import apply_nocb_along_lt
-from build_daily_snapshots_from_folder import HOTELS as NFACE_HOTELS
 from run_full_evaluation import resolve_asof_dates_for_month, run_full_evaluation_for_gui
 
-# プロジェクトルートから見た output ディレクトリ
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-OUTPUT_DIR = PROJECT_ROOT / "output"
-CONFIG_DIR = PROJECT_ROOT / "config"
-HOTEL_CONFIG_PATH = CONFIG_DIR / "hotels.json"
-
 _EVALUATION_DETAIL_CACHE: dict[str, tuple[float, pd.DataFrame]] = {}
-
-
-def _load_default_hotel_config() -> Dict[str, Dict[str, float]]:
-    """設定ファイルが無い場合に使うデフォルト設定。現状は大国町のみ。"""
-    return {
-        "daikokucho": {
-            "capacity": 168.0,
-        }
-    }
-
-
-def load_hotel_config() -> Dict[str, Dict[str, float]]:
-    """
-    config/hotels.json からホテル設定を読み込む。
-    - ファイルが存在しない場合や読み込みエラー時は、デフォルト設定を返す。
-    - JSON のフォーマットは:
-        {
-          "daikokucho": {
-            "display_name": "ソビアルなんば大国町",
-            "capacity": 168
-          },
-          "kansai": {
-            "display_name": "ホテル関西",
-            "capacity": 400
-          }
-        }
-      のような想定とする。
-    - display_name は現時点では利用しない（あっても無視してよい）。
-    """
-    try:
-        if not HOTEL_CONFIG_PATH.exists():
-            return _load_default_hotel_config()
-        with HOTEL_CONFIG_PATH.open("r", encoding="utf-8") as f:
-            raw = json.load(f)
-    except Exception:
-        return _load_default_hotel_config()
-
-    config: Dict[str, Dict[str, float]] = {}
-    for key, value in raw.items():
-        if not isinstance(value, dict):
-            continue
-        cap = value.get("capacity")
-        if cap is None:
-            continue
-        try:
-            cap_f = float(cap)
-        except Exception:
-            continue
-        config[key] = {"capacity": cap_f}
-
-    if not config:
-        return _load_default_hotel_config()
-    return config
-
-
-HOTEL_CONFIG: Dict[str, Dict[str, float]] = load_hotel_config()
 
 
 def generate_month_range(start_yyyymm: str, end_yyyymm: str) -> list[str]:
@@ -240,6 +177,29 @@ def _get_capacity(hotel_tag: str, capacity: Optional[float]) -> float:
     if capacity is not None:
         return float(capacity)
     return float(HOTEL_CONFIG.get(hotel_tag, {}).get("capacity", 171.0))
+
+
+def _get_hotel_raw_settings(hotel_tag: str) -> tuple[Path, str, bool]:
+    """ホテル設定から PMS raw 取得に必要な設定を取り出す。"""
+    if hotel_tag not in HOTEL_CONFIG:
+        raise ValueError(f"Unknown hotel_tag: {hotel_tag}")
+
+    hotel_cfg = HOTEL_CONFIG[hotel_tag]
+    adapter_type_raw = hotel_cfg.get("adapter_type")
+    adapter_type = str(adapter_type_raw).lower() if adapter_type_raw is not None else ""
+    if adapter_type != "nface":
+        raise ValueError(f"{hotel_tag}: adapter_type '{adapter_type_raw}' is not supported (nface only)")
+
+    raw_root_dir = hotel_cfg.get("raw_root_dir")
+    if not raw_root_dir:
+        raise ValueError(f"{hotel_tag}: raw_root_dir is not configured in HOTEL_CONFIG")
+
+    raw_root_path = Path(raw_root_dir)
+    if not raw_root_path.is_absolute():
+        raw_root_path = PROJECT_ROOT / raw_root_path
+
+    include_subfolders = bool(hotel_cfg.get("include_subfolders", False))
+    return raw_root_path, adapter_type, include_subfolders
 
 
 def get_latest_asof_for_hotel(hotel_tag: str) -> Optional[str]:
@@ -1355,8 +1315,8 @@ def run_daily_snapshots_for_gui(
 ) -> None:
     """Tkinter GUI から daily snapshots 更新を実行するための薄いラッパー。"""
 
-    if hotel_tag not in NFACE_HOTELS:
-        raise ValueError(f"Unknown hotel_tag for N@FACE snapshots: {hotel_tag}")
+    raw_root_dir, _, include_subfolders = _get_hotel_raw_settings(hotel_tag)
+    layout = "auto"
 
     if isinstance(mode, (list, tuple, set, dict)):
         raise ValueError("mode must be a string; did you swap positional arguments for mode and target_months?")
@@ -1377,9 +1337,8 @@ def run_daily_snapshots_for_gui(
                 raise ValueError(f"Invalid target_month format: {ym}") from exc
             validated_target_months.append(period.strftime("%Y%m"))
 
-    config = NFACE_HOTELS[hotel_tag]
-    input_dir = config["input_dir"]
-    layout = config.get("layout", "auto")
+    glob_pattern = "*.xls*"
+    recursive = include_subfolders
 
     asof_min = None
     if mode_normalized == "FAST":
@@ -1398,34 +1357,34 @@ def run_daily_snapshots_for_gui(
     try:
         if mode_normalized == "FAST":
             build_daily_snapshots_fast(
-                input_dir=input_dir,
+                input_dir=raw_root_dir,
                 hotel_id=hotel_tag,
                 target_months=validated_target_months or [],
                 asof_min=asof_min,
                 asof_max=None,
                 layout=layout,
                 output_dir=OUTPUT_DIR,
-                glob="*.xls*",
-                recursive=True,
+                glob=glob_pattern,
+                recursive=recursive,
             )
         elif mode_normalized == "FULL_MONTHS":
             build_daily_snapshots_full_months(
-                input_dir=input_dir,
+                input_dir=raw_root_dir,
                 hotel_id=hotel_tag,
                 target_months=validated_target_months or [],
                 layout=layout,
                 output_dir=OUTPUT_DIR,
-                glob="*.xls*",
-                recursive=True,
+                glob=glob_pattern,
+                recursive=recursive,
             )
         else:
             build_daily_snapshots_full_all(
-                input_dir=input_dir,
+                input_dir=raw_root_dir,
                 hotel_id=hotel_tag,
                 layout=layout,
                 output_dir=OUTPUT_DIR,
-                glob="*.xls*",
-                recursive=True,
+                glob=glob_pattern,
+                recursive=recursive,
             )
     except Exception:
         logging.exception("Failed to build daily snapshots for GUI: hotel_tag=%s", hotel_tag)
@@ -1456,29 +1415,29 @@ def run_missing_audit_for_gui(hotel_tag: str) -> Path:
 
 
 def run_missing_report(hotel_tag: str, *, mode: str = "ops") -> Path:
-    config = NFACE_HOTELS[hotel_tag]
-    input_dir = config["input_dir"]
+    _get_hotel_raw_settings(hotel_tag)
     daily_path = get_daily_snapshots_path(hotel_tag)
     return build_missing_report(
         hotel_tag,
-        input_dir,
         daily_path,
         mode=mode,
         asof_window_days=180,
         lt_days=120,
         forward_months=3,
         output_dir=OUTPUT_DIR,
-        recursive=True,
-        glob_pattern="**/*.xls*",
     )
 
 
 def run_import_missing_only(hotel_tag: str) -> dict[str, object]:
-    config = NFACE_HOTELS[hotel_tag]
-    input_dir = config["input_dir"]
-    layout = config.get("layout", "auto")
+    raw_root_dir, _, include_subfolders = _get_hotel_raw_settings(hotel_tag)
+    layout = "auto"
 
-    csv_path = run_missing_report(hotel_tag, mode="ops")
+    report_path = OUTPUT_DIR / f"missing_report_{hotel_tag}_ops.csv"
+    if report_path.exists():
+        csv_path = report_path
+    else:
+        csv_path = run_missing_report(hotel_tag, mode="ops")
+
     df = pd.read_csv(csv_path, dtype=str)
 
     kind_series = df.get("kind")
@@ -1488,16 +1447,19 @@ def run_import_missing_only(hotel_tag: str) -> dict[str, object]:
     raw_df = df[kind_series == "raw_missing"]
     asof_missing_count = int((kind_series == "asof_missing").sum())
 
+    result: dict[str, object] = {
+        "processed_pairs": 0,
+        "skipped_missing_raw_pairs": 0,
+        "skipped_parse_fail_files": 0,
+        "updated_pairs": [],
+        "skipped_asof_missing_rows": asof_missing_count,
+    }
+
     if raw_df.empty:
-        return {
-            "processed_pairs": 0,
-            "skipped_missing_raw_pairs": 0,
-            "skipped_parse_fail_files": 0,
-            "updated_pairs": [],
-            "skipped_asof_missing_rows": asof_missing_count,
-            "message": "no missing raw keys",
-            "missing_report_path": csv_path,
-        }
+        result["message"] = "no missing raw keys"
+        latest_report = run_missing_report(hotel_tag, mode="ops")
+        result["missing_report_path"] = latest_report
+        return result
 
     pairs_set: set[tuple[str, str]] = set()
     for _, row in raw_df.iterrows():
@@ -1519,24 +1481,23 @@ def run_import_missing_only(hotel_tag: str) -> dict[str, object]:
     pairs: list[tuple[str, str]] = sorted(pairs_set)
 
     if not pairs:
-        return {
-            "processed_pairs": 0,
-            "skipped_missing_raw_pairs": 0,
-            "skipped_parse_fail_files": 0,
-            "updated_pairs": [],
-            "skipped_asof_missing_rows": asof_missing_count,
-            "message": "no valid missing raw keys",
-            "missing_report_path": csv_path,
-        }
+        result["message"] = "no valid missing raw keys"
+        latest_report = run_missing_report(hotel_tag, mode="ops")
+        result["missing_report_path"] = latest_report
+        return result
 
-    result = build_daily_snapshots_for_pairs(
-        input_dir=input_dir,
+    glob_pattern = "**/*.xls*" if include_subfolders else "*.xls*"
+
+    build_result = build_daily_snapshots_for_pairs(
+        input_dir=raw_root_dir,
         hotel_id=hotel_tag,
         pairs=pairs,
         layout=layout,
         output_dir=OUTPUT_DIR,
-        glob="**/*.xls*",
+        glob=glob_pattern,
     )
+    result.update(build_result)
+    result["message"] = "imported missing raw keys"
 
     latest_report = run_missing_report(hotel_tag, mode="ops")
     result["missing_report_path"] = latest_report

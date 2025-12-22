@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -30,6 +31,14 @@ class RawInventory:
     include_subfolders: bool
     files: dict[tuple[str, str], Path]
     health: RawInventoryHealth
+
+
+@dataclass(frozen=True)
+class RawInventoryIndex:
+    pairs: set[tuple[str, str]]
+    asof_dates: set[str]
+    target_months: set[str]
+    asof_to_targets: dict[str, set[str]]
 
 
 def _resolve_root_dir(raw_root_dir: str | Path) -> Path:
@@ -178,4 +187,24 @@ def build_raw_inventory(hotel_id: str, raw_root_dir: str | Path | None = None) -
         include_subfolders=include_subfolders,
         files=files,
         health=health,
+    )
+
+
+def build_raw_inventory_index(raw_inventory: RawInventory) -> RawInventoryIndex:
+    asof_dates: set[str] = set()
+    target_months: set[str] = set()
+    asof_to_targets: dict[str, set[str]] = defaultdict(set)
+
+    for target_month, asof_date in raw_inventory.files:
+        asof_dates.add(asof_date)
+        target_months.add(target_month)
+        asof_to_targets[asof_date].add(target_month)
+
+    pairs = {(target_month, asof_date) for target_month, asof_date in raw_inventory.files}
+
+    return RawInventoryIndex(
+        pairs=pairs,
+        asof_dates=asof_dates,
+        target_months=target_months,
+        asof_to_targets=dict(asof_to_targets),
     )

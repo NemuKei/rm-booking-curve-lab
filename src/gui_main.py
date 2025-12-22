@@ -855,12 +855,15 @@ class BookingCurveApp(tk.Tk):
         skipped_raw = result.get("skipped_missing_raw_pairs", 0)
         skipped_asof_missing = result.get("skipped_asof_missing_rows", 0)
         updated = len(result.get("updated_pairs", []))
+        coverage_warning = result.get("coverage_warning")
         msg_lines = [
             f"処理対象ペア数: {processed_pairs}",
             f"raw欠損でスキップ: {skipped_raw}",
             f"ASOF丸抜けでスキップ: {skipped_asof_missing}",
             f"更新したペア数: {updated}",
         ]
+        if isinstance(coverage_warning, (int, float)):
+            msg_lines.append(f"daily snapshot coverage (WARN): {coverage_warning:.1%}")
         messagebox.showinfo("完了", "\n".join(msg_lines))
 
         report_path = result.get("missing_report_path")

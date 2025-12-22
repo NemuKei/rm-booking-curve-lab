@@ -123,6 +123,7 @@ class BookingCurveApp(tk.Tk):
         self.me_to_var = tk.StringVar(value="")
         self._asof_overview_view_df: Optional[pd.DataFrame] = None
         self._asof_detail_view_df: Optional[pd.DataFrame] = None
+        self._latest_asof_label_defaults: dict[tk.Label, tuple[str, str]] = {}
 
         self._init_daily_forecast_tab()
         self._init_model_eval_tab()
@@ -1187,7 +1188,12 @@ class BookingCurveApp(tk.Tk):
 
         self.df_latest_asof_var = tk.StringVar(value="")
         ttk.Label(form, text="最新ASOF:").grid(row=0, column=6, sticky="w")
-        ttk.Label(form, textvariable=self.df_latest_asof_var, width=12).grid(row=0, column=7, padx=4, pady=2, sticky="w")
+        self.df_latest_asof_label = tk.Label(form, textvariable=self.df_latest_asof_var, width=12, anchor="w")
+        self._latest_asof_label_defaults[self.df_latest_asof_label] = (
+            self.df_latest_asof_label.cget("background"),
+            self.df_latest_asof_label.cget("foreground"),
+        )
+        self.df_latest_asof_label.grid(row=0, column=7, padx=4, pady=2, sticky="w")
         ttk.Button(form, text="最新に反映", command=self._on_df_set_asof_to_latest).grid(row=0, column=8, padx=4, pady=2, sticky="w")
 
         # モデル
@@ -1353,12 +1359,34 @@ class BookingCurveApp(tk.Tk):
 
         self._update_df_latest_asof_label(update_asof_if_empty=True)
 
+    def _apply_latest_asof_freshness(self, label: tk.Label, latest_asof_str: str) -> None:
+        default_bg, default_fg = self._latest_asof_label_defaults.get(
+            label,
+            (label.cget("background"), label.cget("foreground")),
+        )
+        try:
+            latest_date = datetime.strptime(latest_asof_str, "%Y-%m-%d").date()
+        except Exception:
+            label.configure(background=default_bg, foreground=default_fg)
+            return
+
+        age_days = (date.today() - latest_date).days
+        if age_days <= 0:
+            bg, fg = default_bg, default_fg
+        elif age_days == 1:
+            bg, fg = "yellow", "black"
+        else:
+            bg, fg = "red", "white"
+
+        label.configure(background=bg, foreground=fg)
+
     def _update_df_latest_asof_label(self, update_asof_if_empty: bool = False) -> None:
         hotel = self.df_hotel_var.get().strip()
         try:
             latest = get_latest_asof_for_hotel(hotel)
         except Exception:
             self.df_latest_asof_var.set("(未取得)")
+            self._apply_latest_asof_freshness(self.df_latest_asof_label, self.df_latest_asof_var.get())
             return
 
         if latest is None:
@@ -1374,6 +1402,7 @@ class BookingCurveApp(tk.Tk):
                 if (not current) or (current == today_str):
                     self.df_asof_var.set(latest)
 
+        self._apply_latest_asof_freshness(self.df_latest_asof_label, self.df_latest_asof_var.get())
         self._update_df_best_model_label()
 
     def _update_df_best_model_label(self) -> None:
@@ -1406,6 +1435,7 @@ class BookingCurveApp(tk.Tk):
             latest = get_latest_asof_for_hotel(hotel)
         except Exception:
             self.bc_latest_asof_var.set("(未取得)")
+            self._apply_latest_asof_freshness(self.bc_latest_asof_label, self.bc_latest_asof_var.get())
             return
 
         if latest is None:
@@ -1421,6 +1451,7 @@ class BookingCurveApp(tk.Tk):
                 if (not current) or (current == today_str):
                     self.bc_asof_var.set(latest)
 
+        self._apply_latest_asof_freshness(self.bc_latest_asof_label, self.bc_latest_asof_var.get())
         self._update_bc_best_model_label()
 
     def _update_bc_best_model_label(self) -> None:
@@ -2424,7 +2455,12 @@ class BookingCurveApp(tk.Tk):
 
         self.bc_latest_asof_var = tk.StringVar(value="")
         ttk.Label(form, text="最新ASOF:").grid(row=1, column=2, sticky="w", pady=(4, 2))
-        ttk.Label(form, textvariable=self.bc_latest_asof_var, width=12).grid(row=1, column=3, padx=4, pady=(4, 2), sticky="w")
+        self.bc_latest_asof_label = tk.Label(form, textvariable=self.bc_latest_asof_var, width=12, anchor="w")
+        self._latest_asof_label_defaults[self.bc_latest_asof_label] = (
+            self.bc_latest_asof_label.cget("background"),
+            self.bc_latest_asof_label.cget("foreground"),
+        )
+        self.bc_latest_asof_label.grid(row=1, column=3, padx=4, pady=(4, 2), sticky="w")
         ttk.Button(form, text="最新に反映", command=self._on_bc_set_asof_to_latest).grid(row=1, column=4, padx=4, pady=(4, 2), sticky="w")
 
         ttk.Label(form, text="モデル:").grid(row=1, column=5, sticky="w", pady=(4, 2))

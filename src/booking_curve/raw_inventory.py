@@ -111,13 +111,13 @@ def _build_health(
     )
 
 
-def build_raw_inventory(hotel_id: str) -> RawInventory:
+def build_raw_inventory(hotel_id: str, raw_root_dir: str | Path | None = None) -> RawInventory:
     if hotel_id not in HOTEL_CONFIG:
         raise ValueError(f"Unknown hotel_id: {hotel_id}")
 
     hotel_cfg = HOTEL_CONFIG[hotel_id]
     adapter_type = hotel_cfg.get("adapter_type")
-    raw_root_dir_cfg = hotel_cfg.get("raw_root_dir")
+    raw_root_dir_cfg = raw_root_dir if raw_root_dir is not None else hotel_cfg.get("raw_root_dir")
     include_subfolders = bool(hotel_cfg.get("include_subfolders", False))
 
     if not adapter_type:
@@ -125,8 +125,8 @@ def build_raw_inventory(hotel_id: str) -> RawInventory:
     if not raw_root_dir_cfg:
         raise ValueError(f"{hotel_id}: raw_root_dir is required in HOTEL_CONFIG")
 
-    raw_root_dir = _resolve_root_dir(raw_root_dir_cfg)
-    candidate_paths = _discover_candidates(raw_root_dir, include_subfolders)
+    resolved_raw_root_dir = _resolve_root_dir(raw_root_dir_cfg)
+    candidate_paths = _discover_candidates(resolved_raw_root_dir, include_subfolders)
 
     files: dict[tuple[str, str], Path] = {}
     parsed_files = 0
@@ -162,7 +162,7 @@ def build_raw_inventory(hotel_id: str) -> RawInventory:
     latest_asof_ymd = max(accepted_asof_dates) if accepted_asof_dates else None
     health = _build_health(
         hotel_id=hotel_id,
-        raw_root_dir=raw_root_dir,
+        raw_root_dir=resolved_raw_root_dir,
         candidate_files=len(candidate_paths),
         parsed_files=parsed_files,
         latest_asof_ymd=latest_asof_ymd,
@@ -173,7 +173,7 @@ def build_raw_inventory(hotel_id: str) -> RawInventory:
 
     return RawInventory(
         hotel_id=hotel_id,
-        raw_root_dir=raw_root_dir,
+        raw_root_dir=resolved_raw_root_dir,
         adapter_type=adapter_type,
         include_subfolders=include_subfolders,
         files=files,

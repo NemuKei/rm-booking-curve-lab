@@ -9,7 +9,7 @@ import pandas as pd
 
 from booking_curve.config import OUTPUT_DIR
 from booking_curve.daily_snapshots import read_daily_snapshots_csv
-from booking_curve.pms_adapter_nface import parse_nface_filename
+from booking_curve.raw_inventory import build_raw_inventory
 
 logger = logging.getLogger(__name__)
 
@@ -32,47 +32,6 @@ def iter_month_dates(yyyymm: str) -> list[pd.Timestamp]:
     return list(pd.date_range(start=start, end=end, freq="D"))
 
 
-def discover_raw_nface_files(
-    input_dir: Path,
-    recursive: bool = True,
-    glob_pattern: str = "*.xls*",
-) -> dict[tuple[str, str], Path]:
-    """
-    Collect raw PMS files and map to (target_month, asof_date).
-
-    - Files whose names cannot be parsed are skipped with a warning.
-    - Duplicate (target_month, asof_date) combinations raise ValueError.
-    """
-
-    globber = input_dir.rglob if recursive else input_dir.glob
-    result: dict[tuple[str, str], Path] = {}
-
-    for path in globber(glob_pattern):
-        if not path.is_file():
-            continue
-        if path.name.startswith("~$"):
-            continue
-
-        if not path.suffix.lower().startswith(".xls"):
-            continue
-
-        target_month, asof_date = parse_nface_filename(path)
-        if not target_month or not asof_date:
-            logger.warning("%s: ファイル名からtarget_month/asof_dateを取得できないためスキップします", path)
-            continue
-
-        key = (target_month, asof_date)
-        if key in result:
-            existing_path = result[key]
-            raise ValueError(
-                f"Duplicate raw files for target_month={target_month}, asof_date={asof_date}: {existing_path} / {path}",
-            )
-
-        result[key] = path
-
-    return result
-
-
 def _format_asof(asof_str: str) -> str:
     asof_ts = pd.to_datetime(asof_str, format="%Y%m%d", errors="coerce")
     return asof_ts.strftime("%Y-%m-%d") if not pd.isna(asof_ts) else asof_str
@@ -93,7 +52,7 @@ def _build_raw_index(raw_files: dict[tuple[str, str], Path]) -> tuple[set[str], 
 
 def _build_ops_missing_records(
     raw_files: dict[tuple[str, str], Path],
-    input_dir: Path,
+    raw_root_dir: Path,
     hotel_id: str,
     asof_window_days: int,
     forward_months: int,
@@ -127,7 +86,7 @@ def _build_ops_missing_records(
                 "missing_count": 1,
                 "missing_sample": "",
                 "message": "",
-                "path": str(input_dir),
+                "path": str(raw_root_dir),
                 "severity": "WARN",
             },
         )
@@ -155,7 +114,7 @@ def _build_ops_missing_records(
                     "missing_count": 1,
                     "missing_sample": missing_target,
                     "message": "",
-                    "path": str(input_dir),
+                    "path": str(raw_root_dir),
                     "severity": "ERROR",
                 },
             )
@@ -178,7 +137,7 @@ def _build_ops_missing_records(
                         "missing_count": 0,
                         "missing_sample": "",
                         "message": f"最新ASOFが {delta_days} 日前です",
-                        "path": str(input_dir),
+                        "path": str(raw_root_dir),
                         "severity": "WARN",
                     },
                 )
@@ -201,7 +160,7 @@ def _iter_months_range(min_month: str, max_month: str) -> list[str]:
 
 def _build_audit_raw_missing_records(
     raw_files: dict[tuple[str, str], Path],
-    input_dir: Path,
+    raw_root_dir: Path,
     hotel_id: str,
     lt_days: int,
 ) -> list[dict[str, object]]:
@@ -247,7 +206,7 @@ def _build_audit_raw_missing_records(
                     "missing_count": 1,
                     "missing_sample": target_month,
                     "message": "",
-                    "path": str(input_dir),
+                    "path": str(raw_root_dir),
                     "severity": "ERROR",
                 },
             )
@@ -394,7 +353,6 @@ def _build_act_missing_records(
 
 def build_missing_report(
     hotel_id: str,
-    input_dir: Path,
     daily_snapshots_path: Path,
     *,
     mode: str = "ops",
@@ -402,8 +360,7 @@ def build_missing_report(
     lt_days: int = 120,
     forward_months: int = 3,
     output_dir: Path | str = OUTPUT_DIR,
-    recursive: bool = True,
-    glob_pattern: str = "*.xls*",
+    input_dir: Path | str | None = None,
 ) -> Path:
     """Generate missing report for raw PMS files and daily snapshots.
 
@@ -411,15 +368,34 @@ def build_missing_report(
         - \"ops\": 運用モード。ASOF窓で最新の取りこぼしを検知。
         - \"audit\": 監査モード。歴史的なギャップをSTAY MONTH全域で検知。
     """
-    raw_files = discover_raw_nface_files(input_dir, recursive=recursive, glob_pattern=glob_pattern)
+    raw_inventory = build_raw_inventory(hotel_id, raw_root_dir=input_dir)
+    raw_files = raw_inventory.files
+    raw_root_dir = raw_inventory.raw_root_dir
 
     records: list[dict[str, object]] = []
     mode_normalized = (mode or "ops").strip().lower()
 
+    if raw_inventory.health.severity == "WARN":
+        records.append(
+            {
+                "kind": "raw_inventory_health",
+                "hotel_id": hotel_id,
+                "asof_date": "",
+                "target_month": "",
+                "missing_count": raw_inventory.health.failed_files,
+                "missing_sample": "",
+                "message": raw_inventory.health.message,
+                "path": str(raw_root_dir),
+                "severity": raw_inventory.health.severity,
+            },
+        )
+
     if mode_normalized == "audit":
-        records.extend(_build_audit_raw_missing_records(raw_files, input_dir, hotel_id, lt_days))
+        records.extend(_build_audit_raw_missing_records(raw_files, raw_root_dir, hotel_id, lt_days))
     else:
-        records.extend(_build_ops_missing_records(raw_files, input_dir, hotel_id, asof_window_days, forward_months))
+        records.extend(
+            _build_ops_missing_records(raw_files, raw_root_dir, hotel_id, asof_window_days, forward_months),
+        )
 
     if not daily_snapshots_path.exists():
         records.append(

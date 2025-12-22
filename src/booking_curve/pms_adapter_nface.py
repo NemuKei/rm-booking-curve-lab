@@ -16,13 +16,40 @@ from booking_curve.daily_snapshots import (
     upsert_daily_snapshots_range_by_hotel,
 )
 
-# layout="auto" 時は A列の日付行の間隔から自動判定する
+# layout="auto" 時は A〜D列の宿泊日行から行構造を自動判定する
 # "shifted": 宿泊日行(row_idx)の1行下(row_idx+1)に OH があるレイアウト (無加工/A/B)
 # "inline" : 宿泊日行(row_idx)と同じ行に OH があるレイアウト (加工C)
-# "auto"   : A列の日付行の間隔から自動判定
+# "auto"   : A〜D列の宿泊日行インデックスから自動判定
 LayoutType = Literal["shifted", "inline", "auto"]
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_date_cell(value: object) -> pd.Timestamp | None:
+    parsed_ts: pd.Timestamp | None = None
+
+    if isinstance(value, (pd.Timestamp, datetime, date)):
+        parsed_ts = pd.to_datetime(value, errors="coerce")
+    else:
+        numeric_value = pd.to_numeric(value, errors="coerce")
+        if pd.notna(numeric_value):
+            parsed_ts = pd.to_datetime(float(numeric_value), unit="D", origin="1899-12-30", errors="coerce")
+        elif isinstance(value, str):
+            v = value.strip()
+            for fmt in ("%Y/%m/%d", "%Y-%m-%d", "%Y/%m/%d %H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M"):
+                parsed_ts = pd.to_datetime(v, format=fmt, errors="coerce")
+                if not pd.isna(parsed_ts):
+                    break
+
+    if parsed_ts is None or pd.isna(parsed_ts):
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="Could not infer format.*", category=UserWarning)
+            fallback_ts = pd.to_datetime(value, errors="coerce")
+        parsed_ts = fallback_ts
+
+    if parsed_ts is None or pd.isna(parsed_ts):
+        return None
+    return pd.Timestamp(parsed_ts).normalize()
 
 
 def _parse_target_month(df: pd.DataFrame, file_path: Path) -> Optional[pd.Timestamp]:
@@ -135,18 +162,6 @@ def _validate_no_duplicate_keys(files: list[Path]) -> None:
         seen[key] = file_path
 
 
-def _iter_stay_rows(df: pd.DataFrame) -> list[tuple[int, pd.Timestamp]]:
-    """Return list of (row_idx, stay_date) where column A is a valid date."""
-    stay_rows: list[tuple[int, pd.Timestamp]] = []
-    for i in range(df.shape[0]):
-        stay_raw = df.iloc[i, 0] if df.shape[1] > 0 else pd.NA
-        stay_dt = pd.to_datetime(stay_raw, errors="coerce")
-        if pd.isna(stay_dt):
-            continue
-        stay_rows.append((i, pd.Timestamp(stay_dt).normalize()))
-    return stay_rows
-
-
 def _normalize_boundary_timestamp(value: pd.Timestamp | str | None, param_name: str) -> pd.Timestamp | None:
     if value is None:
         return None
@@ -193,46 +208,17 @@ def _extract_oh_values_for_row(
         raise ValueError(f"Unknown layout: {layout!r}")
 
     values = [rooms_oh, pax_oh, revenue_oh]
-    if all(pd.isna(v) or v == 0 for v in values):
-        logger.warning("%s: OH値が全て0/NaNです (row=%s)", file_path, row_idx)
+    if all(pd.isna(v) for v in values):
+        logger.warning("%s: OH値が全てNaNです (row=%s)", file_path, row_idx)
 
     return rooms_oh, pax_oh, revenue_oh
 
 
 def _detect_layout(df: pd.DataFrame, file_path: Path) -> Literal["shifted", "inline"]:
-    """A列の日付行インデックス間隔から 'shifted' / 'inline' を判定する。"""
+    """A〜D列の宿泊日行インデックス間隔から 'shifted' / 'inline' を判定する。"""
 
-    col = df.iloc[:, 0]
-    non_null = col[~col.isna()]
-    sample = non_null.iloc[:200]
-
-    parsed_indices: list[int] = []
-    for idx, value in sample.items():
-        parsed_ts: pd.Timestamp | None = None
-
-        if isinstance(value, (pd.Timestamp, datetime, date)):
-            parsed_ts = pd.to_datetime(value, errors="coerce")
-        else:
-            numeric_value = pd.to_numeric(value, errors="coerce")
-            if pd.notna(numeric_value):
-                parsed_ts = pd.to_datetime(float(numeric_value), unit="D", origin="1899-12-30", errors="coerce")
-            elif isinstance(value, str):
-                v = value.strip()
-                for fmt in ("%Y/%m/%d", "%Y-%m-%d", "%Y/%m/%d %H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M"):
-                    parsed_ts = pd.to_datetime(v, format=fmt, errors="coerce")
-                    if not pd.isna(parsed_ts):
-                        break
-
-        if parsed_ts is None or pd.isna(parsed_ts):
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", message="Could not infer format.*", category=UserWarning)
-                fallback_ts = pd.to_datetime(value, errors="coerce")
-            parsed_ts = fallback_ts
-
-        if parsed_ts is not None and not pd.isna(parsed_ts):
-            parsed_indices.append(idx)
-
-    date_idxs = pd.Index(parsed_indices).to_numpy()
+    date_rows = _collect_date_rows(df, max_scan_rows=200)
+    date_idxs = pd.Index([row_idx for row_idx, _, _ in date_rows]).to_numpy()
 
     if len(date_idxs) < 3:
         logger.error("%s: 日付行が少なすぎるためレイアウトを自動判定できません", file_path)
@@ -264,6 +250,147 @@ def _detect_layout(df: pd.DataFrame, file_path: Path) -> Literal["shifted", "inl
     return layout
 
 
+def _collect_date_rows(df: pd.DataFrame, *, max_scan_rows: int) -> list[tuple[int, pd.Timestamp, int]]:
+    date_rows: list[tuple[int, pd.Timestamp, int]] = []
+    max_row = min(max_scan_rows, df.shape[0])
+    max_col = min(4, df.shape[1])
+    for row_idx in range(max_row):
+        for col_idx in range(max_col):
+            stay_ts = _parse_date_cell(df.iloc[row_idx, col_idx])
+            if stay_ts is None:
+                continue
+            date_rows.append((row_idx, stay_ts, col_idx))
+            break
+    return date_rows
+
+
+def _break_tie_for_pair(
+    df: pd.DataFrame,
+    left: tuple[int, pd.Timestamp, int],
+    right: tuple[int, pd.Timestamp, int],
+) -> tuple[int, pd.Timestamp, int]:
+    weekday_left = df.iloc[left[0], 2] if df.shape[1] > 2 else pd.NA
+    weekday_right = df.iloc[right[0], 2] if df.shape[1] > 2 else pd.NA
+
+    if pd.isna(weekday_left) and not pd.isna(weekday_right):
+        return left
+    if pd.isna(weekday_right) and not pd.isna(weekday_left):
+        return right
+    return right
+
+
+def _iter_actual_rows_with_layout_override(
+    date_rows: list[tuple[int, pd.Timestamp, int]],
+    df: pd.DataFrame,
+    file_path: Path,
+    layout_override: Literal["shifted", "inline"],
+) -> list[tuple[int, pd.Timestamp]]:
+    actual_rows: list[tuple[int, pd.Timestamp]] = []
+    for row_idx, stay_date, _ in date_rows:
+        if layout_override == "shifted":
+            oh_idx = row_idx + 1
+            if oh_idx >= df.shape[0]:
+                logger.warning("%s: OH行がシート末尾を超えています (row=%s)", file_path, row_idx)
+                continue
+        else:
+            oh_idx = row_idx
+        actual_rows.append((oh_idx, stay_date))
+    return actual_rows
+
+
+def _iter_actual_rows(
+    df: pd.DataFrame,
+    file_path: Path,
+    *,
+    layout_override: Literal["shifted", "inline"] | None = None,
+    max_scan_rows: int = 500,
+) -> list[tuple[int, pd.Timestamp]]:
+    date_rows = _collect_date_rows(df, max_scan_rows=max_scan_rows)
+
+    if layout_override is not None:
+        if not date_rows:
+            logger.error("%s: 日付行が少なすぎるためレイアウトを自動判定できません", file_path)
+            raise ValueError("日付行が少なすぎるためレイアウトを自動判定できません")
+        return _iter_actual_rows_with_layout_override(date_rows, df, file_path, layout_override)
+
+    if len(date_rows) < 3:
+        logger.error("%s: 日付行が少なすぎるためレイアウトを自動判定できません", file_path)
+        raise ValueError("日付行が少なすぎるためレイアウトを自動判定できません")
+
+    used_row_numbers: set[int] = set()
+    actual_rows: list[tuple[int, pd.Timestamp]] = []
+    explicit_pairs = 0
+
+    i = 0
+    while i < len(date_rows) - 1:
+        current = date_rows[i]
+        nxt = date_rows[i + 1]
+        if current[1] == nxt[1]:
+            oh_candidate = current if current[2] > nxt[2] else nxt
+            if current[2] == nxt[2]:
+                oh_candidate = _break_tie_for_pair(df, current, nxt)
+            actual_rows.append((oh_candidate[0], oh_candidate[1]))
+            used_row_numbers.update({current[0], nxt[0]})
+            explicit_pairs += 1
+            i += 2
+            continue
+        i += 1
+
+    unused_date_rows = [row for row in date_rows if row[0] not in used_row_numbers]
+    use_implicit = False
+
+    explicit_ratio = (explicit_pairs * 2) / len(date_rows)
+
+    if explicit_ratio <= 0.3 and len(unused_date_rows) >= 2:
+        date_indices = pd.Index([row_idx for row_idx, _, _ in unused_date_rows]).to_numpy()
+        diffs = date_indices[1:] - date_indices[:-1]
+        shifted_votes = (diffs == 2).sum()
+        inline_votes = (diffs == 1).sum()
+        total_votes = shifted_votes + inline_votes
+        if total_votes > 0 and shifted_votes / total_votes >= 0.6:
+            use_implicit = True
+
+    date_row_index_set = {row_idx for row_idx, _, _ in date_rows}
+
+    if use_implicit:
+        for row_idx, stay_date, _ in unused_date_rows:
+            oh_idx = row_idx + 1
+            if oh_idx >= df.shape[0]:
+                logger.warning("%s: OH行がシート末尾を超えています (row=%s)", file_path, row_idx)
+                continue
+            actual_rows.append((oh_idx, stay_date))
+            used_row_numbers.add(row_idx)
+            if oh_idx in date_row_index_set:
+                used_row_numbers.add(oh_idx)
+
+    for row_idx, stay_date, _ in date_rows:
+        if row_idx in used_row_numbers:
+            continue
+        actual_rows.append((row_idx, stay_date))
+
+    return actual_rows
+
+
+def _extract_oh_values_from_actual_row(
+    df: pd.DataFrame,
+    row_idx: int,
+    file_path: Path,
+) -> tuple[object, object, object]:
+    if row_idx >= df.shape[0]:
+        logger.warning("%s: OH行がシート末尾を超えています (row=%s)", file_path, row_idx)
+        return pd.NA, pd.NA, pd.NA
+
+    rooms_oh = df.iloc[row_idx, 4] if df.shape[1] > 4 else pd.NA
+    pax_oh = df.iloc[row_idx, 5] if df.shape[1] > 5 else pd.NA
+    revenue_oh = df.iloc[row_idx, 6] if df.shape[1] > 6 else pd.NA
+
+    values = [rooms_oh, pax_oh, revenue_oh]
+    if all(pd.isna(v) for v in values):
+        logger.warning("%s: OH値が全てNaNです (row=%s)", file_path, row_idx)
+
+    return rooms_oh, pax_oh, revenue_oh
+
+
 def parse_nface_file(
     file_path: str | Path,
     hotel_id: str,
@@ -281,7 +408,7 @@ def parse_nface_file(
             OH 行の配置を指定する。
             "shifted" は宿泊日行の1行下、
             "inline" は宿泊日行と同じ行、
-            "auto" はA列の日付間隔から自動判定。
+            "auto" はシート構造から自動判定。
         output_dir: 標準CSVを保存する出力ディレクトリ。
         save: True の場合は標準CSVに追記する。
 
@@ -294,11 +421,7 @@ def parse_nface_file(
         filename_asof_ymd = parsed_filename_asof
     df_raw = pd.read_excel(path, header=None)
 
-    if layout == "auto":
-        resolved_layout = _detect_layout(df_raw, path)
-    elif layout in ("shifted", "inline"):
-        resolved_layout = layout
-    else:
+    if layout not in ("auto", "shifted", "inline"):
         raise ValueError(f"Unknown layout: {layout!r}")
 
     target_month = _parse_target_month(df_raw, path)
@@ -323,19 +446,20 @@ def parse_nface_file(
         logger.error("%s: ASOF不明のためこのファイルはスキップします", path)
         return normalize_daily_snapshots_df(pd.DataFrame(), hotel_id=hotel_id)
 
-    stay_rows = _iter_stay_rows(df_raw)
+    layout_override: Literal["shifted", "inline"] | None = None if layout == "auto" else layout
+    actual_rows = _iter_actual_rows(df_raw, path, layout_override=layout_override)
     records: list[dict] = []
     n_total = 0
     n_kept = 0
     skipped_count = 0
 
-    for row_idx, stay_date in stay_rows:
+    for row_idx, stay_date in actual_rows:
         n_total += 1
         if stay_date.year != target_month.year or stay_date.month != target_month.month:
             skipped_count += 1
             continue
 
-        rooms_oh, pax_oh, revenue_oh = _extract_oh_values_for_row(df_raw, row_idx, resolved_layout, path)
+        rooms_oh, pax_oh, revenue_oh = _extract_oh_values_from_actual_row(df_raw, row_idx, path)
         records.append(
             {
                 "hotel_id": hotel_id,

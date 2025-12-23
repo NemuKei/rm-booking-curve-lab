@@ -30,6 +30,7 @@ from booking_curve.pms_adapter_nface import (
     build_daily_snapshots_full_all,
     build_daily_snapshots_full_months,
 )
+from booking_curve.raw_inventory import RawInventory, build_raw_inventory
 from booking_curve.utils import apply_nocb_along_lt
 from run_full_evaluation import resolve_asof_dates_for_month, run_full_evaluation_for_gui
 
@@ -187,22 +188,11 @@ def _get_capacity(hotel_tag: str, capacity: Optional[float]) -> float:
     return float(hotel_cfg["capacity"])
 
 
-def _get_hotel_raw_settings(hotel_tag: str) -> tuple[Path, str, bool]:
-    """ホテル設定から PMS raw 取得に必要な設定を取り出す。"""
-    hotel_cfg = _get_hotel_config(hotel_tag)
-    adapter_type_raw = hotel_cfg.get("adapter_type")
-    adapter_type = str(adapter_type_raw).lower() if adapter_type_raw is not None else ""
-    if adapter_type != "nface":
-        raise ValueError(f"{hotel_tag}: adapter_type '{adapter_type_raw}' is not supported (nface only)")
-
-    raw_root_dir = hotel_cfg.get("raw_root_dir")
-    if not raw_root_dir:
-        raise ValueError(f"{hotel_tag}: raw_root_dir is not configured in HOTEL_CONFIG")
-
-    raw_root_path = Path(raw_root_dir).expanduser().resolve()
-
-    include_subfolders = bool(hotel_cfg.get("include_subfolders", False))
-    return raw_root_path, adapter_type, include_subfolders
+def _build_raw_inventory_or_raise(hotel_tag: str) -> RawInventory:
+    raw_inventory = build_raw_inventory(hotel_tag)
+    if raw_inventory.health.severity == "WARN":
+        logging.warning(raw_inventory.health.message)
+    return raw_inventory
 
 
 def get_latest_asof_for_hotel(hotel_tag: str) -> Optional[str]:
@@ -1318,11 +1308,15 @@ def run_daily_snapshots_for_gui(
 ) -> None:
     """Tkinter GUI から daily snapshots 更新を実行するための薄いラッパー。"""
 
-    raw_root_dir, _, include_subfolders = _get_hotel_raw_settings(hotel_tag)
-    layout = "auto"
+    raw_inventory = _build_raw_inventory_or_raise(hotel_tag)
+    layout = HOTEL_CONFIG[hotel_tag].get("layout", "auto")
 
     if isinstance(mode, (list, tuple, set, dict)):
         raise ValueError("mode must be a string; did you swap positional arguments for mode and target_months?")
+
+    adapter_type = raw_inventory.adapter_type
+    if adapter_type != "nface":
+        raise ValueError(f"{hotel_tag}: adapter_type '{adapter_type}' is not supported (nface only)")
 
     mode_normalized = mode.upper()
     if mode_normalized not in {"FAST", "FULL_MONTHS", "FULL_ALL"}:
@@ -1341,7 +1335,7 @@ def run_daily_snapshots_for_gui(
             validated_target_months.append(period.strftime("%Y%m"))
 
     glob_pattern = "*.xls*"
-    recursive = include_subfolders
+    recursive = raw_inventory.include_subfolders
 
     asof_min = None
     if mode_normalized == "FAST":
@@ -1360,7 +1354,7 @@ def run_daily_snapshots_for_gui(
     try:
         if mode_normalized == "FAST":
             build_daily_snapshots_fast(
-                input_dir=raw_root_dir,
+                input_dir=raw_inventory.raw_root_dir,
                 hotel_id=hotel_tag,
                 target_months=validated_target_months or [],
                 asof_min=asof_min,
@@ -1372,7 +1366,7 @@ def run_daily_snapshots_for_gui(
             )
         elif mode_normalized == "FULL_MONTHS":
             build_daily_snapshots_full_months(
-                input_dir=raw_root_dir,
+                input_dir=raw_inventory.raw_root_dir,
                 hotel_id=hotel_tag,
                 target_months=validated_target_months or [],
                 layout=layout,
@@ -1382,7 +1376,7 @@ def run_daily_snapshots_for_gui(
             )
         else:
             build_daily_snapshots_full_all(
-                input_dir=raw_root_dir,
+                input_dir=raw_inventory.raw_root_dir,
                 hotel_id=hotel_tag,
                 layout=layout,
                 output_dir=OUTPUT_DIR,
@@ -1418,7 +1412,7 @@ def run_missing_audit_for_gui(hotel_tag: str) -> Path:
 
 
 def run_missing_report(hotel_tag: str, *, mode: str = "ops") -> Path:
-    _get_hotel_raw_settings(hotel_tag)
+    raw_inventory = _build_raw_inventory_or_raise(hotel_tag)
     daily_path = get_daily_snapshots_path(hotel_tag)
     return build_missing_report(
         hotel_tag,
@@ -1428,6 +1422,7 @@ def run_missing_report(hotel_tag: str, *, mode: str = "ops") -> Path:
         lt_days=120,
         forward_months=3,
         output_dir=OUTPUT_DIR,
+        input_dir=raw_inventory.raw_root_dir,
     )
 
 

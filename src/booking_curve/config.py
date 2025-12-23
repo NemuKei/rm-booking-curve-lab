@@ -31,6 +31,17 @@ HOTEL_CONFIG_PATH = CONFIG_DIR / "hotels.json"
 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
 
+REQUIRED_HOTEL_KEYS = (
+    "hotel_id",
+    "display_name",
+    "capacity",
+    "forecast_cap",
+    "adapter_type",
+    "raw_root_dir",
+    "include_subfolders",
+)
+
+
 def _get_template_root() -> Path | None:
     """
     PyInstaller 実行時に、バンドルされたテンプレート群が置かれている
@@ -106,19 +117,10 @@ def _resolve_raw_root_dir(raw_root_dir: str | Path) -> Path:
 
 
 def _validate_hotel_config(hotel_id: str, hotel_cfg: dict[str, Any]) -> dict[str, Any]:
-    required_keys = {
-        "hotel_id",
-        "display_name",
-        "capacity",
-        "forecast_cap",
-        "raw_root_dir",
-        "adapter_type",
-        "include_subfolders",
-    }
     if not isinstance(hotel_cfg, dict):
         raise TypeError(f"{hotel_id}: hotel config must be a JSON object")
 
-    missing_keys = [key for key in sorted(required_keys) if key not in hotel_cfg]
+    missing_keys = [key for key in REQUIRED_HOTEL_KEYS if key not in hotel_cfg]
     if missing_keys:
         raise ValueError(f"{hotel_id}: missing required key(s) in hotels.json: {', '.join(missing_keys)}")
 
@@ -167,13 +169,7 @@ def _validate_hotel_config(hotel_id: str, hotel_cfg: dict[str, Any]) -> dict[str
     return normalized
 
 
-def load_hotel_config() -> Dict[str, Dict[str, Any]]:
-    """config/hotels.json からホテル設定を読み込み、必須項目を検証する。
-
-    - hotels.json の欠落やパースエラーは RuntimeError として停止する。
-    - 必須キーが不足している場合や不明な adapter_type が指定された場合は ValueError を送出する。
-    - raw_root_dir から input_dir を絶対パスで派生生成する。
-    """
+def _load_hotels_json() -> dict[str, Any]:
     if not HOTEL_CONFIG_PATH.exists():
         raise RuntimeError(f"Hotel config not found: {HOTEL_CONFIG_PATH}")
 
@@ -187,6 +183,18 @@ def load_hotel_config() -> Dict[str, Dict[str, Any]]:
 
     if not isinstance(raw, dict) or not raw:
         raise ValueError(f"hotels.json must contain a non-empty object: {HOTEL_CONFIG_PATH}")
+
+    return raw
+
+
+def load_hotel_config() -> Dict[str, Dict[str, Any]]:
+    """config/hotels.json からホテル設定を読み込み、必須項目を検証する。
+
+    - hotels.json の欠落やパースエラーは RuntimeError として停止する。
+    - 必須キーが不足している場合や不明な adapter_type が指定された場合は ValueError を送出する。
+    - raw_root_dir から input_dir を絶対パスで派生生成する。
+    """
+    raw = _load_hotels_json()
 
     validated: Dict[str, Dict[str, Any]] = {}
     for hotel_id, hotel_cfg in raw.items():

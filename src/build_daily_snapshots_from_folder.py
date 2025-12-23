@@ -6,10 +6,11 @@ import re
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 import pandas as pd
 
+from booking_curve.config import HOTEL_CONFIG
 from booking_curve.daily_snapshots import (
     get_latest_asof_date,
     rebuild_asof_dates_from_daily_snapshots,
@@ -19,30 +20,6 @@ from booking_curve.pms_adapter_nface import (
     build_daily_snapshots_full_all,
     build_daily_snapshots_full_months,
 )
-
-# N@FACE 生データの配置とレイアウト指定
-# layout は省略すれば "auto" になるが、必要なら "shifted"/"inline" を明示してもよい。
-HOTELS = {
-    # 無加工 / A / B がメインだが、C が混じっていても layout="auto" で自動判定可能
-    "daikokucho": {
-        "input_dir": Path("data/pms_nface_raw/daikokucho"),
-        "layout": "auto",  # ここを "shifted" に固定してもOK
-    },
-    # 関西側も同様に混在を想定して "auto" にしておく
-    "kansai": {
-        "input_dir": Path("data/pms_nface_raw/kansai"),
-        "layout": "auto",  # 必要なら "inline" 固定も可
-    },
-    "domemae": {
-        "input_dir": Path("data/pms_nface_raw/domemae"),
-        "layout": "auto",  # 必要なら "inline" 固定も可
-    },
-    # 他ホテルを追加する場合はここにエントリを増やす
-    # "some_hotel": {
-    #     "input_dir": Path("data/pms_nface_raw/some_hotel"),
-    #     "layout": "auto",
-    # },
-}
 
 EXCEL_GLOB = "*.xls*"
 LOGS_DIR = Path("output/logs")
@@ -102,12 +79,39 @@ def load_historical_full_all_rate(logs_dir: Path) -> float | None:
     return None
 
 
+def _normalize_hotel_config(hotel_id: str, hotel_cfg: dict[str, Any]) -> dict[str, Any]:
+    adapter_type = str(hotel_cfg.get("adapter_type", "")).lower()
+    if adapter_type != "nface":
+        raise ValueError(f"Unsupported adapter_type for {hotel_id}: {adapter_type} (expected nface)")
+
+    raw_root_dir = hotel_cfg.get("raw_root_dir") or hotel_cfg.get("input_dir")
+    if not raw_root_dir:
+        raise ValueError(f"raw_root_dir is required for hotel: {hotel_id}")
+
+    raw_root_dir_path = Path(raw_root_dir)
+    input_dir = raw_root_dir_path
+    layout = hotel_cfg.get("layout", "auto")
+    include_subfolders = bool(hotel_cfg.get("include_subfolders", False))
+    display_name = str(hotel_cfg.get("display_name") or hotel_id)
+
+    return {
+        "hotel_id": hotel_id,
+        "display_name": display_name,
+        "adapter_type": adapter_type,
+        "input_dir": input_dir,
+        "raw_root_dir": raw_root_dir_path,
+        "layout": layout,
+        "include_subfolders": include_subfolders,
+    }
+
+
 def _resolve_hotels(target: str) -> Iterable[tuple[str, dict]]:
+    hotel_ids = list(HOTEL_CONFIG.keys())
     if target == "all":
-        return HOTELS.items()
-    if target not in HOTELS:
+        return [(hotel_id, _normalize_hotel_config(hotel_id, HOTEL_CONFIG[hotel_id])) for hotel_id in hotel_ids]
+    if target not in HOTEL_CONFIG:
         raise ValueError(f"Unknown hotel: {target}")
-    return [(target, HOTELS[target])]
+    return [(target, _normalize_hotel_config(target, HOTEL_CONFIG[target]))]
 
 
 def _run_fast(hotel_id: str, cfg: dict, target_months: list[str], buffer_days: int, recursive: bool) -> None:
@@ -124,7 +128,7 @@ def _run_fast(hotel_id: str, cfg: dict, target_months: list[str], buffer_days: i
     )
 
     build_daily_snapshots_fast(
-        input_dir=cfg["input_dir"],
+        input_dir=Path(cfg["input_dir"]),
         hotel_id=hotel_id,
         target_months=target_months,
         asof_min=asof_min,
@@ -141,7 +145,7 @@ def _run_full_months(hotel_id: str, cfg: dict, target_months: list[str], recursi
     logging.info("Running FULL_MONTHS: hotel=%s target_months=%s", hotel_id, target_months)
 
     build_daily_snapshots_full_months(
-        input_dir=cfg["input_dir"],
+        input_dir=Path(cfg["input_dir"]),
         hotel_id=hotel_id,
         target_months=target_months,
         layout=layout,
@@ -194,7 +198,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build daily snapshots from N@FACE folders")
     parser.add_argument(
         "--hotel",
-        choices=[*HOTELS.keys(), "all"],
+        choices=[*HOTEL_CONFIG.keys(), "all"],
         default="all",
         help="Hotel identifier to process",
     )
@@ -261,12 +265,13 @@ def main() -> None:
     hotels_to_process = _resolve_hotels(args.hotel)
 
     for hotel_id, cfg in hotels_to_process:
+        recursive = args.recursive or bool(cfg.get("include_subfolders", False))
         if args.mode == "FAST":
-            _run_fast(hotel_id, cfg, target_months or [], args.buffer_days, args.recursive)
+            _run_fast(hotel_id, cfg, target_months or [], args.buffer_days, recursive)
         elif args.mode == "FULL_MONTHS":
-            _run_full_months(hotel_id, cfg, target_months or [], args.recursive)
+            _run_full_months(hotel_id, cfg, target_months or [], recursive)
         else:
-            _run_full_all(hotel_id, cfg, args.recursive)
+            _run_full_all(hotel_id, cfg, recursive)
 
         if args.rebuild_asof_index:
             rebuild_asof_dates_from_daily_snapshots(hotel_id)

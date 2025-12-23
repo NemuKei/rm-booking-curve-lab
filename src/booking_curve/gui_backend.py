@@ -11,7 +11,7 @@ import pandas as pd
 import build_calendar_features
 import run_build_lt_csv
 import run_forecast_batch
-from booking_curve.config import HOTEL_CONFIG, OUTPUT_DIR, PROJECT_ROOT
+from booking_curve.config import HOTEL_CONFIG, HOTEL_CONFIG_PATH, OUTPUT_DIR, PROJECT_ROOT
 from booking_curve.daily_snapshots import (
     get_daily_snapshots_path,
     get_latest_asof_date,
@@ -170,21 +170,26 @@ def clear_evaluation_detail_cache(hotel_tag: str | None = None) -> None:
     _EVALUATION_DETAIL_CACHE.pop(hotel_tag, None)
 
 
+def _get_hotel_config(hotel_tag: str) -> dict:
+    try:
+        return HOTEL_CONFIG[hotel_tag]
+    except KeyError as exc:
+        raise ValueError(f"Unknown hotel_tag: {hotel_tag}; check {HOTEL_CONFIG_PATH}") from exc
+
+
 def _get_capacity(hotel_tag: str, capacity: Optional[float]) -> float:
     """GUIから渡された capacity があればそれを優先し、
-    なければ HOTEL_CONFIG のデフォルトを返す。
+    なければ HOTEL_CONFIG の設定を返す。
     """
     if capacity is not None:
         return float(capacity)
-    return float(HOTEL_CONFIG.get(hotel_tag, {}).get("capacity", 171.0))
+    hotel_cfg = _get_hotel_config(hotel_tag)
+    return float(hotel_cfg["capacity"])
 
 
 def _get_hotel_raw_settings(hotel_tag: str) -> tuple[Path, str, bool]:
     """ホテル設定から PMS raw 取得に必要な設定を取り出す。"""
-    if hotel_tag not in HOTEL_CONFIG:
-        raise ValueError(f"Unknown hotel_tag: {hotel_tag}")
-
-    hotel_cfg = HOTEL_CONFIG[hotel_tag]
+    hotel_cfg = _get_hotel_config(hotel_tag)
     adapter_type_raw = hotel_cfg.get("adapter_type")
     adapter_type = str(adapter_type_raw).lower() if adapter_type_raw is not None else ""
     if adapter_type != "nface":

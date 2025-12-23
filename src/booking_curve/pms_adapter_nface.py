@@ -25,35 +25,48 @@ LayoutType = Literal["shifted", "inline", "auto"]
 logger = logging.getLogger(__name__)
 
 MIN_STAY_DATE_ROWS = 5
-DUP_RATIO_SHIFTED_THRESHOLD = 0.3
-LAYOUT_RATIO_DECISION_THRESHOLD = 0.6
 
 
 def _parse_date_cell(value: object) -> pd.Timestamp | None:
-    parsed_ts: pd.Timestamp | None = None
+    def _normalize(ts: pd.Timestamp | None) -> pd.Timestamp | None:
+        if ts is None or pd.isna(ts):
+            return None
+        return pd.Timestamp(ts).normalize()
 
     if isinstance(value, (pd.Timestamp, datetime, date)):
-        parsed_ts = pd.to_datetime(value, errors="coerce")
+        return _normalize(pd.to_datetime(value, errors="coerce"))
+
+    parsed_candidates: list[pd.Timestamp | None] = []
+
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        for fmt in ("%Y/%m/%d", "%Y-%m-%d", "%Y/%m/%d %H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M"):
+            parsed_candidates.append(pd.to_datetime(stripped, format=fmt, errors="coerce"))
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="Could not infer format.*", category=UserWarning)
+            parsed_candidates.append(pd.to_datetime(stripped, errors="coerce"))
+        numeric_value = pd.to_numeric(stripped, errors="coerce")
+        if pd.notna(numeric_value):
+            parsed_candidates.append(
+                pd.to_datetime(float(numeric_value), unit="D", origin="1899-12-30", errors="coerce"),
+            )
     else:
         numeric_value = pd.to_numeric(value, errors="coerce")
         if pd.notna(numeric_value):
-            parsed_ts = pd.to_datetime(float(numeric_value), unit="D", origin="1899-12-30", errors="coerce")
-        elif isinstance(value, str):
-            v = value.strip()
-            for fmt in ("%Y/%m/%d", "%Y-%m-%d", "%Y/%m/%d %H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M"):
-                parsed_ts = pd.to_datetime(v, format=fmt, errors="coerce")
-                if not pd.isna(parsed_ts):
-                    break
-
-    if parsed_ts is None or pd.isna(parsed_ts):
+            parsed_candidates.append(
+                pd.to_datetime(float(numeric_value), unit="D", origin="1899-12-30", errors="coerce"),
+            )
         with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", message="Could not infer format.*", category=UserWarning)
-            fallback_ts = pd.to_datetime(value, errors="coerce")
-        parsed_ts = fallback_ts
+            warnings.filterwarnings("ignore", message="Parsing Dates", category=UserWarning)
+            parsed_candidates.append(pd.to_datetime(value, errors="coerce"))
 
-    if parsed_ts is None or pd.isna(parsed_ts):
-        return None
-    return pd.Timestamp(parsed_ts).normalize()
+    for candidate in parsed_candidates:
+        normalized = _normalize(candidate)
+        if normalized is not None:
+            return normalized
+    return None
 
 
 def _parse_target_month(df: pd.DataFrame, file_path: Path) -> Optional[pd.Timestamp]:
@@ -103,11 +116,6 @@ def _parse_asof_date(df: pd.DataFrame, file_path: Path, filename_asof_ymd: str |
 
     if filename_ts is not None:
         return filename_ts
-
-    for candidate in re.findall(r"\d{8}", file_path.name):
-        ts = pd.to_datetime(candidate, format="%Y%m%d", errors="coerce")
-        if not pd.isna(ts):
-            return pd.Timestamp(ts).normalize()
 
     logger.error("%s: ASOF 日付を取得できませんでした", file_path)
     return None
@@ -215,29 +223,29 @@ def _detect_layout(
         logger.error("%s: レイアウト判定に必要な日付行が不足しています (rows=%s)", file_path, len(date_rows))
         raise ValueError("layout_unknown")
 
-    date_idxs = pd.Index([row_idx for row_idx, _ in date_rows]).to_numpy()
+    date_idxs = [row_idx for row_idx, _ in date_rows]
     stay_dates = [stay_date for _, stay_date in date_rows]
+    diffs = [date_idxs[i + 1] - date_idxs[i] for i in range(len(date_idxs) - 1)]
 
-    dup_flags = [stay_dates[i] == stay_dates[i + 1] for i in range(len(stay_dates) - 1)]
-    dup_ratio = sum(dup_flags) / len(dup_flags) if dup_flags else 0.0
-    if dup_ratio >= DUP_RATIO_SHIFTED_THRESHOLD:
+    has_blank_between_dates = any(diff > 1 for diff in diffs)
+    has_consecutive_duplicates = any(stay_dates[i] == stay_dates[i + 1] for i in range(len(stay_dates) - 1))
+
+    if has_blank_between_dates or has_consecutive_duplicates:
         return "shifted"
 
-    diffs = date_idxs[1:] - date_idxs[:-1]
-    inline_ratio = (diffs == 1).mean() if len(diffs) > 0 else 0.0
-    shifted_ratio = (diffs >= 2).mean() if len(diffs) > 0 else 0.0
-    if inline_ratio >= LAYOUT_RATIO_DECISION_THRESHOLD and inline_ratio > shifted_ratio:
+    if not diffs:
+        logger.error("%s: レイアウト判定用の差分が計算できません", file_path)
+        raise ValueError("layout_unknown")
+
+    all_inline = all(diff == 1 for diff in diffs)
+    all_shifted = all(diff >= 2 for diff in diffs)
+
+    if all_inline:
         return "inline"
-    if shifted_ratio >= LAYOUT_RATIO_DECISION_THRESHOLD and shifted_ratio > inline_ratio:
+    if all_shifted:
         return "shifted"
 
-    logger.error(
-        "%s: レイアウトを判定できません (dup_ratio=%.2f, inline_ratio=%.2f, shifted_ratio=%.2f)",
-        file_path,
-        dup_ratio,
-        inline_ratio,
-        shifted_ratio,
-    )
+    logger.error("%s: レイアウトを判定できません (diffs=%s)", file_path, diffs)
     raise ValueError("layout_unknown")
 
 

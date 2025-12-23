@@ -6,7 +6,7 @@ import re
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Iterable
 
 import pandas as pd
 
@@ -15,6 +15,7 @@ from booking_curve.daily_snapshots import (
     get_latest_asof_date,
     rebuild_asof_dates_from_daily_snapshots,
 )
+from booking_curve.raw_inventory import RawInventory, build_raw_inventory
 from booking_curve.pms_adapter_nface import (
     build_daily_snapshots_fast,
     build_daily_snapshots_full_all,
@@ -79,43 +80,30 @@ def load_historical_full_all_rate(logs_dir: Path) -> float | None:
     return None
 
 
-def _normalize_hotel_config(hotel_id: str, hotel_cfg: dict[str, Any]) -> dict[str, Any]:
-    adapter_type = str(hotel_cfg.get("adapter_type", "")).lower()
-    if adapter_type != "nface":
-        raise ValueError(f"Unsupported adapter_type for {hotel_id}: {adapter_type} (expected nface)")
-
-    raw_root_dir = hotel_cfg.get("raw_root_dir") or hotel_cfg.get("input_dir")
-    if not raw_root_dir:
-        raise ValueError(f"raw_root_dir is required for hotel: {hotel_id}")
-
-    raw_root_dir_path = Path(raw_root_dir)
-    input_dir = raw_root_dir_path
-    layout = hotel_cfg.get("layout", "auto")
-    include_subfolders = bool(hotel_cfg.get("include_subfolders", False))
-    display_name = str(hotel_cfg.get("display_name") or hotel_id)
-
-    return {
-        "hotel_id": hotel_id,
-        "display_name": display_name,
-        "adapter_type": adapter_type,
-        "input_dir": input_dir,
-        "raw_root_dir": raw_root_dir_path,
-        "layout": layout,
-        "include_subfolders": include_subfolders,
-    }
-
-
-def _resolve_hotels(target: str) -> Iterable[tuple[str, dict]]:
+def _resolve_hotel_ids(target: str) -> Iterable[str]:
     hotel_ids = list(HOTEL_CONFIG.keys())
     if target == "all":
-        return [(hotel_id, _normalize_hotel_config(hotel_id, HOTEL_CONFIG[hotel_id])) for hotel_id in hotel_ids]
+        return hotel_ids
     if target not in HOTEL_CONFIG:
         raise ValueError(f"Unknown hotel: {target}")
-    return [(target, _normalize_hotel_config(target, HOTEL_CONFIG[target]))]
+    return [target]
 
 
-def _run_fast(hotel_id: str, cfg: dict, target_months: list[str], buffer_days: int, recursive: bool) -> None:
-    layout = cfg.get("layout", "auto")
+def _build_raw_inventory_or_raise(hotel_id: str) -> RawInventory:
+    raw_inventory = build_raw_inventory(hotel_id)
+    if raw_inventory.health.severity == "WARN":
+        logging.warning(raw_inventory.health.message)
+    return raw_inventory
+
+
+def _run_fast(
+    hotel_id: str,
+    raw_inventory: RawInventory,
+    layout: str,
+    target_months: list[str],
+    buffer_days: int,
+    recursive: bool,
+) -> None:
     latest_asof = get_latest_asof_date(hotel_id)
     asof_min = latest_asof - pd.Timedelta(days=buffer_days) if latest_asof is not None else None
 
@@ -128,7 +116,7 @@ def _run_fast(hotel_id: str, cfg: dict, target_months: list[str], buffer_days: i
     )
 
     build_daily_snapshots_fast(
-        input_dir=Path(cfg["input_dir"]),
+        input_dir=raw_inventory.raw_root_dir,
         hotel_id=hotel_id,
         target_months=target_months,
         asof_min=asof_min,
@@ -140,12 +128,17 @@ def _run_fast(hotel_id: str, cfg: dict, target_months: list[str], buffer_days: i
     )
 
 
-def _run_full_months(hotel_id: str, cfg: dict, target_months: list[str], recursive: bool) -> None:
-    layout = cfg.get("layout", "auto")
+def _run_full_months(
+    hotel_id: str,
+    raw_inventory: RawInventory,
+    layout: str,
+    target_months: list[str],
+    recursive: bool,
+) -> None:
     logging.info("Running FULL_MONTHS: hotel=%s target_months=%s", hotel_id, target_months)
 
     build_daily_snapshots_full_months(
-        input_dir=Path(cfg["input_dir"]),
+        input_dir=raw_inventory.raw_root_dir,
         hotel_id=hotel_id,
         target_months=target_months,
         layout=layout,
@@ -155,9 +148,8 @@ def _run_full_months(hotel_id: str, cfg: dict, target_months: list[str], recursi
     )
 
 
-def _run_full_all(hotel_id: str, cfg: dict, recursive: bool) -> None:
-    layout = cfg.get("layout", "auto")
-    input_dir = Path(cfg["input_dir"])
+def _run_full_all(hotel_id: str, raw_inventory: RawInventory, layout: str, recursive: bool) -> None:
+    input_dir = raw_inventory.raw_root_dir
     file_count = count_excel_files(input_dir, EXCEL_GLOB, recursive=recursive)
     historical_rate = load_historical_full_all_rate(LOGS_DIR)
     rate = historical_rate if historical_rate and historical_rate > 0 else DEFAULT_FULL_ALL_RATE
@@ -262,16 +254,30 @@ def main() -> None:
         )
         return
 
-    hotels_to_process = _resolve_hotels(args.hotel)
+    hotel_ids = _resolve_hotel_ids(args.hotel)
 
-    for hotel_id, cfg in hotels_to_process:
-        recursive = args.recursive or bool(cfg.get("include_subfolders", False))
+    for hotel_id in hotel_ids:
+        raw_inventory = _build_raw_inventory_or_raise(hotel_id)
+        adapter_type = raw_inventory.adapter_type
+
+        if adapter_type != "nface":
+            raise ValueError(f"{hotel_id}: adapter_type '{adapter_type}' is not supported (nface only)")
+
+        recursive = raw_inventory.include_subfolders
+        if args.recursive and not recursive:
+            logging.info(
+                "%s: include_subfolders is False in hotels.json; ignoring --recursive flag to keep hotels.json authoritative",
+                hotel_id,
+            )
+
+        layout = HOTEL_CONFIG[hotel_id].get("layout", "auto")
+
         if args.mode == "FAST":
-            _run_fast(hotel_id, cfg, target_months or [], args.buffer_days, recursive)
+            _run_fast(hotel_id, raw_inventory, layout, target_months or [], args.buffer_days, recursive)
         elif args.mode == "FULL_MONTHS":
-            _run_full_months(hotel_id, cfg, target_months or [], recursive)
+            _run_full_months(hotel_id, raw_inventory, layout, target_months or [], recursive)
         else:
-            _run_full_all(hotel_id, cfg, recursive)
+            _run_full_all(hotel_id, raw_inventory, layout, recursive)
 
         if args.rebuild_asof_index:
             rebuild_asof_dates_from_daily_snapshots(hotel_id)

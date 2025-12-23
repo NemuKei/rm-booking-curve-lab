@@ -11,7 +11,7 @@ import pandas as pd
 import build_calendar_features
 import run_build_lt_csv
 import run_forecast_batch
-from booking_curve.config import HOTEL_CONFIG, HOTEL_CONFIG_PATH, OUTPUT_DIR, PROJECT_ROOT
+from booking_curve.config import HOTEL_CONFIG, OUTPUT_DIR
 from booking_curve.daily_snapshots import (
     get_daily_snapshots_path,
     get_latest_asof_date,
@@ -174,7 +174,7 @@ def _get_hotel_config(hotel_tag: str) -> dict:
     try:
         return HOTEL_CONFIG[hotel_tag]
     except KeyError as exc:
-        raise ValueError(f"Unknown hotel_tag: {hotel_tag}; check {HOTEL_CONFIG_PATH}") from exc
+        raise ValueError(f"Unknown hotel_tag: {hotel_tag}; check HOTEL_CONFIG") from exc
 
 
 def _get_capacity(hotel_tag: str, capacity: Optional[float]) -> float:
@@ -199,9 +199,7 @@ def _get_hotel_raw_settings(hotel_tag: str) -> tuple[Path, str, bool]:
     if not raw_root_dir:
         raise ValueError(f"{hotel_tag}: raw_root_dir is not configured in HOTEL_CONFIG")
 
-    raw_root_path = Path(raw_root_dir)
-    if not raw_root_path.is_absolute():
-        raw_root_path = PROJECT_ROOT / raw_root_path
+    raw_root_path = Path(raw_root_dir).expanduser().resolve()
 
     include_subfolders = bool(hotel_cfg.get("include_subfolders", False))
     return raw_root_path, adapter_type, include_subfolders

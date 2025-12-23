@@ -24,6 +24,10 @@ LayoutType = Literal["shifted", "inline", "auto"]
 
 logger = logging.getLogger(__name__)
 
+MIN_STAY_DATE_ROWS = 5
+DUP_RATIO_SHIFTED_THRESHOLD = 0.3
+LAYOUT_RATIO_DECISION_THRESHOLD = 0.6
+
 
 def _parse_date_cell(value: object) -> pd.Timestamp | None:
     parsed_ts: pd.Timestamp | None = None
@@ -192,83 +196,115 @@ def _extract_date_rows_from_column_a(df: pd.DataFrame, file_path: Path) -> list[
             continue
         date_rows.append((row_idx, stay_ts))
 
-    if len(date_rows) < 3:
-        logger.error("%s: 日付行が少なすぎるためレイアウトを自動判定できません", file_path)
-        raise ValueError("日付行が少なすぎるためレイアウトを自動判定できません")
+    if len(date_rows) < MIN_STAY_DATE_ROWS:
+        logger.error(
+            "%s: A列の日付行が少なすぎます (found=%s, threshold=%s)",
+            file_path,
+            len(date_rows),
+            MIN_STAY_DATE_ROWS,
+        )
+        raise ValueError("A列の日付行が少なすぎるため解析を停止します")
     return date_rows
 
 
-def _determine_row_mode(
+def _detect_layout(
     date_rows: list[tuple[int, pd.Timestamp]],
     file_path: Path,
-) -> Literal["one_row", "blank_gap", "dup_date"]:
+) -> Literal["inline", "shifted"]:
+    if len(date_rows) < 2:
+        logger.error("%s: レイアウト判定に必要な日付行が不足しています (rows=%s)", file_path, len(date_rows))
+        raise ValueError("layout_unknown")
+
     date_idxs = pd.Index([row_idx for row_idx, _ in date_rows]).to_numpy()
     stay_dates = [stay_date for _, stay_date in date_rows]
 
-    diffs = date_idxs[1:] - date_idxs[:-1]
-    diff1_ratio = (diffs == 1).mean()
-    diff2_ratio = (diffs == 2).mean()
     dup_flags = [stay_dates[i] == stay_dates[i + 1] for i in range(len(stay_dates) - 1)]
     dup_ratio = sum(dup_flags) / len(dup_flags) if dup_flags else 0.0
+    if dup_ratio >= DUP_RATIO_SHIFTED_THRESHOLD:
+        return "shifted"
 
-    if diff2_ratio >= 0.6:
-        return "blank_gap"
-    if diff1_ratio >= 0.6 and dup_ratio >= 0.6:
-        return "dup_date"
-    if diff1_ratio >= 0.8 and dup_ratio < 0.2:
-        return "one_row"
+    diffs = date_idxs[1:] - date_idxs[:-1]
+    inline_ratio = (diffs == 1).mean() if len(diffs) > 0 else 0.0
+    shifted_ratio = (diffs >= 2).mean() if len(diffs) > 0 else 0.0
+    if inline_ratio >= LAYOUT_RATIO_DECISION_THRESHOLD and inline_ratio > shifted_ratio:
+        return "inline"
+    if shifted_ratio >= LAYOUT_RATIO_DECISION_THRESHOLD and shifted_ratio > inline_ratio:
+        return "shifted"
 
     logger.error(
-        "%s: 行構造を判定できません (diff1_ratio=%.2f, diff2_ratio=%.2f, dup_ratio=%.2f)",
+        "%s: レイアウトを判定できません (dup_ratio=%.2f, inline_ratio=%.2f, shifted_ratio=%.2f)",
         file_path,
-        diff1_ratio,
-        diff2_ratio,
         dup_ratio,
+        inline_ratio,
+        shifted_ratio,
     )
-    raise ValueError(
-        f"行構造を判定できません (diff1_ratio={diff1_ratio:.2f}, diff2_ratio={diff2_ratio:.2f}, dup_ratio={dup_ratio:.2f})"
-    )
+    raise ValueError("layout_unknown")
 
 
 def _resolve_oh_rows(
     date_rows: list[tuple[int, pd.Timestamp]],
-    row_mode: Literal["one_row", "blank_gap", "dup_date"],
+    layout: Literal["inline", "shifted"],
     df: pd.DataFrame,
     file_path: Path,
 ) -> list[tuple[int, pd.Timestamp]]:
     actual_rows: list[tuple[int, pd.Timestamp]] = []
 
-    if row_mode == "one_row":
+    if layout == "inline":
         for row_idx, stay_date in date_rows:
             actual_rows.append((row_idx, stay_date))
         return actual_rows
 
-    oh_validation_hits = 0
-    for row_idx, stay_date in date_rows:
+    skip_next = False
+    for idx, (row_idx, stay_date) in enumerate(date_rows):
+        if skip_next:
+            skip_next = False
+            continue
+
         oh_row = row_idx + 1
+
         if oh_row >= df.shape[0]:
-            logger.error("%s: OH行がシート末尾を超えています (row=%s)", file_path, row_idx)
-            raise ValueError("OH行がシート末尾を超えています")
+            logger.warning(
+                "%s: OH行がシート末尾を超えるため宿泊日 %s をスキップします (row=%s)",
+                file_path,
+                stay_date.date(),
+                row_idx,
+            )
+            continue
 
-        oh_date_cell = _parse_date_cell(df.iloc[oh_row, 0])
-        if row_mode == "blank_gap":
-            if oh_date_cell is None:
-                oh_validation_hits += 1
-        elif row_mode == "dup_date":
-            if oh_date_cell is not None and oh_date_cell == stay_date:
-                oh_validation_hits += 1
+        if idx + 1 < len(date_rows) and date_rows[idx + 1][1] == stay_date:
+            next_row_idx = date_rows[idx + 1][0]
+            if next_row_idx != oh_row:
+                logger.error(
+                    "%s: 同一日付が連続していますが行インデックスが不正です (stay_row=%s, expected_oh_row=%s, next_date_row=%s)",
+                    file_path,
+                    row_idx,
+                    oh_row,
+                    next_row_idx,
+                )
+                raise ValueError("layout_unknown")
+            stay_date_on_oh = _parse_date_cell(df.iloc[oh_row, 0])
+            if stay_date_on_oh is None or stay_date_on_oh != stay_date:
+                logger.error(
+                    "%s: 同一日付連続レイアウトでOH行のA列日付が一致しません (stay_row=%s, oh_row=%s)",
+                    file_path,
+                    row_idx,
+                    oh_row,
+                )
+                raise ValueError("layout_unknown")
+            skip_next = True
+        else:
+            oh_date_cell = _parse_date_cell(df.iloc[oh_row, 0])
+            if oh_date_cell is not None:
+                logger.error(
+                    "%s: shiftedレイアウト想定だがOH行のA列に日付が入っています (stay_row=%s, oh_row=%s, value=%s)",
+                    file_path,
+                    row_idx,
+                    oh_row,
+                    df.iloc[oh_row, 0],
+                )
+                raise ValueError("layout_unknown")
+
         actual_rows.append((oh_row, stay_date))
-
-    hit_ratio = oh_validation_hits / len(date_rows)
-    if hit_ratio < 0.95:
-        logger.error(
-            "%s: OH行のペア整合性チェックに失敗しました (row_mode=%s, hit_ratio=%.2f)",
-            file_path,
-            row_mode,
-            hit_ratio,
-        )
-        raise ValueError(f"OH行のペア整合性チェックに失敗しました (row_mode={row_mode}, hit_ratio={hit_ratio:.2f})")
-
     return actual_rows
 
 
@@ -339,12 +375,12 @@ def parse_nface_file(
 
     date_rows = _extract_date_rows_from_column_a(df_raw, path)
     if layout == "inline":
-        row_mode: Literal["one_row", "blank_gap", "dup_date"] = "one_row"
+        resolved_layout: Literal["inline", "shifted"] = "inline"
     elif layout == "shifted":
-        row_mode = "blank_gap"
+        resolved_layout = "shifted"
     else:
-        row_mode = _determine_row_mode(date_rows, path)
-    actual_rows = _resolve_oh_rows(date_rows, row_mode, df_raw, path)
+        resolved_layout = _detect_layout(date_rows, path)
+    actual_rows = _resolve_oh_rows(date_rows, resolved_layout, df_raw, path)
 
     records: list[dict] = []
     n_total = 0

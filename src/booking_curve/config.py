@@ -19,6 +19,7 @@ def _get_project_root() -> Path:
 
 
 PROJECT_ROOT = _get_project_root()
+BASE_DIR = PROJECT_ROOT
 DATA_DIR = PROJECT_ROOT / "data"
 OUTPUT_DIR = PROJECT_ROOT / "output"
 
@@ -97,39 +98,101 @@ def _initialize_runtime_files() -> None:
 _initialize_runtime_files()
 
 
-def _load_default_hotel_config() -> Dict[str, Dict[str, Any]]:
-    """hotels.json が無い場合や読み込みエラー時に使うデフォルト設定。
+def _resolve_raw_root_dir(raw_root_dir: str | Path) -> Path:
+    raw_root_path = Path(raw_root_dir)
+    if not raw_root_path.is_absolute():
+        raw_root_path = BASE_DIR / raw_root_path
+    return raw_root_path.resolve()
 
-    現状は大国町のみを最低限の情報で定義しておく。
-    ユーザー環境では基本的に hotels.json が存在するため、
-    ここはフォールバック用途と考えてよい。
-    """
-    return {
-        "daikokucho": {
-            "display_name": "ソビアルなんば大国町",
-            "capacity": 171,
-            "data_subdir": "namba_daikokucho",
-            "timeseries_file": "ソビアルなんば大国町_時系列データ.xlsx",
-        }
+
+def _validate_hotel_config(hotel_id: str, hotel_cfg: dict[str, Any]) -> dict[str, Any]:
+    required_keys = {
+        "hotel_id",
+        "display_name",
+        "capacity",
+        "forecast_cap",
+        "raw_root_dir",
+        "adapter_type",
+        "include_subfolders",
     }
+    if not isinstance(hotel_cfg, dict):
+        raise TypeError(f"{hotel_id}: hotel config must be a JSON object")
+
+    missing_keys = [key for key in sorted(required_keys) if key not in hotel_cfg]
+    if missing_keys:
+        raise ValueError(f"{hotel_id}: missing required key(s) in hotels.json: {', '.join(missing_keys)}")
+
+    hotel_id_in_cfg = str(hotel_cfg["hotel_id"])
+    if not hotel_id_in_cfg:
+        raise ValueError(f"{hotel_id}: hotel_id cannot be blank")
+    if hotel_id_in_cfg != hotel_id:
+        raise ValueError(f"{hotel_id}: hotel_id must match the map key (got {hotel_id_in_cfg})")
+
+    adapter_type_raw = hotel_cfg["adapter_type"]
+    adapter_type = str(adapter_type_raw).lower()
+    if adapter_type != "nface":
+        raise ValueError(f"{hotel_id}: unsupported adapter_type '{adapter_type_raw}' (nface only)")
+
+    raw_root_dir_value = hotel_cfg["raw_root_dir"]
+    if not isinstance(raw_root_dir_value, (str, Path)):
+        raise TypeError(f"{hotel_id}: raw_root_dir must be a string or Path")
+    raw_root_dir_str = str(raw_root_dir_value).strip()
+    if not raw_root_dir_str:
+        raise ValueError(f"{hotel_id}: raw_root_dir cannot be blank")
+    raw_root_dir = _resolve_raw_root_dir(raw_root_dir_value)
+
+    include_subfolders = hotel_cfg["include_subfolders"]
+    if not isinstance(include_subfolders, bool):
+        raise TypeError(f"{hotel_id}: include_subfolders must be a boolean")
+
+    try:
+        capacity = float(hotel_cfg["capacity"])
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{hotel_id}: capacity must be numeric") from exc
+
+    try:
+        forecast_cap = float(hotel_cfg["forecast_cap"])
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{hotel_id}: forecast_cap must be numeric") from exc
+
+    normalized = dict(hotel_cfg)
+    normalized["hotel_id"] = hotel_id_in_cfg
+    normalized["adapter_type"] = adapter_type
+    normalized["raw_root_dir"] = str(raw_root_dir)
+    normalized["input_dir"] = str(raw_root_dir)
+    normalized["include_subfolders"] = include_subfolders
+    normalized["capacity"] = capacity
+    normalized["forecast_cap"] = forecast_cap
+
+    return normalized
 
 
 def load_hotel_config() -> Dict[str, Dict[str, Any]]:
-    """config/hotels.json からホテル設定を読み込む。
+    """config/hotels.json からホテル設定を読み込み、必須項目を検証する。
 
-    - ファイルが存在しない場合やパースエラー時は _load_default_hotel_config() を返す。
-    - hotels.json が dict でない場合や空 dict の場合もフォールバックする。
-    - それ以外の場合は JSON の内容をそのまま返す。
+    - hotels.json の欠落やパースエラーは RuntimeError として停止する。
+    - 必須キーが不足している場合や不明な adapter_type が指定された場合は ValueError を送出する。
+    - raw_root_dir から input_dir を絶対パスで派生生成する。
     """
+    if not HOTEL_CONFIG_PATH.exists():
+        raise RuntimeError(f"Hotel config not found: {HOTEL_CONFIG_PATH}")
+
     try:
-        if HOTEL_CONFIG_PATH.exists():
-            with HOTEL_CONFIG_PATH.open("r", encoding="utf-8") as f:
-                raw = json.load(f)
-            if isinstance(raw, dict) and raw:
-                return raw
-    except Exception:
-        pass
-    return _load_default_hotel_config()
+        with HOTEL_CONFIG_PATH.open("r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Failed to parse hotel config JSON at {HOTEL_CONFIG_PATH}: {exc}") from exc
+    except OSError as exc:  # pragma: no cover - I/O error boundary
+        raise RuntimeError(f"Failed to read hotel config at {HOTEL_CONFIG_PATH}: {exc}") from exc
+
+    if not isinstance(raw, dict) or not raw:
+        raise ValueError(f"hotels.json must contain a non-empty object: {HOTEL_CONFIG_PATH}")
+
+    validated: Dict[str, Dict[str, Any]] = {}
+    for hotel_id, hotel_cfg in raw.items():
+        validated[hotel_id] = _validate_hotel_config(hotel_id, hotel_cfg)
+
+    return validated
 
 
 HOTEL_CONFIG: Dict[str, Dict[str, Any]] = load_hotel_config()

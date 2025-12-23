@@ -264,3 +264,19 @@
   - 将来的にLPや営業資料に転用する前提で書く
 
 ---
+
+## 直近タスク（現実追従）
+
+### P0
+- hotels.json（raw_root_dir / adapter_type / include_subfolders）を唯一の正にし、config.py の派生値 input_dir をそこから生成する
+- RawInventory の探索範囲・ヘルス判定が hotels.json と常に一致することを保証する
+- N@FACE アダプタを「宿泊日=A列のみ」「1行/2行持ちのみ」に固定し、判定不能はSTOPにする（誤取り込み防止）
+
+### P1
+- Partial build 運用（missing_report ops の raw_missing を入力に daily_snapshots を upsert）を運用導線として完成させる（Phase 1.6）
+- 変換/欠損ログを棚卸しCSV（ingestion_issues_{hotel}.csv）として出力し、整理対象を可視化する
+
+### P2
+- 欠損検知の2モード（ops/audit）と “NaN保持・補完はGUI表示直前のみ” を docs に明記して迷いを減らす
+
+---

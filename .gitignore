@@ -25,4 +25,5 @@ Thumbs.db
 
 data/
 output/
-
+packages/
+make_release_zip.py

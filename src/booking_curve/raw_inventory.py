@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
-from booking_curve.config import HOTEL_CONFIG, PROJECT_ROOT
+from booking_curve.config import HOTEL_CONFIG
 from booking_curve.pms_adapter_nface import parse_nface_filename
 
 logger = logging.getLogger(__name__)
@@ -39,13 +40,6 @@ class RawInventoryIndex:
     asof_dates: set[str]
     target_months: set[str]
     asof_to_targets: dict[str, set[str]]
-
-
-def _resolve_root_dir(raw_root_dir: str | Path) -> Path:
-    path = Path(raw_root_dir)
-    if not path.is_absolute():
-        path = PROJECT_ROOT / path
-    return path
 
 
 def _discover_candidates(raw_root_dir: Path, include_subfolders: bool) -> list[Path]:
@@ -121,8 +115,12 @@ def _build_health(
 
 
 def build_raw_inventory(hotel_id: str, raw_root_dir: str | Path | None = None) -> RawInventory:
+    """Build raw inventory using resolved paths from booking_curve.config.HOTEL_CONFIG.
+
+    raw_root_dir must already be normalized in config.py; this module does not resolve paths.
+    """
     if hotel_id not in HOTEL_CONFIG:
-        raise ValueError(f"Unknown hotel_id: {hotel_id}")
+        raise KeyError(f"hotel_id '{hotel_id}' not found in HOTEL_CONFIG")
 
     hotel_cfg = HOTEL_CONFIG[hotel_id]
     adapter_type = hotel_cfg.get("adapter_type")
@@ -134,7 +132,18 @@ def build_raw_inventory(hotel_id: str, raw_root_dir: str | Path | None = None) -
     if not raw_root_dir_cfg:
         raise ValueError(f"{hotel_id}: raw_root_dir is required in HOTEL_CONFIG")
 
-    resolved_raw_root_dir = _resolve_root_dir(raw_root_dir_cfg)
+    resolved_raw_root_dir = Path(raw_root_dir_cfg)
+    if not resolved_raw_root_dir.exists() or not resolved_raw_root_dir.is_dir():
+        raise ValueError(
+            f"{hotel_id}: raw_root_dir does not exist or is not a directory: "
+            f"{resolved_raw_root_dir} (include_subfolders={include_subfolders})",
+        )
+    if not os.access(resolved_raw_root_dir, os.R_OK):
+        raise ValueError(
+            f"{hotel_id}: raw_root_dir is not readable: "
+            f"{resolved_raw_root_dir} (include_subfolders={include_subfolders})",
+        )
+
     candidate_paths = _discover_candidates(resolved_raw_root_dir, include_subfolders)
 
     files: dict[tuple[str, str], Path] = {}

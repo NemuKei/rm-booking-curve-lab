@@ -382,13 +382,12 @@ def find_unconverted_raw_pairs(
     hotel_id: str,
     daily_snapshots_path: Path | str | None = None,
 ) -> tuple[list[tuple[str, str]], RawInventoryIndex, RawInventory, set[tuple[str, str]]]:
-    hotel_cfg = _require_hotel_config(hotel_id)
-    raw_root_dir_hint = hotel_cfg.get("raw_root_dir")
+    _require_hotel_config(hotel_id)
     try:
         raw_inventory = build_raw_inventory(hotel_id)
     except Exception as exc:
         raise ValueError(
-            f"missing_report: failed to build raw inventory for hotel_id '{hotel_id}' (raw_root_dir={raw_root_dir_hint})",
+            f"missing_report: failed to build raw inventory for hotel_id '{hotel_id}'",
         ) from exc
     raw_index = build_raw_inventory_index(raw_inventory)
     resolved_daily_path = _resolve_daily_snapshots_path(hotel_id, daily_snapshots_path)
@@ -413,13 +412,12 @@ def build_missing_report(
         - \"ops\": 運用モード。ASOF窓で最新の取りこぼしを検知。
         - \"audit\": 監査モード。歴史的なギャップをSTAY MONTH全域で検知。
     """
-    hotel_cfg = _require_hotel_config(hotel_id)
-    raw_root_dir_hint = hotel_cfg.get("raw_root_dir")
+    _require_hotel_config(hotel_id)
     try:
         raw_inventory = build_raw_inventory(hotel_id)
     except Exception as exc:
         raise ValueError(
-            f"missing_report: failed to build raw inventory for hotel_id '{hotel_id}' (raw_root_dir={raw_root_dir_hint})",
+            f"missing_report: failed to build raw inventory for hotel_id '{hotel_id}'",
         ) from exc
     raw_index = build_raw_inventory_index(raw_inventory)
     raw_root_dir = raw_inventory.raw_root_dir

@@ -1412,7 +1412,6 @@ def run_missing_audit_for_gui(hotel_tag: str) -> Path:
 
 
 def run_missing_report(hotel_tag: str, *, mode: str = "ops") -> Path:
-    raw_inventory = _build_raw_inventory_or_raise(hotel_tag)
     daily_path = get_daily_snapshots_path(hotel_tag)
     return build_missing_report(
         hotel_tag,
@@ -1422,7 +1421,6 @@ def run_missing_report(hotel_tag: str, *, mode: str = "ops") -> Path:
         lt_days=120,
         forward_months=3,
         output_dir=OUTPUT_DIR,
-        input_dir=raw_inventory.raw_root_dir,
     )
 
 

@@ -13,7 +13,12 @@ from booking_curve.daily_snapshots import (
     load_month_asof_index,
     read_daily_snapshots_csv,
 )
-from booking_curve.raw_inventory import RawInventoryIndex, build_raw_inventory, build_raw_inventory_index
+from booking_curve.raw_inventory import (
+    RawInventory,
+    RawInventoryIndex,
+    build_raw_inventory,
+    build_raw_inventory_index,
+)
 
 logger = logging.getLogger(__name__)
 

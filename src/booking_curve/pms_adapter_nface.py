@@ -25,6 +25,11 @@ LayoutType = Literal["shifted", "inline", "auto"]
 logger = logging.getLogger(__name__)
 
 MIN_STAY_DATE_ROWS = 5
+START_STAY_DATE_ROW_IDX = 8
+INLINE_EFG_COUNT_MIN = 70
+INLINE_EFG_COUNT_MAX = 120
+INLINE_EFG_SAMPLE_DAYS = 31
+WEEKDAY_SET = {"月", "火", "水", "木", "金", "土", "日"}
 
 
 def _parse_date_cell(value: object) -> pd.Timestamp | None:
@@ -196,9 +201,15 @@ def _normalize_boundary_timestamp(value: pd.Timestamp | str | None, param_name: 
     return pd.Timestamp(ts).normalize()
 
 
-def _extract_date_rows_from_column_a(df: pd.DataFrame, file_path: Path) -> list[tuple[int, pd.Timestamp]]:
+def _extract_date_rows_from_column_a(
+    df: pd.DataFrame,
+    file_path: Path,
+    *,
+    start_row: int = START_STAY_DATE_ROW_IDX,
+) -> list[tuple[int, pd.Timestamp]]:
     date_rows: list[tuple[int, pd.Timestamp]] = []
-    for row_idx, value in enumerate(df.iloc[:, 0]):
+    for offset, value in enumerate(df.iloc[start_row:, 0]):
+        row_idx = start_row + offset
         stay_ts = _parse_date_cell(value)
         if stay_ts is None:
             continue
@@ -206,8 +217,9 @@ def _extract_date_rows_from_column_a(df: pd.DataFrame, file_path: Path) -> list[
 
     if len(date_rows) < MIN_STAY_DATE_ROWS:
         logger.error(
-            "%s: A列の日付行が少なすぎます (found=%s, threshold=%s)",
+            "%s: A列の日付行が少なすぎます (start_row=%s, found=%s, threshold=%s)",
             file_path,
+            start_row + 1,
             len(date_rows),
             MIN_STAY_DATE_ROWS,
         )
@@ -230,84 +242,6 @@ def _is_zero_or_na(value: object) -> bool:
     if pd.isna(numeric):
         return False
     return float(numeric) == 0.0
-
-
-def _is_nonzero(value: object) -> bool:
-    numeric = pd.to_numeric(value, errors="coerce")
-    if pd.isna(numeric):
-        return False
-    return float(numeric) != 0.0
-
-
-def _detect_layout(
-    date_rows: list[tuple[int, pd.Timestamp]],
-    df: pd.DataFrame,
-    file_path: Path,
-) -> Literal["inline", "shifted"]:
-    if len(date_rows) < 2:
-        logger.error("%s: レイアウト判定に必要な日付行が不足しています (rows=%s)", file_path, len(date_rows))
-        raise ValueError("layout_unknown")
-
-    sample_rows = date_rows[: min(10, len(date_rows))]
-    weekdays = {"月", "火", "水", "木", "金", "土", "日"}
-    checked = 0
-    matched = 0
-    for row_idx, _ in sample_rows:
-        candidate_row = row_idx + 1
-        if candidate_row >= df.shape[0]:
-            continue
-        checked += 1
-        weekday_cell = df.iloc[candidate_row, 2] if df.shape[1] > 2 else pd.NA
-        if _is_empty_cell(df.iloc[candidate_row, 0]) and isinstance(weekday_cell, str):
-            weekday_str = weekday_cell.strip()
-        else:
-            weekday_str = None
-        if weekday_str not in weekdays:
-            continue
-        candidate_values = [
-            df.iloc[candidate_row, 4] if df.shape[1] > 4 else pd.NA,
-            df.iloc[candidate_row, 5] if df.shape[1] > 5 else pd.NA,
-            df.iloc[candidate_row, 6] if df.shape[1] > 6 else pd.NA,
-        ]
-        stay_values = [
-            df.iloc[row_idx, 4] if df.shape[1] > 4 else pd.NA,
-            df.iloc[row_idx, 5] if df.shape[1] > 5 else pd.NA,
-            df.iloc[row_idx, 6] if df.shape[1] > 6 else pd.NA,
-        ]
-        if not all(_is_zero_or_na(value) for value in candidate_values):
-            continue
-        if not any(_is_nonzero(value) for value in stay_values):
-            continue
-        matched += 1
-
-    if checked > 0 and matched / checked > 0.5:
-        logger.info("%s: detected weekday spacer rows; treating as inline layout", file_path)
-        return "inline"
-
-    date_idxs = [row_idx for row_idx, _ in date_rows]
-    stay_dates = [stay_date for _, stay_date in date_rows]
-    diffs = [date_idxs[i + 1] - date_idxs[i] for i in range(len(date_idxs) - 1)]
-
-    has_blank_between_dates = any(diff > 1 for diff in diffs)
-    has_consecutive_duplicates = any(stay_dates[i] == stay_dates[i + 1] for i in range(len(stay_dates) - 1))
-
-    if has_blank_between_dates or has_consecutive_duplicates:
-        return "shifted"
-
-    if not diffs:
-        logger.error("%s: レイアウト判定用の差分が計算できません", file_path)
-        raise ValueError("layout_unknown")
-
-    all_inline = all(diff == 1 for diff in diffs)
-    all_shifted = all(diff >= 2 for diff in diffs)
-
-    if all_inline:
-        return "inline"
-    if all_shifted:
-        return "shifted"
-
-    logger.error("%s: レイアウトを判定できません (diffs=%s)", file_path, diffs)
-    raise ValueError("layout_unknown")
 
 
 def _resolve_oh_rows(
@@ -377,6 +311,146 @@ def _resolve_oh_rows(
     return actual_rows
 
 
+def _count_inline_efg_cells(
+    date_rows: list[tuple[int, pd.Timestamp]],
+    df: pd.DataFrame,
+) -> int:
+    count = 0
+    for row_idx, _ in date_rows[:INLINE_EFG_SAMPLE_DAYS]:
+        for col_idx in (4, 5, 6):
+            if col_idx >= df.shape[1]:
+                continue
+            if pd.notna(df.iloc[row_idx, col_idx]):
+                count += 1
+    return count
+
+
+def _is_weekday_cell(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    return value.strip() in WEEKDAY_SET
+
+
+def _row_efg_values(df: pd.DataFrame, row_idx: int) -> list[object]:
+    return [
+        df.iloc[row_idx, 4] if df.shape[1] > 4 else pd.NA,
+        df.iloc[row_idx, 5] if df.shape[1] > 5 else pd.NA,
+        df.iloc[row_idx, 6] if df.shape[1] > 6 else pd.NA,
+    ]
+
+
+def _row_efg_all_na(df: pd.DataFrame, row_idx: int) -> bool:
+    values = _row_efg_values(df, row_idx)
+    return all(pd.isna(value) for value in values)
+
+
+def _is_weekday_spacer_row(df: pd.DataFrame, row_idx: int) -> bool:
+    if row_idx < 0 or row_idx >= df.shape[0]:
+        return False
+    if not _is_empty_cell(df.iloc[row_idx, 0]):
+        return False
+    weekday_cell = df.iloc[row_idx, 2] if df.shape[1] > 2 else pd.NA
+    if not _is_weekday_cell(weekday_cell):
+        return False
+    values = _row_efg_values(df, row_idx)
+    return all(_is_zero_or_na(value) for value in values)
+
+
+def _resolve_oh_rows_auto(
+    date_rows: list[tuple[int, pd.Timestamp]],
+    df: pd.DataFrame,
+    file_path: Path,
+) -> list[tuple[int, pd.Timestamp]]:
+    actual_rows: list[tuple[int, pd.Timestamp]] = []
+    idx = 0
+    while idx < len(date_rows):
+        row_idx, stay_date = date_rows[idx]
+        if idx + 1 < len(date_rows) and date_rows[idx + 1][1] == stay_date:
+            oh_row = date_rows[idx + 1][0]
+            if oh_row != row_idx + 1:
+                logger.error(
+                    "%s: dup2判定の連続行が不正です (stay_row=%s, dup_row=%s)",
+                    file_path,
+                    row_idx,
+                    oh_row,
+                )
+                raise ValueError("layout_unknown")
+            if _row_efg_all_na(df, oh_row):
+                logger.error(
+                    "%s: dup2判定でOH行のE/F/Gが全てNaNです (stay_row=%s, oh_row=%s)",
+                    file_path,
+                    row_idx,
+                    oh_row,
+                )
+                raise ValueError("layout_unknown")
+            actual_rows.append((oh_row, stay_date))
+            idx += 2
+            continue
+
+        spacer_row = row_idx + 1
+        next_row_idx = date_rows[idx + 1][0] if idx + 1 < len(date_rows) else None
+        if _is_weekday_spacer_row(df, spacer_row) and (next_row_idx is None or next_row_idx == row_idx + 2):
+            actual_rows.append((row_idx, stay_date))
+            idx += 1
+            continue
+
+        weekday_cell = df.iloc[row_idx, 2] if df.shape[1] > 2 else pd.NA
+        if _is_weekday_cell(weekday_cell):
+            oh_row = row_idx + 1
+            if oh_row >= df.shape[0]:
+                logger.error("%s: OH行がシート末尾を超えています (stay_row=%s)", file_path, row_idx)
+                raise ValueError("layout_unknown")
+            if _is_weekday_cell(df.iloc[oh_row, 2] if df.shape[1] > 2 else pd.NA):
+                logger.error(
+                    "%s: 予算行/実績行の判定に失敗しました (stay_row=%s, oh_row=%s)",
+                    file_path,
+                    row_idx,
+                    oh_row,
+                )
+                raise ValueError("layout_unknown")
+            if _row_efg_all_na(df, oh_row):
+                logger.error(
+                    "%s: OH行のE/F/Gが全てNaNです (stay_row=%s, oh_row=%s)",
+                    file_path,
+                    row_idx,
+                    oh_row,
+                )
+                raise ValueError("layout_unknown")
+            actual_rows.append((oh_row, stay_date))
+            idx += 1
+            continue
+
+        logger.error("%s: OH行の判定に失敗しました (stay_row=%s)", file_path, row_idx)
+        raise ValueError("layout_unknown")
+
+    return actual_rows
+
+
+def _validate_target_month_dates(
+    stay_dates: list[pd.Timestamp],
+    target_month: pd.Timestamp,
+    file_path: Path,
+) -> None:
+    month_start = pd.Timestamp(target_month).normalize()
+    month_end = month_start + pd.offsets.MonthEnd(0)
+    in_month = [d for d in stay_dates if month_start <= d <= month_end]
+    if not in_month:
+        logger.error("%s: target_month に一致する宿泊日が見つかりません", file_path)
+        raise ValueError("stay_date_missing")
+    if len(in_month) != len({d for d in in_month}):
+        logger.error("%s: target_month 内の宿泊日が重複しています", file_path)
+        raise ValueError("stay_date_duplicate")
+    expected = pd.date_range(month_start, month_end, freq="D")
+    if len(in_month) != len(expected) or set(in_month) != set(expected):
+        logger.error(
+            "%s: target_month の宿泊日が揃っていません (found=%s, expected=%s)",
+            file_path,
+            len(in_month),
+            len(expected),
+        )
+        raise ValueError("stay_date_incomplete")
+
+
 def _extract_oh_values(df: pd.DataFrame, row_idx: int, file_path: Path) -> tuple[object, object, object]:
     rooms_oh = df.iloc[row_idx, 4] if df.shape[1] > 4 else pd.NA
     pax_oh = df.iloc[row_idx, 5] if df.shape[1] > 5 else pd.NA
@@ -444,12 +518,18 @@ def parse_nface_file(
 
     date_rows = _extract_date_rows_from_column_a(df_raw, path)
     if layout == "inline":
-        resolved_layout: Literal["inline", "shifted"] = "inline"
+        actual_rows = _resolve_oh_rows(date_rows, "inline", df_raw, path)
     elif layout == "shifted":
-        resolved_layout = "shifted"
+        actual_rows = _resolve_oh_rows(date_rows, "shifted", df_raw, path)
     else:
-        resolved_layout = _detect_layout(date_rows, df_raw, path)
-    actual_rows = _resolve_oh_rows(date_rows, resolved_layout, df_raw, path)
+        inline_count = _count_inline_efg_cells(date_rows, df_raw)
+        if INLINE_EFG_COUNT_MIN <= inline_count <= INLINE_EFG_COUNT_MAX:
+            logger.info("%s: inline判定 (E/F/G notna=%s)", path, inline_count)
+            actual_rows = _resolve_oh_rows(date_rows, "inline", df_raw, path)
+        else:
+            actual_rows = _resolve_oh_rows_auto(date_rows, df_raw, path)
+
+    _validate_target_month_dates([stay_date for _, stay_date in actual_rows], target_month, path)
 
     records: list[dict] = []
     n_total = 0

@@ -7,11 +7,32 @@ from pathlib import Path
 
 import pandas as pd
 
-from booking_curve.config import OUTPUT_DIR
-from booking_curve.daily_snapshots import build_month_asof_index, load_month_asof_index, read_daily_snapshots_csv
+from booking_curve.config import HOTEL_CONFIG, OUTPUT_DIR
+from booking_curve.daily_snapshots import (
+    build_month_asof_index,
+    get_daily_snapshots_path,
+    load_month_asof_index,
+    read_daily_snapshots_csv,
+)
 from booking_curve.raw_inventory import RawInventoryIndex, build_raw_inventory, build_raw_inventory_index
 
 logger = logging.getLogger(__name__)
+
+
+def _require_hotel_config(hotel_id: str) -> dict[str, object]:
+    if not hotel_id or not isinstance(hotel_id, str):
+        raise ValueError("missing_report: hotel_id must be a non-empty string")
+    if hotel_id not in HOTEL_CONFIG:
+        raise ValueError(
+            f"missing_report: hotel_id '{hotel_id}' not found in HOTEL_CONFIG (check config/hotels.json)",
+        )
+    return HOTEL_CONFIG[hotel_id]
+
+
+def _resolve_daily_snapshots_path(hotel_id: str, daily_snapshots_path: Path | str | None) -> Path:
+    if daily_snapshots_path is None:
+        return get_daily_snapshots_path(hotel_id)
+    return Path(daily_snapshots_path)
 
 
 def add_months_yyyymm(yyyymm: str, delta: int) -> str:
@@ -368,18 +389,29 @@ def _build_snapshot_pair_missing_records(
 
 def find_unconverted_raw_pairs(
     hotel_id: str,
-    daily_snapshots_path: Path,
+    daily_snapshots_path: Path | str | None = None,
 ) -> tuple[list[tuple[str, str]], RawInventoryIndex, RawInventory, set[tuple[str, str]]]:
-    raw_inventory = build_raw_inventory(hotel_id)
+    hotel_cfg = _require_hotel_config(hotel_id)
+    raw_root_dir_hint = hotel_cfg.get("raw_root_dir")
+    try:
+        raw_inventory = build_raw_inventory(hotel_id)
+    except Exception as exc:
+        raise ValueError(
+            f"missing_report: failed to build raw inventory for hotel_id '{hotel_id}' "
+            f"(raw_root_dir={raw_root_dir_hint})",
+        ) from exc
     raw_index = build_raw_inventory_index(raw_inventory)
-    snapshot_pairs = load_month_asof_index(hotel_id, daily_snapshots_path) if daily_snapshots_path.exists() else set()
+    resolved_daily_path = _resolve_daily_snapshots_path(hotel_id, daily_snapshots_path)
+    snapshot_pairs = (
+        load_month_asof_index(hotel_id, resolved_daily_path) if resolved_daily_path.exists() else set()
+    )
     missing_pairs = sorted(raw_index.pairs - snapshot_pairs)
     return missing_pairs, raw_index, raw_inventory, snapshot_pairs
 
 
 def build_missing_report(
     hotel_id: str,
-    daily_snapshots_path: Path,
+    daily_snapshots_path: Path | str | None = None,
     *,
     mode: str = "ops",
     asof_window_days: int = 180,
@@ -393,12 +425,21 @@ def build_missing_report(
         - \"ops\": 運用モード。ASOF窓で最新の取りこぼしを検知。
         - \"audit\": 監査モード。歴史的なギャップをSTAY MONTH全域で検知。
     """
-    raw_inventory = build_raw_inventory(hotel_id)
+    hotel_cfg = _require_hotel_config(hotel_id)
+    raw_root_dir_hint = hotel_cfg.get("raw_root_dir")
+    try:
+        raw_inventory = build_raw_inventory(hotel_id)
+    except Exception as exc:
+        raise ValueError(
+            f"missing_report: failed to build raw inventory for hotel_id '{hotel_id}' "
+            f"(raw_root_dir={raw_root_dir_hint})",
+        ) from exc
     raw_index = build_raw_inventory_index(raw_inventory)
     raw_root_dir = raw_inventory.raw_root_dir
 
     records: list[dict[str, object]] = []
     mode_normalized = (mode or "ops").strip().lower()
+    resolved_daily_path = _resolve_daily_snapshots_path(hotel_id, daily_snapshots_path)
 
     if raw_inventory.health.severity == "WARN":
         records.append(
@@ -422,7 +463,7 @@ def build_missing_report(
             _build_ops_missing_records(raw_index, raw_root_dir, hotel_id, asof_window_days, forward_months),
         )
 
-    if not daily_snapshots_path.exists():
+    if not resolved_daily_path.exists():
         records.append(
             {
                 "kind": "daily_snapshots_missing_file",
@@ -432,16 +473,16 @@ def build_missing_report(
                 "missing_count": 0,
                 "missing_sample": "",
                 "message": "daily_snapshots file is missing",
-                "path": str(daily_snapshots_path),
+                "path": str(resolved_daily_path),
                 "severity": "ERROR",
             },
         )
     else:
-        df_snapshots = read_daily_snapshots_csv(daily_snapshots_path)
+        df_snapshots = read_daily_snapshots_csv(resolved_daily_path)
         snapshot_pairs = build_month_asof_index(df_snapshots, hotel_id)
-        records.extend(_build_snapshot_pair_missing_records(raw_index, snapshot_pairs, hotel_id, daily_snapshots_path))
-        records.extend(_build_onhand_missing_records(df_snapshots, hotel_id, daily_snapshots_path))
-        records.extend(_build_act_missing_records(df_snapshots, hotel_id, daily_snapshots_path, raw_index.pairs))
+        records.extend(_build_snapshot_pair_missing_records(raw_index, snapshot_pairs, hotel_id, resolved_daily_path))
+        records.extend(_build_onhand_missing_records(df_snapshots, hotel_id, resolved_daily_path))
+        records.extend(_build_act_missing_records(df_snapshots, hotel_id, resolved_daily_path, raw_index.pairs))
 
     output_dir_path = Path(output_dir)
     mode_suffix = "audit" if mode_normalized == "audit" else "ops"

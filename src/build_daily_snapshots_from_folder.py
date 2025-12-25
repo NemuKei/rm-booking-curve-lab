@@ -225,11 +225,6 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Rebuild asof_dates CSV after processing each hotel",
     )
-    parser.add_argument(
-        "--recursive",
-        action="store_true",
-        help="Search Excel files recursively under input_dir (supports monthly subfolders).",
-    )
     return parser.parse_args()
 
 
@@ -264,11 +259,6 @@ def main() -> None:
             raise ValueError(f"{hotel_id}: adapter_type '{adapter_type}' is not supported (nface only)")
 
         recursive = raw_inventory.include_subfolders
-        if args.recursive and not recursive:
-            logging.info(
-                "%s: include_subfolders is False in hotels.json; ignoring --recursive flag to keep hotels.json authoritative",
-                hotel_id,
-            )
 
         layout = HOTEL_CONFIG[hotel_id].get("layout", "auto")
 

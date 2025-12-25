@@ -114,17 +114,18 @@ def _build_health(
     )
 
 
-def build_raw_inventory(hotel_id: str, raw_root_dir: str | Path | None = None) -> RawInventory:
-    """Build raw inventory using resolved paths from booking_curve.config.HOTEL_CONFIG.
+def build_raw_inventory(hotel_id: str) -> RawInventory:
+    """Build raw inventory using paths resolved from booking_curve.config.HOTEL_CONFIG.
 
-    raw_root_dir must already be normalized in config.py; this module does not resolve paths.
+    Path resolution is centralized in config.py; raw_root_dir is sourced only from HOTEL_CONFIG
+    and overrides are not supported.
     """
     if hotel_id not in HOTEL_CONFIG:
-        raise KeyError(f"hotel_id '{hotel_id}' not found in HOTEL_CONFIG")
+        raise ValueError(f"hotel_id '{hotel_id}' not found in HOTEL_CONFIG")
 
     hotel_cfg = HOTEL_CONFIG[hotel_id]
     adapter_type = hotel_cfg.get("adapter_type")
-    raw_root_dir_cfg = raw_root_dir if raw_root_dir is not None else hotel_cfg.get("raw_root_dir")
+    raw_root_dir_cfg = hotel_cfg.get("raw_root_dir")
     include_subfolders = bool(hotel_cfg.get("include_subfolders", False))
 
     if not adapter_type:

@@ -369,10 +369,8 @@ def _build_snapshot_pair_missing_records(
 def find_unconverted_raw_pairs(
     hotel_id: str,
     daily_snapshots_path: Path,
-    *,
-    input_dir: Path | str | None = None,
 ) -> tuple[list[tuple[str, str]], RawInventoryIndex, RawInventory, set[tuple[str, str]]]:
-    raw_inventory = build_raw_inventory(hotel_id, raw_root_dir=input_dir)
+    raw_inventory = build_raw_inventory(hotel_id)
     raw_index = build_raw_inventory_index(raw_inventory)
     snapshot_pairs = load_month_asof_index(hotel_id, daily_snapshots_path) if daily_snapshots_path.exists() else set()
     missing_pairs = sorted(raw_index.pairs - snapshot_pairs)
@@ -388,7 +386,6 @@ def build_missing_report(
     lt_days: int = 120,
     forward_months: int = 3,
     output_dir: Path | str = OUTPUT_DIR,
-    input_dir: Path | str | None = None,
 ) -> Path:
     """Generate missing report for raw PMS files and daily snapshots.
 
@@ -396,7 +393,7 @@ def build_missing_report(
         - \"ops\": 運用モード。ASOF窓で最新の取りこぼしを検知。
         - \"audit\": 監査モード。歴史的なギャップをSTAY MONTH全域で検知。
     """
-    raw_inventory = build_raw_inventory(hotel_id, raw_root_dir=input_dir)
+    raw_inventory = build_raw_inventory(hotel_id)
     raw_index = build_raw_inventory_index(raw_inventory)
     raw_root_dir = raw_inventory.raw_root_dir
 

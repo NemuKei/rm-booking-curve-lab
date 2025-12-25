@@ -58,9 +58,6 @@ from build_daily_snapshots_from_folder import (
     count_excel_files,
     load_historical_full_all_rate,
 )
-from build_daily_snapshots_from_folder import (
-    HOTELS as NFACE_HOTELS,
-)
 
 # デフォルトホテル (現状は大国町のみ想定)
 DEFAULT_HOTEL = next(iter(HOTEL_CONFIG.keys()), "daikokucho")
@@ -923,18 +920,19 @@ class BookingCurveApp(tk.Tk):
             messagebox.showerror("エラー", "ホテルが選択されていません。")
             return
 
-        cfg = NFACE_HOTELS.get(hotel_tag)
+        cfg = HOTEL_CONFIG.get(hotel_tag)
         if cfg is None:
-            messagebox.showerror("エラー", f"N@FACE設定が見つかりません: {hotel_tag}")
+            messagebox.showerror("エラー", f"ホテル設定が見つかりません: {hotel_tag}")
             return
 
-        input_dir_raw = cfg.get("input_dir")
+        input_dir_raw = cfg.get("raw_root_dir") or cfg.get("input_dir")
         if not input_dir_raw:
             messagebox.showerror("エラー", f"入力ディレクトリが設定されていません: {hotel_tag}")
             return
 
+        recursive = bool(cfg.get("include_subfolders", False))
         input_dir = Path(input_dir_raw)
-        file_count = count_excel_files(input_dir)
+        file_count = count_excel_files(input_dir, recursive=recursive)
         rate = load_historical_full_all_rate(LOGS_DIR) or DEFAULT_FULL_ALL_RATE
         estimate_sec = file_count / rate if rate > 0 and file_count else None
         log_file = LOGS_DIR / f"full_all_{datetime.now().strftime('%Y%m%d_%H%M')}.log"
@@ -945,7 +943,14 @@ class BookingCurveApp(tk.Tk):
             else f"概算時間: 不明 (rate {rate:.2f} files/sec)"
         )
 
-        message = f"Daily snapshots を全量再生成します。\nホテル: {hotel_tag}\n対象ファイル数: {file_count}\n{estimate_text}\nログ: {log_file}"
+        subfolder_label = "含む" if recursive else "含まない"
+        message = (
+            "Daily snapshots を全量再生成します。\n"
+            f"ホテル: {hotel_tag}\n"
+            f"対象ファイル数: {file_count} (サブフォルダ{subfolder_label})\n"
+            f"{estimate_text}\n"
+            f"ログ: {log_file}"
+        )
 
         messagebox.showinfo("FULL_ALL 事前確認", message)
 

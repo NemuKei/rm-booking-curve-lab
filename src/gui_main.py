@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -167,6 +168,23 @@ class BookingCurveApp(tk.Tk):
         ack_map[hotel_tag] = asof_value
         self._save_settings()
 
+    def _get_missing_warning_sig_ack(self, hotel_tag: str) -> str | None:
+        master = self._settings.get("master_settings") or {}
+        ack_map = master.get("missing_warning_sig_ack") or {}
+        if isinstance(ack_map, dict):
+            value = ack_map.get(hotel_tag)
+            return value if isinstance(value, str) else None
+        return None
+
+    def _set_missing_warning_sig_ack(self, hotel_tag: str, sig_value: str) -> None:
+        master = self._settings.setdefault("master_settings", {})
+        ack_map = master.setdefault("missing_warning_sig_ack", {})
+        if not isinstance(ack_map, dict):
+            master["missing_warning_sig_ack"] = {}
+            ack_map = master["missing_warning_sig_ack"]
+        ack_map[hotel_tag] = sig_value
+        self._save_settings()
+
     def _precheck_missing_report_for_range_rebuild(
         self,
         hotel_tag: str,
@@ -211,7 +229,32 @@ class BookingCurveApp(tk.Tk):
             (asof_missing_mask & asof_missing_dates.between(asof_min_ts, asof_max_ts)).sum(),
         )
 
+        if raw_missing_dates.isna().all() and asof_missing_dates.isna().all():
+            return True
+
         if raw_missing_count == 0 and asof_missing_count == 0:
+            return True
+
+        asof_missing_list = sorted(
+            {
+                date_value.strftime("%Y-%m-%d")
+                for date_value in asof_missing_dates[asof_missing_mask]
+                if not pd.isna(date_value)
+                and date_value >= asof_min_ts
+                and date_value <= asof_max_ts
+            },
+        )
+        signature_payload = json.dumps(
+            {
+                "raw_missing_count": raw_missing_count,
+                "asof_missing_dates": asof_missing_list,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        current_sig = hashlib.sha1(signature_payload.encode("utf-8")).hexdigest()
+        saved_sig = self._get_missing_warning_sig_ack(hotel_tag)
+        if saved_sig == current_sig:
             return True
 
         message = (
@@ -227,6 +270,7 @@ class BookingCurveApp(tk.Tk):
             return False
 
         self._set_missing_warning_ack(hotel_tag, asof_max_str)
+        self._set_missing_warning_sig_ack(hotel_tag, current_sig)
         return True
 
     def _on_hotel_var_changed(self, *args) -> None:

@@ -230,15 +230,8 @@ def _build_range_rebuild_plan(
         f"{period.year}{period.month:02d}"
         for period in pd.period_range(start=asof_max, end=stay_end, freq="M")
     }
-
-    if asof_min.to_period("M") != asof_max.to_period("M"):
-        previous_month = (asof_min.to_period("M") - 1).strftime("%Y%m")
-        stay_months.add(previous_month)
-
-    early_days = pd.date_range(start=asof_min, end=asof_max, freq="D")
-    for day in early_days:
-        if day.day <= 3:
-            stay_months.add((day.to_period("M") - 1).strftime("%Y%m"))
+    previous_month = (asof_max.to_period("M") - 1).strftime("%Y%m")
+    stay_months.add(previous_month)
 
     stay_months_list = sorted(stay_months)
     stay_min = pd.Timestamp(f"{stay_months_list[0]}01").normalize()

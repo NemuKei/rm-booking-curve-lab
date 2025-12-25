@@ -215,13 +215,74 @@ def _extract_date_rows_from_column_a(df: pd.DataFrame, file_path: Path) -> list[
     return date_rows
 
 
+def _is_empty_cell(value: object) -> bool:
+    if pd.isna(value):
+        return True
+    if isinstance(value, str):
+        return value.strip() == ""
+    return False
+
+
+def _is_zero_or_na(value: object) -> bool:
+    if pd.isna(value):
+        return True
+    numeric = pd.to_numeric(value, errors="coerce")
+    if pd.isna(numeric):
+        return False
+    return float(numeric) == 0.0
+
+
+def _is_nonzero(value: object) -> bool:
+    numeric = pd.to_numeric(value, errors="coerce")
+    if pd.isna(numeric):
+        return False
+    return float(numeric) != 0.0
+
+
 def _detect_layout(
     date_rows: list[tuple[int, pd.Timestamp]],
+    df: pd.DataFrame,
     file_path: Path,
 ) -> Literal["inline", "shifted"]:
     if len(date_rows) < 2:
         logger.error("%s: レイアウト判定に必要な日付行が不足しています (rows=%s)", file_path, len(date_rows))
         raise ValueError("layout_unknown")
+
+    sample_rows = date_rows[: min(10, len(date_rows))]
+    weekdays = {"月", "火", "水", "木", "金", "土", "日"}
+    checked = 0
+    matched = 0
+    for row_idx, _ in sample_rows:
+        candidate_row = row_idx + 1
+        if candidate_row >= df.shape[0]:
+            continue
+        checked += 1
+        weekday_cell = df.iloc[candidate_row, 2] if df.shape[1] > 2 else pd.NA
+        if _is_empty_cell(df.iloc[candidate_row, 0]) and isinstance(weekday_cell, str):
+            weekday_str = weekday_cell.strip()
+        else:
+            weekday_str = None
+        if weekday_str not in weekdays:
+            continue
+        candidate_values = [
+            df.iloc[candidate_row, 4] if df.shape[1] > 4 else pd.NA,
+            df.iloc[candidate_row, 5] if df.shape[1] > 5 else pd.NA,
+            df.iloc[candidate_row, 6] if df.shape[1] > 6 else pd.NA,
+        ]
+        stay_values = [
+            df.iloc[row_idx, 4] if df.shape[1] > 4 else pd.NA,
+            df.iloc[row_idx, 5] if df.shape[1] > 5 else pd.NA,
+            df.iloc[row_idx, 6] if df.shape[1] > 6 else pd.NA,
+        ]
+        if not all(_is_zero_or_na(value) for value in candidate_values):
+            continue
+        if not any(_is_nonzero(value) for value in stay_values):
+            continue
+        matched += 1
+
+    if checked > 0 and matched / checked > 0.5:
+        logger.info("%s: detected weekday spacer rows; treating as inline layout", file_path)
+        return "inline"
 
     date_idxs = [row_idx for row_idx, _ in date_rows]
     stay_dates = [stay_date for _, stay_date in date_rows]
@@ -387,7 +448,7 @@ def parse_nface_file(
     elif layout == "shifted":
         resolved_layout = "shifted"
     else:
-        resolved_layout = _detect_layout(date_rows, path)
+        resolved_layout = _detect_layout(date_rows, df_raw, path)
     actual_rows = _resolve_oh_rows(date_rows, resolved_layout, df_raw, path)
 
     records: list[dict] = []

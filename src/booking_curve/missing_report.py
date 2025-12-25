@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -74,15 +73,9 @@ def _build_ops_missing_records(
 
     end_date = date.today()
     start_date = end_date - timedelta(days=asof_window_days - 1)
-    expected_asof_dates = {
-        (start_date + timedelta(days=i)).strftime("%Y%m%d") for i in range(asof_window_days)
-    }
+    expected_asof_dates = {(start_date + timedelta(days=i)).strftime("%Y%m%d") for i in range(asof_window_days)}
 
-    observed_asof_dates = {
-        asof
-        for asof in asof_dates
-        if pd.notna(pd.to_datetime(asof, format="%Y%m%d", errors="coerce"))
-    }
+    observed_asof_dates = {asof for asof in asof_dates if pd.notna(pd.to_datetime(asof, format="%Y%m%d", errors="coerce"))}
     missing_asof_dates = sorted(expected_asof_dates - observed_asof_dates)
 
     for asof in missing_asof_dates:
@@ -129,9 +122,7 @@ def _build_ops_missing_records(
             )
 
     if observed_asof_dates:
-        valid_asof_ts = [
-            pd.to_datetime(asof, format="%Y%m%d", errors="coerce") for asof in observed_asof_dates
-        ]
+        valid_asof_ts = [pd.to_datetime(asof, format="%Y%m%d", errors="coerce") for asof in observed_asof_dates]
         valid_asof_ts = [ts for ts in valid_asof_ts if not pd.isna(ts)]
         if valid_asof_ts:
             latest_ts = max(valid_asof_ts).date()
@@ -196,10 +187,7 @@ def _build_audit_raw_missing_records(
 
         expected_asof_dates = pd.date_range(start=start_asof, end=end_asof, freq="D")
         observed_asof_dates = {
-            asof
-            for tm, asof in raw_index.pairs
-            if tm == target_month
-            and pd.notna(pd.to_datetime(asof, format="%Y%m%d", errors="coerce"))
+            asof for tm, asof in raw_index.pairs if tm == target_month and pd.notna(pd.to_datetime(asof, format="%Y%m%d", errors="coerce"))
         }
 
         for asof_ts in expected_asof_dates:
@@ -309,9 +297,7 @@ def _build_act_missing_records(
             continue
         closing_ts = pd.Timestamp(closing_ts).normalize()
         month_dates = iter_month_dates(target_month)
-        group = df_filtered[
-            (df_filtered["target_month"] == target_month) & (df_filtered["as_of_date"].dt.normalize() == closing_ts)
-        ]
+        group = df_filtered[(df_filtered["target_month"] == target_month) & (df_filtered["as_of_date"].dt.normalize() == closing_ts)]
 
         if group.empty:
             records.append(
@@ -397,14 +383,11 @@ def find_unconverted_raw_pairs(
         raw_inventory = build_raw_inventory(hotel_id)
     except Exception as exc:
         raise ValueError(
-            f"missing_report: failed to build raw inventory for hotel_id '{hotel_id}' "
-            f"(raw_root_dir={raw_root_dir_hint})",
+            f"missing_report: failed to build raw inventory for hotel_id '{hotel_id}' (raw_root_dir={raw_root_dir_hint})",
         ) from exc
     raw_index = build_raw_inventory_index(raw_inventory)
     resolved_daily_path = _resolve_daily_snapshots_path(hotel_id, daily_snapshots_path)
-    snapshot_pairs = (
-        load_month_asof_index(hotel_id, resolved_daily_path) if resolved_daily_path.exists() else set()
-    )
+    snapshot_pairs = load_month_asof_index(hotel_id, resolved_daily_path) if resolved_daily_path.exists() else set()
     missing_pairs = sorted(raw_index.pairs - snapshot_pairs)
     return missing_pairs, raw_index, raw_inventory, snapshot_pairs
 
@@ -431,8 +414,7 @@ def build_missing_report(
         raw_inventory = build_raw_inventory(hotel_id)
     except Exception as exc:
         raise ValueError(
-            f"missing_report: failed to build raw inventory for hotel_id '{hotel_id}' "
-            f"(raw_root_dir={raw_root_dir_hint})",
+            f"missing_report: failed to build raw inventory for hotel_id '{hotel_id}' (raw_root_dir={raw_root_dir_hint})",
         ) from exc
     raw_index = build_raw_inventory_index(raw_inventory)
     raw_root_dir = raw_inventory.raw_root_dir

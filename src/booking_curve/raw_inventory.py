@@ -44,11 +44,7 @@ class RawInventoryIndex:
 
 def _discover_candidates(raw_root_dir: Path, include_subfolders: bool) -> list[Path]:
     globber = raw_root_dir.rglob if include_subfolders else raw_root_dir.glob
-    return sorted(
-        path
-        for path in globber("*.xls*")
-        if path.is_file() and path.suffix.lower().startswith(".xls") and not path.name.startswith("~$")
-    )
+    return sorted(path for path in globber("*.xls*") if path.is_file() and path.suffix.lower().startswith(".xls") and not path.name.startswith("~$"))
 
 
 def _extract_keys(file_path: Path, adapter_type: str) -> tuple[str | None, str | None]:
@@ -136,13 +132,11 @@ def build_raw_inventory(hotel_id: str) -> RawInventory:
     resolved_raw_root_dir = Path(raw_root_dir_cfg)
     if not resolved_raw_root_dir.exists() or not resolved_raw_root_dir.is_dir():
         raise ValueError(
-            f"{hotel_id}: raw_root_dir does not exist or is not a directory: "
-            f"{resolved_raw_root_dir} (include_subfolders={include_subfolders})",
+            f"{hotel_id}: raw_root_dir does not exist or is not a directory: {resolved_raw_root_dir} (include_subfolders={include_subfolders})",
         )
     if not os.access(resolved_raw_root_dir, os.R_OK):
         raise ValueError(
-            f"{hotel_id}: raw_root_dir is not readable: "
-            f"{resolved_raw_root_dir} (include_subfolders={include_subfolders})",
+            f"{hotel_id}: raw_root_dir is not readable: {resolved_raw_root_dir} (include_subfolders={include_subfolders})",
         )
 
     candidate_paths = _discover_candidates(resolved_raw_root_dir, include_subfolders)

@@ -28,6 +28,7 @@ except ImportError:  # tkcalendar が無い環境向けフォールバック
 from booking_curve.gui_backend import (
     HOTEL_CONFIG,
     OUTPUT_DIR,
+    build_range_rebuild_plan_for_gui,
     build_calendar_for_gui,
     clear_evaluation_detail_cache,
     get_all_target_months_for_lt_from_daily_snapshots,
@@ -148,6 +149,85 @@ class BookingCurveApp(tk.Tk):
                 json.dump(self._settings, f, ensure_ascii=False, indent=2)
         except Exception:
             pass
+
+    def _get_missing_warning_ack(self, hotel_tag: str) -> str | None:
+        master = self._settings.get("master_settings") or {}
+        ack_map = master.get("missing_warning_ack") or {}
+        if isinstance(ack_map, dict):
+            value = ack_map.get(hotel_tag)
+            return value if isinstance(value, str) else None
+        return None
+
+    def _set_missing_warning_ack(self, hotel_tag: str, asof_value: str) -> None:
+        master = self._settings.setdefault("master_settings", {})
+        ack_map = master.setdefault("missing_warning_ack", {})
+        if not isinstance(ack_map, dict):
+            master["missing_warning_ack"] = {}
+            ack_map = master["missing_warning_ack"]
+        ack_map[hotel_tag] = asof_value
+        self._save_settings()
+
+    def _precheck_missing_report_for_range_rebuild(
+        self,
+        hotel_tag: str,
+        asof_min: pd.Timestamp,
+        asof_max: pd.Timestamp,
+    ) -> bool:
+        ack_value = self._get_missing_warning_ack(hotel_tag)
+        asof_max_str = asof_max.strftime("%Y-%m-%d")
+        if ack_value == asof_max_str:
+            return True
+
+        try:
+            report_path = run_missing_check_for_gui(hotel_tag)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("欠損チェック失敗", f"欠損チェックの実行に失敗しました。\n{exc}")
+            return False
+
+        try:
+            df_report = pd.read_csv(report_path, dtype=str)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("欠損チェック失敗", f"欠損レポートの読み込みに失敗しました。\n{exc}")
+            return False
+
+        if df_report.empty:
+            return True
+
+        kind_series = df_report.get("kind", pd.Series([], dtype=str))
+        if kind_series.empty:
+            return True
+
+        asof_max_ts = pd.Timestamp(asof_max).normalize()
+        asof_min_ts = pd.Timestamp(asof_min).normalize()
+
+        raw_missing_mask = kind_series == "raw_missing"
+        raw_missing_dates = pd.to_datetime(df_report.get("asof_date"), errors="coerce").dt.normalize()
+        raw_missing_count = int((raw_missing_mask & (raw_missing_dates == asof_max_ts)).sum())
+
+        asof_missing_mask = kind_series == "asof_missing"
+        asof_missing_col = "missing_asof_date" if "missing_asof_date" in df_report.columns else "asof_date"
+        asof_missing_dates = pd.to_datetime(df_report.get(asof_missing_col), errors="coerce").dt.normalize()
+        asof_missing_count = int(
+            (asof_missing_mask & asof_missing_dates.between(asof_min_ts, asof_max_ts)).sum(),
+        )
+
+        if raw_missing_count == 0 and asof_missing_count == 0:
+            return True
+
+        message = (
+            "直近レンジ内の欠損が検出されました。\n"
+            f"RAW欠損(最新ASOF): {raw_missing_count} 件\n"
+            f"ASOF欠損(直近レンジ): {asof_missing_count} 件\n"
+            f"レポート: {report_path}\n\n"
+            "続行しますか？"
+        )
+
+        proceed = messagebox.askokcancel("欠損警告", message)
+        if not proceed:
+            return False
+
+        self._set_missing_warning_ack(hotel_tag, asof_max_str)
+        return True
 
     def _on_hotel_var_changed(self, *args) -> None:
         """
@@ -2676,11 +2756,24 @@ class BookingCurveApp(tk.Tk):
                         "対象月が未指定のため、daily snapshots の更新をスキップします。",
                     )
                     return
+
+                plan = build_range_rebuild_plan_for_gui(
+                    hotel_tag,
+                    buffer_days=30,
+                    lookahead_days=120,
+                )
+                if not self._precheck_missing_report_for_range_rebuild(
+                    hotel_tag,
+                    plan["asof_min"],
+                    plan["asof_max"],
+                ):
+                    return
+
                 run_daily_snapshots_for_gui(
                     hotel_tag=hotel_tag,
-                    mode="FAST",
+                    mode="RANGE_REBUILD",
                     target_months=target_months,
-                    buffer_days=14,
+                    buffer_days=30,
                 )
             elif self.update_daily_snapshots_var.get():
                 logging.info("LT生成: source=timeseries のため daily snapshots 更新はスキップ")

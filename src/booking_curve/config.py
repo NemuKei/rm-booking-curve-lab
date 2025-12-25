@@ -109,11 +109,53 @@ def _initialize_runtime_files() -> None:
 _initialize_runtime_files()
 
 
-def _resolve_raw_root_dir(raw_root_dir: str | Path) -> Path:
-    raw_root_path = Path(raw_root_dir)
+def _resolve_raw_root_dir(hotel_id: str, raw_root_dir: str | Path) -> Path:
+    """Resolve raw_root_dir to an absolute Path using BASE_DIR as the base.
+
+    raw_root_dir resolution is centralized here to keep HOTEL_CONFIG normalized.
+    """
+    try:
+        raw_root_path = Path(raw_root_dir)
+    except TypeError as exc:
+        raise TypeError(
+            f"{hotel_id}: raw_root_dir must be a string or Path (got {raw_root_dir!r})"
+        ) from exc
+
     if not raw_root_path.is_absolute():
         raw_root_path = BASE_DIR / raw_root_path
-    return raw_root_path.resolve()
+
+    try:
+        return raw_root_path.resolve(strict=False)
+    except OSError as exc:
+        raise ValueError(
+            f"{hotel_id}: failed to resolve raw_root_dir={raw_root_dir!r} (key=raw_root_dir)"
+        ) from exc
+
+
+def _normalize_display_name(hotel_id: str, display_name: Any) -> str:
+    if display_name is None:
+        return ""
+    if not isinstance(display_name, str):
+        raise TypeError(f"{hotel_id}: display_name must be a string (got {display_name!r})")
+    return display_name
+
+
+def _normalize_optional_number(hotel_id: str, key_name: str, value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise TypeError(f"{hotel_id}: {key_name} must be numeric or null (got {value!r})")
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError(f"{hotel_id}: {key_name} must be numeric or null (got blank string)")
+        try:
+            return float(stripped)
+        except ValueError as exc:
+            raise ValueError(f"{hotel_id}: {key_name} must be numeric or null (got {value!r})") from exc
+    raise TypeError(f"{hotel_id}: {key_name} must be numeric or null (got {value!r})")
 
 
 def _validate_hotel_config(hotel_id: str, hotel_cfg: dict[str, Any]) -> dict[str, Any]:
@@ -131,37 +173,34 @@ def _validate_hotel_config(hotel_id: str, hotel_cfg: dict[str, Any]) -> dict[str
         raise ValueError(f"{hotel_id}: hotel_id must match the map key (got {hotel_id_in_cfg})")
 
     adapter_type_raw = hotel_cfg["adapter_type"]
-    adapter_type = str(adapter_type_raw).lower()
+    if adapter_type_raw is None:
+        raise ValueError(f"{hotel_id}: adapter_type cannot be blank")
+    adapter_type = str(adapter_type_raw).strip().lower()
+    if not adapter_type:
+        raise ValueError(f"{hotel_id}: adapter_type cannot be blank")
     if adapter_type != "nface":
         raise ValueError(f"{hotel_id}: unsupported adapter_type '{adapter_type_raw}' (nface only)")
 
     raw_root_dir_value = hotel_cfg["raw_root_dir"]
-    if not isinstance(raw_root_dir_value, (str, Path)):
-        raise TypeError(f"{hotel_id}: raw_root_dir must be a string or Path")
-    raw_root_dir_str = str(raw_root_dir_value).strip()
+    raw_root_dir_str = str(raw_root_dir_value).strip() if raw_root_dir_value is not None else ""
     if not raw_root_dir_str:
         raise ValueError(f"{hotel_id}: raw_root_dir cannot be blank")
-    raw_root_dir = _resolve_raw_root_dir(raw_root_dir_value)
+    raw_root_dir = _resolve_raw_root_dir(hotel_id, raw_root_dir_value)
 
     include_subfolders = hotel_cfg["include_subfolders"]
     if not isinstance(include_subfolders, bool):
         raise TypeError(f"{hotel_id}: include_subfolders must be a boolean")
 
-    try:
-        capacity = float(hotel_cfg["capacity"])
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{hotel_id}: capacity must be numeric") from exc
-
-    try:
-        forecast_cap = float(hotel_cfg["forecast_cap"])
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{hotel_id}: forecast_cap must be numeric") from exc
+    display_name = _normalize_display_name(hotel_id, hotel_cfg["display_name"])
+    capacity = _normalize_optional_number(hotel_id, "capacity", hotel_cfg["capacity"])
+    forecast_cap = _normalize_optional_number(hotel_id, "forecast_cap", hotel_cfg["forecast_cap"])
 
     normalized = dict(hotel_cfg)
     normalized["hotel_id"] = hotel_id_in_cfg
+    normalized["display_name"] = display_name
     normalized["adapter_type"] = adapter_type
-    normalized["raw_root_dir"] = str(raw_root_dir)
-    normalized["input_dir"] = str(raw_root_dir)
+    normalized["raw_root_dir"] = raw_root_dir
+    normalized["input_dir"] = raw_root_dir
     normalized["include_subfolders"] = include_subfolders
     normalized["capacity"] = capacity
     normalized["forecast_cap"] = forecast_cap
@@ -192,7 +231,7 @@ def load_hotel_config() -> Dict[str, Dict[str, Any]]:
 
     - hotels.json の欠落やパースエラーは RuntimeError として停止する。
     - 必須キーが不足している場合や不明な adapter_type が指定された場合は ValueError を送出する。
-    - raw_root_dir から input_dir を絶対パスで派生生成する。
+    - raw_root_dir はこのモジュールで絶対 Path に正規化し、input_dir にも反映する。
     """
     raw = _load_hotels_json()
 

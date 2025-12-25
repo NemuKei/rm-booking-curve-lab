@@ -27,8 +27,8 @@ from booking_curve.forecast_simple import (
 from booking_curve.missing_report import build_missing_report, find_unconverted_raw_pairs
 from booking_curve.pms_adapter_nface import (
     build_daily_snapshots_fast,
-    build_daily_snapshots_from_folder_partial,
     build_daily_snapshots_for_pairs,
+    build_daily_snapshots_from_folder_partial,
     build_daily_snapshots_full_all,
     build_daily_snapshots_full_months,
 )
@@ -226,10 +226,7 @@ def _build_range_rebuild_plan(
     asof_min = asof_max - pd.Timedelta(days=buffer_days)
 
     stay_end = asof_max + pd.Timedelta(days=lookahead_days)
-    stay_months = {
-        f"{period.year}{period.month:02d}"
-        for period in pd.period_range(start=asof_max, end=stay_end, freq="M")
-    }
+    stay_months = {f"{period.year}{period.month:02d}" for period in pd.period_range(start=asof_max, end=stay_end, freq="M")}
     previous_month = (asof_max.to_period("M") - 1).strftime("%Y%m")
     stay_months.add(previous_month)
 

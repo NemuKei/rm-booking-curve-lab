@@ -760,6 +760,7 @@ def build_daily_snapshots_from_folder_partial(
     layout: LayoutType = "auto",
     output_dir: Optional[Path] = None,
     glob: str = "*.xls*",
+    recursive: bool = False,
 ) -> None:
     """部分更新用にファイル名フィルタを優先するパーシャルビルド。"""
 
@@ -773,8 +774,8 @@ def build_daily_snapshots_from_folder_partial(
     stay_min_ts = _normalize_boundary_timestamp(stay_min, "stay_min") if stay_min is not None else None
     stay_max_ts = _normalize_boundary_timestamp(stay_max, "stay_max") if stay_max is not None else None
 
-    candidates = list(input_path.glob(glob))
-    files = sorted(p for p in candidates if p.is_file() and p.suffix.lower() in {".xls", ".xlsx"})
+    files = _discover_excel_files(input_path, glob, recursive=recursive)
+    _validate_no_duplicate_keys(files)
 
     logger.info(
         "%s: partial build filters -> target_months=%s, asof_min=%s, asof_max=%s",

@@ -17,6 +17,7 @@ from booking_curve.daily_snapshots import (
     get_latest_asof_date,
     list_stay_months_from_daily_snapshots,
     read_daily_snapshots_for_month,
+    rebuild_asof_dates_from_daily_snapshots,
 )
 from booking_curve.forecast_simple import (
     moving_average_3months,
@@ -26,6 +27,7 @@ from booking_curve.forecast_simple import (
 from booking_curve.missing_report import build_missing_report, find_unconverted_raw_pairs
 from booking_curve.pms_adapter_nface import (
     build_daily_snapshots_fast,
+    build_daily_snapshots_from_folder_partial,
     build_daily_snapshots_for_pairs,
     build_daily_snapshots_full_all,
     build_daily_snapshots_full_months,
@@ -193,6 +195,78 @@ def _build_raw_inventory_or_raise(hotel_tag: str) -> RawInventory:
     if raw_inventory.health.severity == "WARN":
         logging.warning(raw_inventory.health.message)
     return raw_inventory
+
+
+def _normalize_ymd_timestamp(value: str) -> pd.Timestamp:
+    stripped = value.strip()
+    if not stripped:
+        raise ValueError("RAWに最新ASOFが見つからない")
+    if stripped.isdigit() and len(stripped) == 8:
+        ts = pd.to_datetime(stripped, format="%Y%m%d", errors="coerce")
+    else:
+        ts = pd.to_datetime(stripped, errors="coerce")
+    if pd.isna(ts):
+        raise ValueError("RAWに最新ASOFが見つからない")
+    return pd.Timestamp(ts).normalize()
+
+
+def _build_range_rebuild_plan(
+    hotel_tag: str,
+    *,
+    buffer_days: int = 30,
+    lookahead_days: int = 120,
+    raw_inventory: RawInventory | None = None,
+) -> dict[str, object]:
+    inventory = raw_inventory or _build_raw_inventory_or_raise(hotel_tag)
+    latest_asof_raw = inventory.health.latest_asof_ymd
+    if not latest_asof_raw:
+        raise ValueError("RAWに最新ASOFが見つからない")
+
+    asof_max = _normalize_ymd_timestamp(latest_asof_raw)
+    asof_min = asof_max - pd.Timedelta(days=buffer_days)
+
+    stay_end = asof_max + pd.Timedelta(days=lookahead_days)
+    stay_months = {
+        f"{period.year}{period.month:02d}"
+        for period in pd.period_range(start=asof_max, end=stay_end, freq="M")
+    }
+
+    if asof_min.to_period("M") != asof_max.to_period("M"):
+        previous_month = (asof_min.to_period("M") - 1).strftime("%Y%m")
+        stay_months.add(previous_month)
+
+    early_days = pd.date_range(start=asof_min, end=asof_max, freq="D")
+    for day in early_days:
+        if day.day <= 3:
+            stay_months.add((day.to_period("M") - 1).strftime("%Y%m"))
+
+    stay_months_list = sorted(stay_months)
+    stay_min = pd.Timestamp(f"{stay_months_list[0]}01").normalize()
+    stay_max = (pd.Timestamp(f"{stay_months_list[-1]}01") + pd.offsets.MonthEnd(0)).normalize()
+
+    return {
+        "mode": "RANGE_REBUILD",
+        "buffer_days": buffer_days,
+        "lookahead_days": lookahead_days,
+        "asof_min": asof_min,
+        "asof_max": asof_max,
+        "stay_months": stay_months_list,
+        "stay_min": stay_min,
+        "stay_max": stay_max,
+    }
+
+
+def build_range_rebuild_plan_for_gui(
+    hotel_tag: str,
+    *,
+    buffer_days: int = 30,
+    lookahead_days: int = 120,
+) -> dict[str, object]:
+    return _build_range_rebuild_plan(
+        hotel_tag,
+        buffer_days=buffer_days,
+        lookahead_days=lookahead_days,
+    )
 
 
 def get_latest_asof_for_hotel(hotel_tag: str) -> Optional[str]:
@@ -1305,7 +1379,8 @@ def run_daily_snapshots_for_gui(
     mode: str = "FAST",
     target_months: list[str] | None = None,
     buffer_days: int = 14,
-) -> None:
+    lookahead_days: int = 120,
+) -> dict[str, object]:
     """Tkinter GUI から daily snapshots 更新を実行するための薄いラッパー。"""
 
     raw_inventory = _build_raw_inventory_or_raise(hotel_tag)
@@ -1319,7 +1394,7 @@ def run_daily_snapshots_for_gui(
         raise ValueError(f"{hotel_tag}: adapter_type '{adapter_type}' is not supported (nface only)")
 
     mode_normalized = mode.upper()
-    if mode_normalized not in {"FAST", "FULL_MONTHS", "FULL_ALL"}:
+    if mode_normalized not in {"FAST", "FULL_MONTHS", "FULL_ALL", "RANGE_REBUILD"}:
         raise ValueError(f"Invalid mode: {mode}")
 
     validated_target_months: list[str] | None = None
@@ -1338,9 +1413,19 @@ def run_daily_snapshots_for_gui(
     recursive = raw_inventory.include_subfolders
 
     asof_min = None
+    plan: dict[str, object] = {"mode": mode_normalized}
     if mode_normalized == "FAST":
         latest_asof = get_latest_asof_date(hotel_tag, output_dir=OUTPUT_DIR)
         asof_min = latest_asof - pd.Timedelta(days=buffer_days) if latest_asof is not None else None
+        plan["asof_min"] = asof_min
+    elif mode_normalized == "RANGE_REBUILD":
+        plan = _build_range_rebuild_plan(
+            hotel_tag,
+            buffer_days=buffer_days,
+            lookahead_days=lookahead_days,
+            raw_inventory=raw_inventory,
+        )
+        asof_min = plan["asof_min"]
 
     logging.info(
         "daily snapshots build: mode=%s, hotel_tag=%s, target_months=%s, buffer_days=%s, asof_min=%s",
@@ -1374,7 +1459,7 @@ def run_daily_snapshots_for_gui(
                 glob=glob_pattern,
                 recursive=recursive,
             )
-        else:
+        elif mode_normalized == "FULL_ALL":
             build_daily_snapshots_full_all(
                 input_dir=raw_inventory.raw_root_dir,
                 hotel_id=hotel_tag,
@@ -1383,11 +1468,27 @@ def run_daily_snapshots_for_gui(
                 glob=glob_pattern,
                 recursive=recursive,
             )
+        else:
+            build_daily_snapshots_from_folder_partial(
+                input_dir=raw_inventory.raw_root_dir,
+                hotel_id=hotel_tag,
+                target_months=plan["stay_months"],
+                asof_min=plan["asof_min"],
+                asof_max=plan["asof_max"],
+                stay_min=plan["stay_min"],
+                stay_max=plan["stay_max"],
+                layout=layout,
+                output_dir=OUTPUT_DIR,
+                glob=glob_pattern,
+                recursive=recursive,
+            )
+            rebuild_asof_dates_from_daily_snapshots(hotel_tag, output_dir=OUTPUT_DIR)
     except Exception:
         logging.exception("Failed to build daily snapshots for GUI: hotel_tag=%s", hotel_tag)
         raise
 
     logging.info("Completed daily snapshots build: hotel_tag=%s", hotel_tag)
+    return plan
 
 
 def run_full_evaluation_for_gui_range(

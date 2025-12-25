@@ -18,6 +18,7 @@ from booking_curve.daily_snapshots import (
 from booking_curve.raw_inventory import RawInventory, build_raw_inventory
 from booking_curve.pms_adapter_nface import (
     build_daily_snapshots_fast,
+    build_daily_snapshots_from_folder_partial,
     build_daily_snapshots_full_all,
     build_daily_snapshots_full_months,
 )
@@ -186,6 +187,91 @@ def _run_full_all(hotel_id: str, raw_inventory: RawInventory, layout: str, recur
     )
 
 
+def _normalize_ymd_timestamp(value: str) -> pd.Timestamp:
+    stripped = value.strip()
+    if not stripped:
+        raise ValueError("RAWに最新ASOFが見つからない")
+    if stripped.isdigit() and len(stripped) == 8:
+        ts = pd.to_datetime(stripped, format="%Y%m%d", errors="coerce")
+    else:
+        ts = pd.to_datetime(stripped, errors="coerce")
+    if pd.isna(ts):
+        raise ValueError("RAWに最新ASOFが見つからない")
+    return pd.Timestamp(ts).normalize()
+
+
+def _build_range_rebuild_plan(
+    raw_inventory: RawInventory,
+    buffer_days: int,
+    lookahead_days: int,
+) -> dict[str, object]:
+    latest_asof_raw = raw_inventory.health.latest_asof_ymd
+    if not latest_asof_raw:
+        raise ValueError("RAWに最新ASOFが見つからない")
+
+    asof_max = _normalize_ymd_timestamp(latest_asof_raw)
+    asof_min = asof_max - pd.Timedelta(days=buffer_days)
+    stay_end = asof_max + pd.Timedelta(days=lookahead_days)
+
+    stay_months = {
+        f"{period.year}{period.month:02d}"
+        for period in pd.period_range(start=asof_max, end=stay_end, freq="M")
+    }
+
+    if asof_min.to_period("M") != asof_max.to_period("M"):
+        stay_months.add((asof_min.to_period("M") - 1).strftime("%Y%m"))
+
+    for day in pd.date_range(start=asof_min, end=asof_max, freq="D"):
+        if day.day <= 3:
+            stay_months.add((day.to_period("M") - 1).strftime("%Y%m"))
+
+    stay_months_list = sorted(stay_months)
+    stay_min = pd.Timestamp(f"{stay_months_list[0]}01").normalize()
+    stay_max = (pd.Timestamp(f"{stay_months_list[-1]}01") + pd.offsets.MonthEnd(0)).normalize()
+
+    return {
+        "asof_min": asof_min,
+        "asof_max": asof_max,
+        "stay_months": stay_months_list,
+        "stay_min": stay_min,
+        "stay_max": stay_max,
+    }
+
+
+def _run_range_rebuild(
+    hotel_id: str,
+    raw_inventory: RawInventory,
+    layout: str,
+    buffer_days: int,
+    lookahead_days: int,
+    recursive: bool,
+) -> None:
+    plan = _build_range_rebuild_plan(raw_inventory, buffer_days, lookahead_days)
+
+    logging.info(
+        "Running RANGE_REBUILD: hotel=%s asof_min=%s asof_max=%s stay_months=%s",
+        hotel_id,
+        plan["asof_min"],
+        plan["asof_max"],
+        plan["stay_months"],
+    )
+
+    build_daily_snapshots_from_folder_partial(
+        input_dir=raw_inventory.raw_root_dir,
+        hotel_id=hotel_id,
+        target_months=plan["stay_months"],
+        asof_min=plan["asof_min"],
+        asof_max=plan["asof_max"],
+        stay_min=plan["stay_min"],
+        stay_max=plan["stay_max"],
+        layout=layout,
+        output_dir=None,
+        glob=EXCEL_GLOB,
+        recursive=recursive,
+    )
+    rebuild_asof_dates_from_daily_snapshots(hotel_id)
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build daily snapshots from N@FACE folders")
     parser.add_argument(
@@ -196,7 +282,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--mode",
-        choices=["FAST", "FULL_MONTHS", "FULL_ALL"],
+        choices=["FAST", "FULL_MONTHS", "FULL_ALL", "RANGE_REBUILD"],
         default="FAST",
         type=str.upper,
         help="Execution mode",
@@ -208,8 +294,14 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--buffer-days",
         type=int,
-        default=14,
-        help="Buffer days for FAST mode when inferring asof_min",
+        default=30,
+        help="Buffer days for FAST/RANGE_REBUILD when inferring asof_min",
+    )
+    parser.add_argument(
+        "--lookahead-days",
+        type=int,
+        default=120,
+        help="Lookahead days for RANGE_REBUILD stay_months calculation",
     )
     parser.add_argument(
         "--yes",
@@ -266,8 +358,17 @@ def main() -> None:
             _run_fast(hotel_id, raw_inventory, layout, target_months or [], args.buffer_days, recursive)
         elif args.mode == "FULL_MONTHS":
             _run_full_months(hotel_id, raw_inventory, layout, target_months or [], recursive)
-        else:
+        elif args.mode == "FULL_ALL":
             _run_full_all(hotel_id, raw_inventory, layout, recursive)
+        else:
+            _run_range_rebuild(
+                hotel_id,
+                raw_inventory,
+                layout,
+                args.buffer_days,
+                args.lookahead_days,
+                recursive,
+            )
 
         if args.rebuild_asof_index:
             rebuild_asof_dates_from_daily_snapshots(hotel_id)

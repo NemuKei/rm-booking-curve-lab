@@ -223,7 +223,7 @@ def _build_range_rebuild_plan(
         raise ValueError("RAWに最新ASOFが見つからない")
 
     asof_max = _normalize_ymd_timestamp(latest_asof_raw)
-    asof_min = asof_max - pd.Timedelta(days=buffer_days)
+    asof_min = _calculate_asof_min(asof_max, buffer_days)
 
     stay_end = asof_max + pd.Timedelta(days=lookahead_days)
     stay_months = {f"{period.year}{period.month:02d}" for period in pd.period_range(start=asof_max, end=stay_end, freq="M")}
@@ -1364,6 +1364,12 @@ def run_build_lt_data_all_for_gui(hotel_tag: str, source: str = "daily_snapshots
     return months
 
 
+def _calculate_asof_min(asof_max: pd.Timestamp | None, buffer_days: int) -> pd.Timestamp | None:
+    if asof_max is None or buffer_days <= 0:
+        return None
+    return asof_max - pd.Timedelta(days=buffer_days - 1)
+
+
 def run_daily_snapshots_for_gui(
     hotel_tag: str,
     mode: str = "FAST",
@@ -1406,7 +1412,7 @@ def run_daily_snapshots_for_gui(
     plan: dict[str, object] = {"mode": mode_normalized}
     if mode_normalized == "FAST":
         latest_asof = get_latest_asof_date(hotel_tag, output_dir=OUTPUT_DIR)
-        asof_min = latest_asof - pd.Timedelta(days=buffer_days) if latest_asof is not None else None
+        asof_min = _calculate_asof_min(latest_asof, buffer_days)
         plan["asof_min"] = asof_min
     elif mode_normalized == "RANGE_REBUILD":
         plan = _build_range_rebuild_plan(

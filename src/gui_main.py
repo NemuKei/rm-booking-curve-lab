@@ -191,10 +191,7 @@ class BookingCurveApp(tk.Tk):
         asof_min: pd.Timestamp,
         asof_max: pd.Timestamp,
     ) -> bool:
-        ack_value = self._get_missing_warning_ack(hotel_tag)
         asof_max_str = asof_max.strftime("%Y-%m-%d")
-        if ack_value == asof_max_str:
-            return True
 
         try:
             report_path = run_missing_check_for_gui(hotel_tag)
@@ -221,6 +218,16 @@ class BookingCurveApp(tk.Tk):
         raw_missing_mask = kind_series == "raw_missing"
         raw_missing_dates = pd.to_datetime(df_report.get("asof_date"), errors="coerce").dt.normalize()
         raw_missing_count = int((raw_missing_mask & (raw_missing_dates == asof_max_ts)).sum())
+        raw_missing_targets = df_report.get("target_month")
+        if raw_missing_targets is None:
+            raw_missing_target_months: list[str] = []
+        else:
+            raw_missing_target_months = sorted(
+                {
+                    str(value)
+                    for value in raw_missing_targets[raw_missing_mask & (raw_missing_dates == asof_max_ts)].dropna().unique()
+                },
+            )
 
         asof_missing_mask = kind_series == "asof_missing"
         asof_missing_col = "missing_asof_date" if "missing_asof_date" in df_report.columns else "asof_date"
@@ -247,6 +254,7 @@ class BookingCurveApp(tk.Tk):
         signature_payload = json.dumps(
             {
                 "raw_missing_count": raw_missing_count,
+                "raw_missing_target_months": raw_missing_target_months,
                 "asof_missing_dates": asof_missing_list,
             },
             ensure_ascii=False,

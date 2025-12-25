@@ -57,15 +57,22 @@
 - 目的：**dup2 と blank が混在しても“全体として2行持ち”に固定できるか**
 - 期待：混在でもブレずに2行持ち扱いでOH行を決定
 
+#### 5) `rawfx_nface_A_inline_cell_weekday_spacer.xlsx`
+- 目的：**A列日付が2行おきに出るが、間の行が「曜日のみ＋数値ゼロ」のスペーサ**
+- 期待：
+  - diffs>1 でも shifted と誤判定しない（OHを日付行+1にしない）
+  - OHは日付行と同じ行（inline）で読む
+  - スペーサ行（曜日だけ/ゼロ行）をOHとして採用しない
+
 ---
 
 ### ⛔ 異常系（STOP/要確認）
 
-#### 5) `rawfx_nface_noA_stop.xlsx`
+#### 6) `rawfx_nface_noA_stop.xlsx`
 - 目的：**A列に宿泊日が無いケース**
 - 期待：STOP（誤取り込み防止）
 
-#### 6) `rawfx_nface_A_unknown_stop.xlsx`
+#### 7) `rawfx_nface_A_unknown_stop.xlsx`
 - 目的：**1行/2行判定が取れない（規則性が崩れている）**
 - 期待：STOP（部分取り込みはしない）
 
@@ -75,17 +82,18 @@
 
 - 方針：原則は「中身＞ファイル名」。ただし中身にASOFが無い場合のみファイル名にfallbackする。
 
-#### 7) `rawfx_nface_A_inline_name_asof_fallback.xlsx`
+#### 8) `rawfx_nface_A_inline_name_asof_fallback.xlsx`
 - 目的：**セルASOF（Q1等）が欠損しているため、ファイル名ASOFにfallback**
 - 期待：処理は継続し、ログに「ASOF fallback」が残る
 
-#### 8) `rawfx_nface_A_shifted_cell_mismatch_name_vs_sheet__202311_20230501.xlsx`
+#### 9) `rawfx_nface_A_shifted_cell_mismatch_name_vs_sheet__202311_20230501.xlsx`
 - 目的：**ファイル名（target_month/asof）とシート中身（宿泊月/ASOF）が不一致**のケース
 - 期待：**中身優先で継続**（シート側の宿泊月・ASOFを採用）
   - ただしログに mismatch を残す（後でRAW整理の棚卸しに使う）
 - 補足：
   - 末尾 `__202311_20230501` は「パース可能なダミー（YYYYMM_YYYYMMDD）」を付与して、
     **“ファイル名パースは可能だが中身と矛盾する”** 状況を再現するためのもの
+
 
 ---
 

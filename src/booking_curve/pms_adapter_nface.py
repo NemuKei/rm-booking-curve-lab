@@ -26,10 +26,10 @@ logger = logging.getLogger(__name__)
 
 MIN_STAY_DATE_ROWS = 5
 START_STAY_DATE_ROW_IDX = 8
-INLINE_EFG_COUNT_MIN = 70
-INLINE_EFG_COUNT_MAX = 120
-INLINE_EFG_SAMPLE_DAYS = 31
 WEEKDAY_SET = {"月", "火", "水", "木", "金", "土", "日"}
+WEEKDAY_SPACER_INLINE_RATIO = 0.6
+WEEKDAY_IN_DATE_ROW_SHIFTED_RATIO = 0.6
+INLINE_CONSECUTIVE_RATIO = 0.8
 
 
 def _parse_date_cell(value: object) -> pd.Timestamp | None:
@@ -311,20 +311,6 @@ def _resolve_oh_rows(
     return actual_rows
 
 
-def _count_inline_efg_cells(
-    date_rows: list[tuple[int, pd.Timestamp]],
-    df: pd.DataFrame,
-) -> int:
-    count = 0
-    for row_idx, _ in date_rows[:INLINE_EFG_SAMPLE_DAYS]:
-        for col_idx in (4, 5, 6):
-            if col_idx >= df.shape[1]:
-                continue
-            if pd.notna(df.iloc[row_idx, col_idx]):
-                count += 1
-    return count
-
-
 def _is_weekday_cell(value: object) -> bool:
     if not isinstance(value, str):
         return False
@@ -356,74 +342,57 @@ def _is_weekday_spacer_row(df: pd.DataFrame, row_idx: int) -> bool:
     return all(_is_zero_or_na(value) for value in values)
 
 
-def _resolve_oh_rows_auto(
+def _resolve_layout_auto(
     date_rows: list[tuple[int, pd.Timestamp]],
     df: pd.DataFrame,
     file_path: Path,
-) -> list[tuple[int, pd.Timestamp]]:
-    actual_rows: list[tuple[int, pd.Timestamp]] = []
-    idx = 0
-    while idx < len(date_rows):
-        row_idx, stay_date = date_rows[idx]
-        if idx + 1 < len(date_rows) and date_rows[idx + 1][1] == stay_date:
-            oh_row = date_rows[idx + 1][0]
-            if oh_row != row_idx + 1:
-                logger.error(
-                    "%s: dup2判定の連続行が不正です (stay_row=%s, dup_row=%s)",
-                    file_path,
-                    row_idx,
-                    oh_row,
-                )
-                raise ValueError("layout_unknown")
-            if _row_efg_all_na(df, oh_row):
-                logger.error(
-                    "%s: dup2判定でOH行のE/F/Gが全てNaNです (stay_row=%s, oh_row=%s)",
-                    file_path,
-                    row_idx,
-                    oh_row,
-                )
-                raise ValueError("layout_unknown")
-            actual_rows.append((oh_row, stay_date))
-            idx += 2
-            continue
+) -> Literal["inline", "shifted"]:
+    for idx in range(len(date_rows) - 1):
+        if date_rows[idx + 1][1] == date_rows[idx][1]:
+            logger.info("%s: dup2判定でshifted確定", file_path)
+            return "shifted"
 
-        spacer_row = row_idx + 1
-        next_row_idx = date_rows[idx + 1][0] if idx + 1 < len(date_rows) else None
-        if _is_weekday_spacer_row(df, spacer_row) and (next_row_idx is None or next_row_idx == row_idx + 2):
-            actual_rows.append((row_idx, stay_date))
-            idx += 1
-            continue
+    spacer_hits = sum(1 for row_idx, _ in date_rows if _is_weekday_spacer_row(df, row_idx - 1))
+    spacer_ratio = spacer_hits / len(date_rows)
+    if spacer_ratio >= WEEKDAY_SPACER_INLINE_RATIO:
+        logger.info(
+            "%s: weekday spacer比率が高いためinline確定 (ratio=%.2f)",
+            file_path,
+            spacer_ratio,
+        )
+        return "inline"
 
+    weekday_hits = 0
+    for row_idx, _ in date_rows:
         weekday_cell = df.iloc[row_idx, 2] if df.shape[1] > 2 else pd.NA
         if _is_weekday_cell(weekday_cell):
-            oh_row = row_idx + 1
-            if oh_row >= df.shape[0]:
-                logger.error("%s: OH行がシート末尾を超えています (stay_row=%s)", file_path, row_idx)
-                raise ValueError("layout_unknown")
-            if _is_weekday_cell(df.iloc[oh_row, 2] if df.shape[1] > 2 else pd.NA):
-                logger.error(
-                    "%s: 予算行/実績行の判定に失敗しました (stay_row=%s, oh_row=%s)",
-                    file_path,
-                    row_idx,
-                    oh_row,
-                )
-                raise ValueError("layout_unknown")
-            if _row_efg_all_na(df, oh_row):
-                logger.error(
-                    "%s: OH行のE/F/Gが全てNaNです (stay_row=%s, oh_row=%s)",
-                    file_path,
-                    row_idx,
-                    oh_row,
-                )
-                raise ValueError("layout_unknown")
-            actual_rows.append((oh_row, stay_date))
-            idx += 1
-            continue
+            weekday_hits += 1
+    weekday_ratio = weekday_hits / len(date_rows)
+    if weekday_ratio >= WEEKDAY_IN_DATE_ROW_SHIFTED_RATIO:
+        logger.info(
+            "%s: 日付行の曜日セル比率が高いためshifted確定 (ratio=%.2f)",
+            file_path,
+            weekday_ratio,
+        )
+        return "shifted"
 
-        logger.error("%s: OH行の判定に失敗しました (stay_row=%s)", file_path, row_idx)
-        raise ValueError("layout_unknown")
+    consecutive_hits = 0
+    total_pairs = len(date_rows) - 1
+    if total_pairs > 0:
+        for (row_idx, stay_date), (next_row_idx, next_stay_date) in zip(date_rows, date_rows[1:]):
+            if next_row_idx == row_idx + 1 and (next_stay_date - stay_date).days == 1:
+                consecutive_hits += 1
+        consecutive_ratio = consecutive_hits / total_pairs
+        if consecutive_ratio >= INLINE_CONSECUTIVE_RATIO:
+            logger.info(
+                "%s: 行/日付の連続性が高いためinline確定 (ratio=%.2f)",
+                file_path,
+                consecutive_ratio,
+            )
+            return "inline"
 
-    return actual_rows
+    logger.error("%s: layout auto判定に失敗しました", file_path)
+    raise ValueError("layout_unknown")
 
 
 def _validate_target_month_dates(
@@ -522,12 +491,8 @@ def parse_nface_file(
     elif layout == "shifted":
         actual_rows = _resolve_oh_rows(date_rows, "shifted", df_raw, path)
     else:
-        inline_count = _count_inline_efg_cells(date_rows, df_raw)
-        if INLINE_EFG_COUNT_MIN <= inline_count <= INLINE_EFG_COUNT_MAX:
-            logger.info("%s: inline判定 (E/F/G notna=%s)", path, inline_count)
-            actual_rows = _resolve_oh_rows(date_rows, "inline", df_raw, path)
-        else:
-            actual_rows = _resolve_oh_rows_auto(date_rows, df_raw, path)
+        auto_layout = _resolve_layout_auto(date_rows, df_raw, path)
+        actual_rows = _resolve_oh_rows(date_rows, auto_layout, df_raw, path)
 
     _validate_target_month_dates([stay_date for _, stay_date in actual_rows], target_month, path)
 

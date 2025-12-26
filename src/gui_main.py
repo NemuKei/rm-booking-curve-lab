@@ -705,24 +705,24 @@ class BookingCurveApp(tk.Tk):
             command=self._on_run_import_missing_only,
         ).grid(row=5, column=0, padx=4, pady=4, sticky="w")
 
-        self.master_latest_asof_var = tk.StringVar(value="最新ASOF: 未確認")
-        self.master_latest_asof_label = ttk.Label(
+        self.master_missing_check_status_var = tk.StringVar(value="欠損検査：未実施")
+        self.master_missing_check_status_label = ttk.Label(
             advanced_frame,
-            textvariable=self.master_latest_asof_var,
+            textvariable=self.master_missing_check_status_var,
             foreground="#555555",
         )
-        self.master_latest_asof_label.grid(row=6, column=0, columnspan=2, padx=4, pady=(8, 4), sticky="w")
+        self.master_missing_check_status_label.grid(row=6, column=0, columnspan=2, padx=4, pady=(8, 4), sticky="w")
 
         # 初期表示
         self._refresh_calendar_coverage()
         self._refresh_master_daily_caps()
-        self._update_master_latest_asof_status()
+        self._update_master_missing_check_status()
 
     def _on_hotel_changed(self, event=None) -> None:
         # マスタ設定タブのホテル変更時に、カレンダー範囲とキャパ設定を両方更新
         self._refresh_calendar_coverage()
         self._refresh_master_daily_caps()
-        self._update_master_latest_asof_status()
+        self._update_master_missing_check_status()
 
     def _on_global_hotel_changed(self, *args) -> None:
         """
@@ -736,7 +736,7 @@ class BookingCurveApp(tk.Tk):
 
         self._refresh_calendar_coverage()
         self._refresh_master_daily_caps()
-        self._update_master_latest_asof_status()
+        self._update_master_missing_check_status()
 
         if hasattr(self, "df_hotel_var"):
             fc_cap, occ_cap = self._get_daily_caps_for_hotel(hotel_tag)
@@ -851,18 +851,18 @@ class BookingCurveApp(tk.Tk):
         except Exception:
             self.master_occ_cap_var.set(str(occ_cap))
 
-    def _set_master_latest_asof_status(self, text: str, color: str) -> None:
-        self.master_latest_asof_var.set(text)
+    def _set_master_missing_check_status(self, text: str, color: str) -> None:
+        self.master_missing_check_status_var.set(text)
         try:
-            self.master_latest_asof_label.configure(foreground=color)
+            self.master_missing_check_status_label.configure(foreground=color)
         except Exception:
-            logging.debug("最新ASOFラベルの色設定に失敗しました", exc_info=True)
+            logging.debug("欠損検査ステータスラベルの色設定に失敗しました", exc_info=True)
 
-    def _update_master_latest_asof_status(self, csv_path: str | Path | None = None) -> None:
-        default_text = "最新ASOF: 未確認"
-        default_color = "#555555"
+    def _update_master_missing_check_status(self, csv_path: str | Path | None = None) -> None:
+        default_text = "欠損検査：未実施"
+        default_color = "#C62828"
 
-        if not hasattr(self, "master_latest_asof_var"):
+        if not hasattr(self, "master_missing_check_status_var"):
             return
 
         target_path: Path | None
@@ -873,37 +873,47 @@ class BookingCurveApp(tk.Tk):
             target_path = OUTPUT_DIR / f"missing_report_{hotel_tag}_ops.csv" if hotel_tag else None
 
         if target_path is None or not target_path.exists():
-            self._set_master_latest_asof_status(default_text, default_color)
+            self._set_master_missing_check_status(default_text, default_color)
             return
 
         try:
             df = pd.read_csv(target_path, dtype=str)
         except Exception:
-            self._set_master_latest_asof_status(default_text, default_color)
+            self._set_master_missing_check_status("欠損検査：状態不明（CSV読込失敗）", "#EF6C00")
             return
 
-        if df.empty or "kind" not in df.columns:
-            self._set_master_latest_asof_status("最新ASOF: OK", "#2E7D32")
-            return
+        severity_series = df.get("severity", pd.Series([], dtype=str)).fillna("")
+        error_count = int((severity_series == "ERROR").sum())
+        warn_count = int((severity_series == "WARN").sum())
 
-        stale_rows = df[df["kind"] == "stale_latest_asof"]
-        if stale_rows.empty:
-            self._set_master_latest_asof_status("最新ASOF: OK", "#2E7D32")
-            return
+        try:
+            last_run = datetime.fromtimestamp(target_path.stat().st_mtime)
+            last_run_text = last_run.strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            last_run_text = "不明"
 
-        row = stale_rows.iloc[0]
-        asof_date = str(row.get("asof_date", "") or "")
-        message = str(row.get("message", "") or "")
-        detail_parts = []
-        if asof_date:
-            detail_parts.append(asof_date)
-        if message:
-            detail_parts.append(message)
-        detail = " ".join(detail_parts)
-        text = "最新ASOF: 要確認"
-        if detail:
-            text = f"{text} ({detail})"
-        self._set_master_latest_asof_status(text, "#C62828")
+        text = f"欠損検査：最終実施 {last_run_text}（ERROR:{error_count} / WARN:{warn_count}）"
+
+        hotel_tag = self.hotel_var.get().strip()
+        snapshots_path = OUTPUT_DIR / f"daily_snapshots_{hotel_tag}.csv" if hotel_tag else None
+        needs_rerun = False
+        if snapshots_path is not None and snapshots_path.exists():
+            try:
+                needs_rerun = snapshots_path.stat().st_mtime > target_path.stat().st_mtime
+            except Exception:
+                needs_rerun = False
+
+        if needs_rerun:
+            text = f"{text} 要再実施"
+
+        if error_count > 0 or needs_rerun:
+            color = "#C62828"
+        elif warn_count > 0:
+            color = "#EF6C00"
+        else:
+            color = "#2E7D32"
+
+        self._set_master_missing_check_status(text, color)
 
     def _on_save_master_daily_caps(self) -> None:
         """マスタ設定タブからキャパシティを保存し、関連タブにも反映する。"""
@@ -945,7 +955,7 @@ class BookingCurveApp(tk.Tk):
             csv_path = run_missing_check_for_gui(hotel_tag)
             self._show_stale_asof_warning(csv_path)
             open_file(csv_path)
-            self._update_master_latest_asof_status(csv_path)
+            self._update_master_missing_check_status(csv_path)
         except Exception as e:
             logging.exception("欠損チェックに失敗しました")
             messagebox.showerror("エラー", f"欠損チェックに失敗しました:\n{e}")
@@ -959,6 +969,7 @@ class BookingCurveApp(tk.Tk):
         try:
             csv_path = run_missing_audit_for_gui(hotel_tag)
             open_file(csv_path)
+            self._update_master_missing_check_status()
         except Exception as e:
             logging.exception("欠損監査に失敗しました")
             messagebox.showerror("エラー", f"欠損監査に失敗しました:\n{e}")
@@ -1001,9 +1012,9 @@ class BookingCurveApp(tk.Tk):
                 open_file(report_path)
             except Exception:
                 pass
-            self._update_master_latest_asof_status(report_path)
+            self._update_master_missing_check_status(report_path)
         else:
-            self._update_master_latest_asof_status()
+            self._update_master_missing_check_status()
 
     def _show_stale_asof_warning(self, csv_path: str | Path) -> None:
         try:
@@ -1014,18 +1025,16 @@ class BookingCurveApp(tk.Tk):
         if df.empty or "kind" not in df.columns:
             return
 
-        stale_rows = df[df["kind"] == "stale_latest_asof"]
-        if stale_rows.empty:
+        severity_series = df.get("severity", pd.Series([], dtype=str)).fillna("")
+        error_count = int((severity_series == "ERROR").sum())
+        warn_count = int((severity_series == "WARN").sum())
+
+        if error_count == 0 and warn_count == 0:
             return
 
-        row = stale_rows.iloc[0]
-        asof_date = str(row.get("asof_date", "") or "")
-        message = str(row.get("message", "") or "")
-        msg_lines = ["最新ASOFが古い可能性があります。"]
-        if asof_date:
-            msg_lines.append(f"最新ASOF: {asof_date}")
-        if message:
-            msg_lines.append(message)
+        msg_lines = ["欠損検査結果に警告があります。"]
+        msg_lines.append(f"ERROR: {error_count} 件 / WARN: {warn_count} 件")
+        msg_lines.append("詳細は欠損レポートをご確認ください。")
         messagebox.showwarning("警告", "\n".join(msg_lines))
 
     def _load_historical_lt_all_rate(self) -> float | None:
@@ -1134,6 +1143,7 @@ class BookingCurveApp(tk.Tk):
         try:
             self._update_bc_latest_asof_label(update_asof_if_empty=False)
             self._update_df_latest_asof_label(update_asof_if_empty=False)
+            self._update_master_missing_check_status()
         except Exception:
             logging.warning("最新ASOF表示の更新に失敗しました", exc_info=True)
 
@@ -2799,6 +2809,7 @@ class BookingCurveApp(tk.Tk):
             return
 
         try:
+            snapshots_updated = False
             lt_source = self.lt_source_var.get() or "daily_snapshots"
             # 必要に応じて daily snapshots を先に更新
             if self.update_daily_snapshots_var.get() and lt_source == "daily_snapshots":
@@ -2827,6 +2838,7 @@ class BookingCurveApp(tk.Tk):
                     target_months=target_months,
                     buffer_days=30,
                 )
+                snapshots_updated = True
             elif self.update_daily_snapshots_var.get():
                 logging.info("LT生成: source=timeseries のため daily snapshots 更新はスキップ")
 
@@ -2849,6 +2861,12 @@ class BookingCurveApp(tk.Tk):
             self._update_df_latest_asof_label(update_asof_if_empty=False)
         except Exception:
             pass
+
+        if snapshots_updated:
+            try:
+                self._update_master_missing_check_status()
+            except Exception:
+                logging.warning("欠損検査ステータスの更新に失敗しました", exc_info=True)
 
         messagebox.showinfo(
             "LT_DATA生成",
@@ -2963,6 +2981,7 @@ class BookingCurveApp(tk.Tk):
             return
 
         try:
+            snapshots_updated = False
             lt_source = self.lt_source_var.get() or "daily_snapshots"
             if self.update_daily_snapshots_var.get() and lt_source == "daily_snapshots":
                 if not target_months:
@@ -2976,6 +2995,7 @@ class BookingCurveApp(tk.Tk):
                     mode="FULL_MONTHS",
                     target_months=target_months,
                 )
+                snapshots_updated = True
             elif self.update_daily_snapshots_var.get():
                 logging.info("LT生成: source=timeseries のため daily snapshots 更新はスキップ")
 
@@ -2998,6 +3018,12 @@ class BookingCurveApp(tk.Tk):
             self._update_df_latest_asof_label(update_asof_if_empty=False)
         except Exception:
             pass
+
+        if snapshots_updated:
+            try:
+                self._update_master_missing_check_status()
+            except Exception:
+                logging.warning("欠損検査ステータスの更新に失敗しました", exc_info=True)
 
         messagebox.showinfo(
             "LT_DATA生成",

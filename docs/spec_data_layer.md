@@ -458,5 +458,83 @@ GUI の「モデル評価」タブは、このサマリをベースに
 
 ---
 
+## 4. 運用・監査（欠損レポート）
+
+daily snapshots を「唯一の正」として運用する前提では、
+「そもそも daily snapshots が最新まで揃っているか」「RAW→snapshots 変換が落ちていないか」を
+GUI上で安全に検知できる必要がある。
+
+この目的のために、欠損レポート（missing report）を以下2系統で提供する。
+
+- 欠損検査（ops）：日常運用向け（最新〜近未来の取りこぼし検知）
+- 欠損監査（audit）：全期間監査向け（歴史的なギャップの検知）
+
+### 4-1. 出力ファイル
+
+- `output/missing_report_<hotel_id>_ops.csv`
+- `output/missing_report_<hotel_id>_audit.csv`
+- `output/raw_parse_failures_<hotel_id>.csv`（欠損レポートに取り込まれる）
+
+### 4-2. CSV列仕様（共通）
+
+missing_report および raw_parse_failures は、以下の列構造を共通で持つ。
+
+| column | 内容 |
+|---|---|
+| kind | 欠損・異常の種類（例：layout_unknown 等） |
+| hotel_id | ホテルID |
+| asof_date | ASOF日付（必要な場合のみ） |
+| target_month | 対象宿泊月（必要な場合のみ） |
+| missing_count | 件数（または 0） |
+| missing_sample | サンプル（任意） |
+| message | 人間向け説明 |
+| path | 対象ファイルのパス（フルパス運用可） |
+| severity | `ERROR` / `WARN` / `INFO` |
+
+#### severity の運用方針
+- `ERROR`：運用上「見逃すと危ない」もの（STOP相当、未生成、致命的欠損など）
+- `WARN`：品質警告（運用は可能だが注意）
+- `INFO`：参考情報（集計対象外でもよい）
+
+### 4-3. 欠損検査（ops）の定義（運用）
+
+目的：日々の更新運用で「直近の取りこぼし」を素早く検知する。
+
+- 対象は「最新ASOF近辺」と「直近〜近未来の対象月」に絞る（全期間は見ない）
+- 例：ASOF窓（既定：180日）＋ forward_months（既定：3ヶ月）など
+- 出力は `missing_report_<hotel_id>_ops.csv`
+
+GUIのマスタ設定タブでは、欠損検査（ops）の結果サマリを表示する。
+
+### 4-4. 欠損監査（audit）の定義（全期間）
+
+目的：データの網羅性を監査する（運用者が「全体の欠損状態」を把握するため）。
+
+- 対象は「stay_month 全域」に広げ、歴史的なギャップも検知する
+- 出力は `missing_report_<hotel_id>_audit.csv`
+
+※監査は「運用上の除外（ACK）」を反映しない（全体像を保つため）。
+
+### 4-5. raw_parse_failures（変換失敗ログ）
+
+`raw_parse_failures_<hotel_id>.csv` は、RAW→daily snapshots 変換での失敗（例：layout_unknown）を記録する。
+欠損レポート生成時に読み込まれ、missing_report に統合される。
+
+- フルパス運用は許容する（ZIP共有時はダミーパス置換など運用側で対応）
+
+### 4-6. （予定）欠損ACK（確認済み除外）
+
+運用上「欠損が確定しており、毎回アラートに出てほしくない」項目を除外できるようにする。
+
+- ACKは欠損検査（ops）の集計（ERROR/WARN件数）から除外する
+- 欠損監査（audit）は除外しない（全体の欠損状態を保持）
+
+ACKの同一性キー（運用の最小要件）：
+- `kind + target_month + asof_date + path`
+ACK対象：
+- `severity in (ERROR, WARN)` のみ
+
+---
+
 この `spec_data_layer.md` は、**「どのデータが、どのファイルに、どの形式で置かれているか」** を整理するための基礎仕様書です。  
 新しい指標の追加や評価ロジックの変更を行う場合は、ここで定義したファイル構造との整合性を確認しながら進めてください。

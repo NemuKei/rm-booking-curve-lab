@@ -164,7 +164,7 @@ PMS 生データを正規化し、ホテル共通で扱える形として定義�
 - この時点では **LT_DATA / 月次カーブは依然として時系列 Excel ベース**。
   - 標準スナップショットは「あくまで次フェーズ用のインフラ」。
 
-#### v0.6.5（想定：`feature/lt-from-daily-snapshots` マージ後）
+#### v0.6.5（`feature/lt-from-daily-snapshots` マージ後）
 
 - **LT_DATA を daily_snapshots ベースで生成できるルートを追加。**
   - `booking_curve.lt_builder.build_lt_data_from_daily_snapshots_for_month(...)`
@@ -189,7 +189,7 @@ PMS 生データを正規化し、ホテル共通で扱える形として定義�
   - 欠損値の補完（NOCB）はまだ実装しておらず、生の NaN がそのままグラフに反映される。
     → これは次フェーズ（欠損 NOCB ブランチ）で対応する。
 
-#### v0.6.6（想定：`feature/missing-values-nocb` マージ後）
+#### v0.6.6（`feature/missing-values-nocb` マージ後）
 
 - **欠損値補完ポリシーを整理（データレイヤーは生の NaN を保持）。**
   - daily snapshots / LT_DATA / monthly_curve は **生の NaN を保持**する。
@@ -210,6 +210,16 @@ PMS 生データを正規化し、ホテル共通で扱える形として定義�
   - `LTソース`（timeseries / daily_snapshots）を選択可能。
   - `daily_snapshots` をソースにする場合、LT生成時に snapshots 更新を任意で実行できる。
   - `timeseries` 選択時は snapshots 更新オプションを無効化（不要な処理時間を発生させない）。
+
+#### v0.6.7（`feature/daily-snapshots-partial-build` 開発中）
+
+- daily snapshots の部分生成（RANGE_REBUILD 等）の運用安定化。
+- RAW（N@FACE）現場加工パターン差への対応強化（誤取り込み防止、STOP条件の明確化）。
+- 欠損検査（ops）/ 欠損監査（audit）による運用警告の整理（マスタ設定タブ）。
+- 欠損検査（ops）のACK（確認済み除外）＋GUI欠損一覧（opsのみ）を同ブランチで完走する方針。
+  - 同一性キー：`kind + target_month + asof_date + path`
+  - 対象：`severity in (ERROR, WARN)`
+  - audit は全体像のためACK除外しない
 
 
 #### 今後の予定（概要）

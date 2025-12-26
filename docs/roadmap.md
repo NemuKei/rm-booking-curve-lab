@@ -1,12 +1,26 @@
 # rm-booking-curve-lab ロードマップ（2025-12 時点）
 
-## 0. 現在地（v0.6.6 相当）
+## 現在地
+
+- リリース済み：v0.6.4
+  - Standard Daily Snapshots レイヤー追加（基本導線の整備）
+- 完了扱い：v0.6.6（feature/missing-values-nocb）
+  - 欠損値補完（NOCB）関連の改善が完了
+- 開発中：v0.6.7（feature/daily-snapshots-partial-build）
+  - daily snapshots の部分生成（RANGE_REBUILD 等）の運用安定化
+  - 欠損検査（ops）/ 欠損監査（audit）による運用警告の整備（マスタ設定タブ）
+  - RAWの現場加工パターン対応の強化（誤取り込み防止、STOPの明確化）
+  - 欠損検査（ops）のACK（確認済み除外）＋GUI欠損一覧（opsのみ）
+- 次（予定）：v0.6.8 以降
+  - ※v0.6.7 完走後に再定義
+
+
 
 ### 完了していること
 
 - **月次ブッキングカーブ**
   - v0.6.3 にて、時系列 OH から直接集計するロジックに刷新済み。
-  - v0.6.5 相当以降、daily snapshots ルートでも同等の monthly_curve を生成可能（数値一致確認済み）。
+  - v0.6.7 相当以降、daily snapshots ルートでも同等の monthly_curve を生成可能（数値一致確認済み）。
 
 - **標準日別スナップショットレイヤー（daily snapshots）**
   - `daily_snapshots_<hotel_id>.csv` を「唯一の正」とするためのインフラを整備。

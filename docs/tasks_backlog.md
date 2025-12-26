@@ -46,17 +46,17 @@
 
 ### タスク
 
-- [ ] **P1.5-01** NOCB 補完ヘルパーを実装する  
+- [x] **P1.5-01** NOCB 補完ヘルパーを実装する  
   - `booking_curve.utils` などに以下の関数を用意：  
     - `apply_nocb_along_lt(df, max_gap=None)`  
       - 行：`stay_date`、列：`lt` を想定。  
       - 各 `stay_date` 行について `lt` 昇順に NOCB を適用。  
       - `max_gap=None` の場合はギャップ無制限で補完。  
       - `max_gap` に数値を指定した場合、そのギャップを超える連続 NaN は補完せず NaN のまま残す。
-- [ ] **P1.5-02** 日別ブッキングカーブ描画に NOCB を適用する  
+- [x] **P1.5-02** 日別ブッキングカーブ描画に NOCB を適用する  
   - GUI の日別カーブ描画前に `apply_nocb_along_lt` を適用。  
   - 別途「raw（補完なし）」を選べる設計も検討する。
-- [ ] **P1.5-03** 月次ブッキングカーブ描画に NOCB を適用する  
+- [x] **P1.5-03** 月次ブッキングカーブ描画に NOCB を適用する  
   - 月次カーブ用の LT_DATA / monthly_curve 読み込み後に NOCB を適用。  
   - 欠損による折れ線の途切れが消えることを確認。
 - [ ] **P1.5-04** 欠損マップの出力機能  
@@ -77,7 +77,7 @@
 - 重複排除キーは原則 `(hotel_id, as_of_date, stay_date)` とし、`keep="last"` を採用する。
 - daily snapshots 自体は NaN を保持（補完はビュー側）。
 
-### 1.6.2 実装タスク（候補）
+### 1.6.2 実装内容（現状）
 - `booking_curve/daily_snapshots.py`
   - `build_daily_snapshots_partial(..., as_of_min, as_of_max, ...)` の追加
   - upsert（既存CSVの該当範囲削除 → append → dedupe → save）の共通関数化
@@ -86,10 +86,34 @@
 - GUI
   - 「LT生成時にdaily snapshots更新」を Partial 方式へ切替（範囲は当月〜翌3ヶ月、または直近N日ASOF等）
   - 進捗ログと、処理対象範囲の表示（誤操作防止）
+  - FULL_ALL / RANGE_REBUILD が運用可能
 
 ### 1.6.3 検証
 - 既存 daily_snapshots に対して、同一 as_of_date 範囲を partial 再生成しても値が一致すること
 - LT_DATA / monthly_curve の出力が、full と partial で一致すること（少なくとも対象範囲内）
+
+---
+
+## Phase 1.7：欠損レポート（ops）のACK（確認済み除外）＋GUI欠損一覧
+
+### 目的
+- 欠損検査（ops）で毎回出る「確定欠損」を運用上 ACK（確認済み）として除外し、
+  ops 集計（ERROR/WARN件数）から外せるようにする。
+- ただし全体の欠損状態は「欠損監査（audit）」で保持する（auditはACK除外しない）。
+
+### タスク
+- [ ] **P1.7-01** ACK保存先（CSV）とスキーマを確定する
+  - ファイル：`output/missing_ack_<hotel_id>_ops.csv`
+  - 同一性キー：`kind + target_month + asof_date + path`
+  - 対象：`severity in (ERROR, WARN)` のみ
+
+- [ ] **P1.7-02** GUIに欠損一覧（ops）を表示し、行ごとに「確認済」チェックを付けられるようにする
+  - 対象は ops のみ（auditはGUI一覧に出さない前提）
+
+- [ ] **P1.7-03** ops の集計（ERROR/WARN件数）から ACK を除外する
+  - 表示：`ERROR:x / WARN:y` は「未ACK分」の件数にする
+
+- [ ] **P1.7-04** 欠損監査（audit）はACKを除外しないことを仕様として固定する
 
 ---
 

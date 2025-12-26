@@ -29,6 +29,7 @@ START_STAY_DATE_ROW_IDX = 8
 WEEKDAY_SET = {"月", "火", "水", "木", "金", "土", "日"}
 WEEKDAY_SPACER_INLINE_RATIO = 0.6
 WEEKDAY_IN_DATE_ROW_SHIFTED_RATIO = 0.6
+WEEKDAY_ABOVE_DATE_ROW_INLINE_RATIO = 0.6
 INLINE_CONSECUTIVE_RATIO = 0.8
 
 
@@ -351,6 +352,31 @@ def _resolve_layout_auto(
         if date_rows[idx + 1][1] == date_rows[idx][1]:
             logger.info("%s: dup2判定でshifted確定", file_path)
             return "shifted"
+
+    above_weekday_hits = 0
+    for row_idx, _ in date_rows:
+        above_row_idx = row_idx - 1
+        if above_row_idx < 0 or above_row_idx >= df.shape[0]:
+            continue
+        above_date_cell = df.iloc[above_row_idx, 0]
+        if not _is_empty_cell(above_date_cell):
+            continue
+        above_weekday_cell = df.iloc[above_row_idx, 2] if df.shape[1] > 2 else pd.NA
+        if not _is_weekday_cell(above_weekday_cell):
+            continue
+        date_row_weekday_cell = df.iloc[row_idx, 2] if df.shape[1] > 2 else pd.NA
+        if _is_weekday_cell(date_row_weekday_cell):
+            continue
+        above_weekday_hits += 1
+
+    above_weekday_ratio = above_weekday_hits / len(date_rows)
+    if above_weekday_ratio >= WEEKDAY_ABOVE_DATE_ROW_INLINE_RATIO:
+        logger.info(
+            "%s: 日付行の1行上に曜日がある比率が高いためinline確定 (ratio=%.2f)",
+            file_path,
+            above_weekday_ratio,
+        )
+        return "inline"
 
     spacer_hits = sum(1 for row_idx, _ in date_rows if _is_weekday_spacer_row(df, row_idx - 1))
     spacer_ratio = spacer_hits / len(date_rows)

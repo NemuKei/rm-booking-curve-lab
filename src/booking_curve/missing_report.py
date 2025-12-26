@@ -378,6 +378,36 @@ def _build_snapshot_pair_missing_records(
     return records
 
 
+def _load_raw_parse_failures(output_dir: Path, hotel_id: str) -> list[dict[str, object]]:
+    expected_columns = [
+        "kind",
+        "hotel_id",
+        "asof_date",
+        "target_month",
+        "missing_count",
+        "missing_sample",
+        "message",
+        "path",
+        "severity",
+    ]
+    path = output_dir / f"raw_parse_failures_{hotel_id}.csv"
+    if not path.exists():
+        return []
+
+    try:
+        df_failures = pd.read_csv(path)
+    except Exception as exc:
+        logger.warning("missing_report: failed to read raw_parse_failures: %s", exc)
+        return []
+
+    df_output = df_failures.copy()
+    for col in expected_columns:
+        if col not in df_output.columns:
+            df_output[col] = 0 if col == "missing_count" else ""
+
+    return df_output[expected_columns].to_dict(orient="records")
+
+
 def find_unconverted_raw_pairs(
     hotel_id: str,
     daily_snapshots_path: Path | str | None = None,
@@ -448,6 +478,9 @@ def build_missing_report(
             _build_ops_missing_records(raw_index, raw_root_dir, hotel_id, asof_window_days, forward_months),
         )
 
+    output_dir_path = Path(output_dir)
+    records.extend(_load_raw_parse_failures(output_dir_path, hotel_id))
+
     if not resolved_daily_path.exists():
         records.append(
             {
@@ -469,7 +502,6 @@ def build_missing_report(
         records.extend(_build_onhand_missing_records(df_snapshots, hotel_id, resolved_daily_path))
         records.extend(_build_act_missing_records(df_snapshots, hotel_id, resolved_daily_path, raw_index.pairs))
 
-    output_dir_path = Path(output_dir)
     mode_suffix = "audit" if mode_normalized == "audit" else "ops"
     output_path = output_dir_path / f"missing_report_{hotel_id}_{mode_suffix}.csv"
     output_path.parent.mkdir(parents=True, exist_ok=True)

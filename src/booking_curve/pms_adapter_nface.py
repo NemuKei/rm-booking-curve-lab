@@ -202,6 +202,72 @@ def _normalize_boundary_timestamp(value: pd.Timestamp | str | None, param_name: 
     return pd.Timestamp(ts).normalize()
 
 
+def _format_asof_ymd(asof_ymd: str | None) -> str:
+    if not asof_ymd:
+        return ""
+    asof_ts = pd.to_datetime(asof_ymd, format="%Y%m%d", errors="coerce")
+    if pd.isna(asof_ts):
+        return ""
+    return pd.Timestamp(asof_ts).strftime("%Y-%m-%d")
+
+
+def _classify_parse_failure(exc: Exception) -> str:
+    message = str(exc)
+    if "A列の日付行が少なすぎ" in message:
+        return "A列日付不足"
+    if message == "layout_unknown":
+        return "layout_unknown"
+    return "other"
+
+
+def _build_parse_failure_record(
+    *,
+    hotel_id: str,
+    asof_ymd: str | None,
+    target_month: str | None,
+    file_path: Path,
+    exc: Exception,
+) -> dict[str, object]:
+    return {
+        "kind": "raw_parse_failed",
+        "hotel_id": hotel_id,
+        "asof_date": _format_asof_ymd(asof_ymd),
+        "target_month": target_month or "",
+        "missing_count": 1,
+        "missing_sample": _classify_parse_failure(exc),
+        "message": str(exc),
+        "path": str(file_path),
+        "severity": "ERROR",
+    }
+
+
+def _write_raw_parse_failures(
+    failures: list[dict[str, object]],
+    *,
+    hotel_id: str,
+    output_dir: Optional[Path],
+) -> Path:
+    base_dir = Path(output_dir) if output_dir is not None else OUTPUT_DIR
+    output_path = base_dir / f"raw_parse_failures_{hotel_id}.csv"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    df = pd.DataFrame(
+        failures,
+        columns=[
+            "kind",
+            "hotel_id",
+            "asof_date",
+            "target_month",
+            "missing_count",
+            "missing_sample",
+            "message",
+            "path",
+            "severity",
+        ],
+    )
+    df.to_csv(output_path, index=False, encoding="utf-8-sig")
+    return output_path
+
+
 def _extract_date_rows_from_column_a(
     df: pd.DataFrame,
     file_path: Path,
@@ -707,6 +773,7 @@ def build_daily_snapshots_fast(
     input_path = Path(input_dir)
     if not input_path.exists() or not input_path.is_dir():
         logger.error("%s が存在しないかディレクトリではありません", input_path)
+        _write_raw_parse_failures([], hotel_id=hotel_id, output_dir=output_dir)
         return
 
     asof_min_ts = _normalize_boundary_timestamp(asof_min, "asof_min") if asof_min is not None else None
@@ -715,7 +782,7 @@ def build_daily_snapshots_fast(
     files = _discover_excel_files(input_path, glob, recursive=recursive)
     _validate_no_duplicate_keys(files)
 
-    filtered: list[tuple[Path, str]] = []
+    filtered: list[tuple[Path, str, str]] = []
     for file in files:
         stay_ym, asof_ymd = parse_nface_filename(file)
         if stay_ym is None or asof_ymd is None:
@@ -731,14 +798,16 @@ def build_daily_snapshots_fast(
             continue
         if asof_max_ts is not None and asof_ts > asof_max_ts:
             continue
-        filtered.append((file, asof_ymd))
+        filtered.append((file, stay_ym, asof_ymd))
 
     if not filtered:
         logger.info("%s: 対象ファイルがありません (FAST)", input_path)
+        _write_raw_parse_failures([], hotel_id=hotel_id, output_dir=output_dir)
         return
 
     df_list: list[pd.DataFrame] = []
-    for file, asof_ymd in filtered:
+    failures: list[dict[str, object]] = []
+    for file, stay_ym, asof_ymd in filtered:
         try:
             df = parse_nface_file(
                 file,
@@ -750,18 +819,29 @@ def build_daily_snapshots_fast(
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("%s の処理中にエラーが発生しました: %s", file, exc)
+            failures.append(
+                _build_parse_failure_record(
+                    hotel_id=hotel_id,
+                    asof_ymd=asof_ymd,
+                    target_month=stay_ym,
+                    file_path=file,
+                    exc=exc,
+                ),
+            )
             continue
         if not df.empty:
             df_list.append(df)
 
     if not df_list:
         logger.info("%s: Excel解析結果が空のためスキップします (FAST)", input_path)
+        _write_raw_parse_failures(failures, hotel_id=hotel_id, output_dir=output_dir)
         return
 
     df_new = pd.concat(df_list, ignore_index=True)
     base_dir = Path(output_dir) if output_dir is not None else OUTPUT_DIR
     output_path = append_daily_snapshots_by_hotel(df_new, hotel_id, output_dir=base_dir)
     logger.info("%s: FASTモードで %s 件のファイルを処理しました -> %s", input_path, len(df_list), output_path)
+    _write_raw_parse_failures(failures, hotel_id=hotel_id, output_dir=output_dir)
 
 
 def build_daily_snapshots_full_months(
@@ -781,26 +861,29 @@ def build_daily_snapshots_full_months(
     input_path = Path(input_dir)
     if not input_path.exists() or not input_path.is_dir():
         logger.error("%s が存在しないかディレクトリではありません", input_path)
+        _write_raw_parse_failures([], hotel_id=hotel_id, output_dir=output_dir)
         return
 
     files = _discover_excel_files(input_path, glob, recursive=recursive)
     _validate_no_duplicate_keys(files)
 
-    filtered: list[tuple[Path, str]] = []
+    filtered: list[tuple[Path, str, str]] = []
     for file in files:
         stay_ym, asof_ymd = parse_nface_filename(file)
         if stay_ym is None or asof_ymd is None:
             continue
         if stay_ym not in target_months:
             continue
-        filtered.append((file, asof_ymd))
+        filtered.append((file, stay_ym, asof_ymd))
 
     if not filtered:
         logger.info("%s: 対象ファイルがありません (FULL_MONTHS)", input_path)
+        _write_raw_parse_failures([], hotel_id=hotel_id, output_dir=output_dir)
         return
 
     df_list: list[pd.DataFrame] = []
-    for file, asof_ymd in filtered:
+    failures: list[dict[str, object]] = []
+    for file, stay_ym, asof_ymd in filtered:
         try:
             df = parse_nface_file(
                 file,
@@ -812,18 +895,29 @@ def build_daily_snapshots_full_months(
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("%s の処理中にエラーが発生しました: %s", file, exc)
+            failures.append(
+                _build_parse_failure_record(
+                    hotel_id=hotel_id,
+                    asof_ymd=asof_ymd,
+                    target_month=stay_ym,
+                    file_path=file,
+                    exc=exc,
+                ),
+            )
             continue
         if not df.empty:
             df_list.append(df)
 
     if not df_list:
         logger.info("%s: Excel解析結果が空のためスキップします (FULL_MONTHS)", input_path)
+        _write_raw_parse_failures(failures, hotel_id=hotel_id, output_dir=output_dir)
         return
 
     df_new = pd.concat(df_list, ignore_index=True)
     base_dir = Path(output_dir) if output_dir is not None else OUTPUT_DIR
     output_path = append_daily_snapshots_by_hotel(df_new, hotel_id, output_dir=base_dir)
     logger.info("%s: FULL_MONTHSモードで %s 件のファイルを処理しました -> %s", input_path, len(df_list), output_path)
+    _write_raw_parse_failures(failures, hotel_id=hotel_id, output_dir=output_dir)
 
 
 def build_daily_snapshots_full_all(
@@ -842,6 +936,7 @@ def build_daily_snapshots_full_all(
     input_path = Path(input_dir)
     if not input_path.exists() or not input_path.is_dir():
         logger.error("%s が存在しないかディレクトリではありません", input_path)
+        _write_raw_parse_failures([], hotel_id=hotel_id, output_dir=output_dir)
         return
 
     files = _discover_excel_files(input_path, glob, recursive=recursive)
@@ -849,9 +944,11 @@ def build_daily_snapshots_full_all(
 
     if not files:
         logger.warning("%s 配下に対象ファイルが見つかりません", input_path)
+        _write_raw_parse_failures([], hotel_id=hotel_id, output_dir=output_dir)
         return
 
     df_list: list[pd.DataFrame] = []
+    failures: list[dict[str, object]] = []
     for file in files:
         stay_ym, asof_ymd = parse_nface_filename(file)
         if stay_ym is None or asof_ymd is None:
@@ -867,18 +964,29 @@ def build_daily_snapshots_full_all(
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("%s の処理中にエラーが発生しました: %s", file, exc)
+            failures.append(
+                _build_parse_failure_record(
+                    hotel_id=hotel_id,
+                    asof_ymd=asof_ymd,
+                    target_month=stay_ym,
+                    file_path=file,
+                    exc=exc,
+                ),
+            )
             continue
         if not df.empty:
             df_list.append(df)
 
     if not df_list:
         logger.info("%s: Excel解析結果が空のためスキップします (FULL_ALL)", input_path)
+        _write_raw_parse_failures(failures, hotel_id=hotel_id, output_dir=output_dir)
         return
 
     df_new = pd.concat(df_list, ignore_index=True)
     base_dir = Path(output_dir) if output_dir is not None else OUTPUT_DIR
     output_path = append_daily_snapshots_by_hotel(df_new, hotel_id, output_dir=base_dir)
     logger.info("%s: FULL_ALLモードで %s 件のファイルを処理しました -> %s", input_path, len(df_list), output_path)
+    _write_raw_parse_failures(failures, hotel_id=hotel_id, output_dir=output_dir)
 
 
 def build_daily_snapshots_from_folder_partial(
@@ -899,6 +1007,7 @@ def build_daily_snapshots_from_folder_partial(
     input_path = Path(input_dir)
     if not input_path.exists() or not input_path.is_dir():
         logger.error("%s が存在しないかディレクトリではありません", input_path)
+        _write_raw_parse_failures([], hotel_id=hotel_id, output_dir=output_dir)
         return
 
     asof_min_ts = _normalize_boundary_timestamp(asof_min, "asof_min") if asof_min is not None else None
@@ -917,7 +1026,7 @@ def build_daily_snapshots_from_folder_partial(
         asof_max,
     )
 
-    filtered_files: list[tuple[Path, str]] = []
+    filtered_files: list[tuple[Path, str, str]] = []
     for file in files:
         target_month_ym, asof_ymd = parse_nface_filename(file)
         if target_month_ym is None or asof_ymd is None:
@@ -936,16 +1045,18 @@ def build_daily_snapshots_from_folder_partial(
         if asof_max_ts is not None and asof_ts > asof_max_ts:
             continue
 
-        filtered_files.append((file, asof_ymd))
+        filtered_files.append((file, target_month_ym, asof_ymd))
 
     logger.info("%s: partial build 対象ファイル数=%s", input_path, len(filtered_files))
 
     if not filtered_files:
         logger.info("%s: 対象ファイルがありません", input_path)
+        _write_raw_parse_failures([], hotel_id=hotel_id, output_dir=output_dir)
         return
 
     df_list: list[pd.DataFrame] = []
-    for file, asof_ymd in filtered_files:
+    failures: list[dict[str, object]] = []
+    for file, target_month_ym, asof_ymd in filtered_files:
         try:
             df = parse_nface_file(
                 file,
@@ -957,6 +1068,15 @@ def build_daily_snapshots_from_folder_partial(
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("%s の処理中にエラーが発生しました: %s", file, exc)
+            failures.append(
+                _build_parse_failure_record(
+                    hotel_id=hotel_id,
+                    asof_ymd=asof_ymd,
+                    target_month=target_month_ym,
+                    file_path=file,
+                    exc=exc,
+                ),
+            )
             continue
 
         if df.empty:
@@ -975,6 +1095,7 @@ def build_daily_snapshots_from_folder_partial(
 
     if not df_list:
         logger.info("%s: 対象ファイルがありません (Excel 解析結果が空)", input_path)
+        _write_raw_parse_failures(failures, hotel_id=hotel_id, output_dir=output_dir)
         return
 
     df_new = pd.concat(df_list, ignore_index=True)
@@ -989,6 +1110,7 @@ def build_daily_snapshots_from_folder_partial(
         output_dir=Path(output_dir) if output_dir is not None else OUTPUT_DIR,
     )
     logger.info("%s: %s 件のファイルから部分更新を実施しました -> %s", input_path, len(df_list), output_path)
+    _write_raw_parse_failures(failures, hotel_id=hotel_id, output_dir=output_dir)
 
 
 __all__ = [

@@ -1084,10 +1084,13 @@ class BookingCurveApp(tk.Tk):
 
         window = tk.Toplevel(self)
         window.title(f"欠損一覧（運用） - {hotel_tag}")
-        window.geometry("1100x600")
+        window.geometry("1200x600")
+        window.minsize(900, 400)
+        window.columnconfigure(0, weight=1)
+        window.rowconfigure(1, weight=1)
 
         header = ttk.Label(window, text="ACK列をクリックして確認済みをトグルできます。")
-        header.pack(side=tk.TOP, anchor="w", padx=8, pady=(8, 4))
+        header.grid(row=0, column=0, sticky="w", padx=8, pady=(8, 4))
 
         columns = ["ack", "kind", "target_month", "asof_date", "severity", "path", "message"]
         headings = {
@@ -1100,11 +1103,16 @@ class BookingCurveApp(tk.Tk):
             "message": "message",
         }
 
-        tree = ttk.Treeview(window, columns=columns, show="headings", selectmode="browse")
-        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(8, 0), pady=8)
+        tree_frame = ttk.Frame(window)
+        tree_frame.grid(row=1, column=0, sticky="nsew", padx=8, pady=8)
+        tree_frame.rowconfigure(0, weight=1)
+        tree_frame.columnconfigure(0, weight=1)
 
-        scrollbar = ttk.Scrollbar(window, orient="vertical", command=tree.yview)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 8), pady=8)
+        tree = ttk.Treeview(tree_frame, columns=columns, show="headings", selectmode="browse")
+        tree.grid(row=0, column=0, sticky="nsew")
+
+        scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns", padx=(4, 0))
         tree.configure(yscrollcommand=scrollbar.set)
 
         for col in columns:
@@ -1114,18 +1122,23 @@ class BookingCurveApp(tk.Tk):
                 width = 280 if col == "path" else 320
             tree.column(col, width=width, anchor="w")
 
+        def safe_cell(value: object) -> str:
+            if value is None or pd.isna(value):
+                return ""
+            return str(value)
+
         item_to_key: dict[str, str] = {}
         for _, row in df_report.iterrows():
             ack_key = build_ack_key_from_row(row)
             ack_mark = "✓" if ack_key in ack_keys else ""
             values = [
                 ack_mark,
-                row.get("kind", ""),
-                row.get("target_month", ""),
-                row.get("asof_date", ""),
-                row.get("severity", ""),
-                row.get("path", ""),
-                row.get("message", ""),
+                safe_cell(row.get("kind", "")),
+                safe_cell(row.get("target_month", "")),
+                safe_cell(row.get("asof_date", "")),
+                safe_cell(row.get("severity", "")),
+                safe_cell(row.get("path", "")),
+                safe_cell(row.get("message", "")),
             ]
             item_id = tree.insert("", "end", values=values)
             item_to_key[item_id] = ack_key
@@ -1146,7 +1159,7 @@ class BookingCurveApp(tk.Tk):
         tree.bind("<Button-1>", on_toggle_ack)
 
         button_frame = ttk.Frame(window)
-        button_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=8, pady=(0, 8))
+        button_frame.grid(row=2, column=0, sticky="e", padx=8, pady=(0, 8))
 
         def on_save_ack() -> None:
             acked_keys: set[str] = set()

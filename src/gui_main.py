@@ -1080,7 +1080,7 @@ class BookingCurveApp(tk.Tk):
             return
 
         ack_df = load_missing_ack_df(hotel_tag)
-        ack_keys = {build_ack_key_from_row(row) for _, row in ack_df.iterrows()}
+        acked_keys_state = {build_ack_key_from_row(row) for _, row in ack_df.iterrows()}
 
         window = tk.Toplevel(self)
         window.title(f"欠損一覧（運用） - {hotel_tag}")
@@ -1089,8 +1089,20 @@ class BookingCurveApp(tk.Tk):
         window.columnconfigure(0, weight=1)
         window.rowconfigure(1, weight=1)
 
-        header = ttk.Label(window, text="ACK列をクリックして確認済みをトグルできます。")
-        header.grid(row=0, column=0, sticky="w", padx=8, pady=(8, 4))
+        header_frame = ttk.Frame(window)
+        header_frame.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
+        header_frame.columnconfigure(1, weight=1)
+
+        header = ttk.Label(header_frame, text="ACK列をクリックして確認済みをトグルできます。")
+        header.grid(row=0, column=0, sticky="w")
+
+        hide_acked_var = tk.BooleanVar(value=True)
+        hide_acked_check = ttk.Checkbutton(
+            header_frame,
+            text="ACK済を非表示",
+            variable=hide_acked_var,
+        )
+        hide_acked_check.grid(row=0, column=1, sticky="e")
 
         columns = ["ack", "kind", "target_month", "asof_date", "severity", "path", "message"]
         headings = {
@@ -1128,20 +1140,35 @@ class BookingCurveApp(tk.Tk):
             return str(value)
 
         item_to_key: dict[str, str] = {}
-        for _, row in df_report.iterrows():
-            ack_key = build_ack_key_from_row(row)
-            ack_mark = "✓" if ack_key in ack_keys else ""
-            values = [
-                ack_mark,
-                safe_cell(row.get("kind", "")),
-                safe_cell(row.get("target_month", "")),
-                safe_cell(row.get("asof_date", "")),
-                safe_cell(row.get("severity", "")),
-                safe_cell(row.get("path", "")),
-                safe_cell(row.get("message", "")),
-            ]
-            item_id = tree.insert("", "end", values=values)
-            item_to_key[item_id] = ack_key
+
+        def refresh_tree() -> None:
+            nonlocal item_to_key
+            children = tree.get_children()
+            if children:
+                tree.delete(*children)
+            item_to_key = {}
+            for _, row in df_report.iterrows():
+                ack_key = build_ack_key_from_row(row)
+                if hide_acked_var.get() and ack_key in acked_keys_state:
+                    continue
+                ack_mark = "✓" if ack_key in acked_keys_state else ""
+                values = [
+                    ack_mark,
+                    safe_cell(row.get("kind", "")),
+                    safe_cell(row.get("target_month", "")),
+                    safe_cell(row.get("asof_date", "")),
+                    safe_cell(row.get("severity", "")),
+                    safe_cell(row.get("path", "")),
+                    safe_cell(row.get("message", "")),
+                ]
+                item_id = tree.insert("", "end", values=values)
+                item_to_key[item_id] = ack_key
+
+        def on_toggle_hide_acked() -> None:
+            refresh_tree()
+
+        hide_acked_check.configure(command=on_toggle_hide_acked)
+        refresh_tree()
 
         def on_toggle_ack(event: tk.Event) -> None:
             region = tree.identify("region", event.x, event.y)
@@ -1153,8 +1180,14 @@ class BookingCurveApp(tk.Tk):
             item_id = tree.identify_row(event.y)
             if not item_id:
                 return
-            current = tree.set(item_id, "ack")
-            tree.set(item_id, "ack", "" if current else "✓")
+            ack_key = item_to_key.get(item_id)
+            if not ack_key:
+                return
+            if ack_key in acked_keys_state:
+                acked_keys_state.remove(ack_key)
+            else:
+                acked_keys_state.add(ack_key)
+            refresh_tree()
 
         tree.bind("<Button-1>", on_toggle_ack)
 
@@ -1162,15 +1195,8 @@ class BookingCurveApp(tk.Tk):
         button_frame.grid(row=2, column=0, sticky="e", padx=8, pady=(0, 8))
 
         def on_save_ack() -> None:
-            acked_keys: set[str] = set()
-            for item_id in tree.get_children():
-                if tree.set(item_id, "ack") == "✓":
-                    key = item_to_key.get(item_id)
-                    if key:
-                        acked_keys.add(key)
-
             existing_df = load_missing_ack_df(hotel_tag)
-            updated_df = update_missing_ack_df(existing_df, df_report, acked_keys)
+            updated_df = update_missing_ack_df(existing_df, df_report, acked_keys_state)
             try:
                 write_missing_ack_df(hotel_tag, updated_df)
             except Exception as exc:  # noqa: BLE001
@@ -1178,6 +1204,7 @@ class BookingCurveApp(tk.Tk):
                 return
 
             self._update_master_missing_check_status(report_path)
+            refresh_tree()
             messagebox.showinfo("保存完了", "ACKを保存しました。")
 
         ttk.Button(button_frame, text="保存", command=on_save_ack).pack(side=tk.RIGHT, padx=4)

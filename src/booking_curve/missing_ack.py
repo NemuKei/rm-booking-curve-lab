@@ -72,10 +72,7 @@ def load_missing_ack_set(hotel_id: str, output_dir: Path | str = OUTPUT_DIR) -> 
     df = load_missing_ack_df(hotel_id, output_dir=output_dir)
     if df.empty:
         return set()
-    return {
-        build_ack_key(row["kind"], row["target_month"], row["asof_date"], row["path"])
-        for _, row in df.iterrows()
-    }
+    return {build_ack_key(row["kind"], row["target_month"], row["asof_date"], row["path"]) for _, row in df.iterrows()}
 
 
 def filter_missing_report_with_ack(
@@ -115,10 +112,7 @@ def update_missing_ack_df(
             report_subset[col] = ""
     report_subset["_ack_key"] = report_subset.apply(build_ack_key_from_row, axis=1)
 
-    existing_keys = {
-        build_ack_key(row["kind"], row["target_month"], row["asof_date"], row["path"])
-        for _, row in base_df.iterrows()
-    }
+    existing_keys = {build_ack_key(row["kind"], row["target_month"], row["asof_date"], row["path"]) for _, row in base_df.iterrows()}
     report_keys = set(report_subset["_ack_key"].tolist())
 
     preserved_rows = base_df[~base_df.apply(build_ack_key_from_row, axis=1).isin(report_keys)]
@@ -128,13 +122,8 @@ def update_missing_ack_df(
         updated = preserved_rows.copy()
         return _normalize_ack_df(updated)
 
-    existing_map = {
-        build_ack_key(row["kind"], row["target_month"], row["asof_date"], row["path"]): row["acked_at"]
-        for _, row in base_df.iterrows()
-    }
-    acked_rows["acked_at"] = [
-        existing_map.get(key, acked_at_value) for key in acked_rows["_ack_key"].tolist()
-    ]
+    existing_map = {build_ack_key(row["kind"], row["target_month"], row["asof_date"], row["path"]): row["acked_at"] for _, row in base_df.iterrows()}
+    acked_rows["acked_at"] = [existing_map.get(key, acked_at_value) for key in acked_rows["_ack_key"].tolist()]
 
     updated = pd.concat(
         [

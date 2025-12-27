@@ -53,7 +53,6 @@ from booking_curve.gui_backend import (
     run_missing_audit_for_gui,
     run_missing_check_for_gui,
 )
-from booking_curve.plot_booking_curve import LEAD_TIME_PITCHES
 from booking_curve.missing_ack import (
     build_ack_key_from_row,
     filter_missing_report_with_ack,
@@ -62,6 +61,7 @@ from booking_curve.missing_ack import (
     update_missing_ack_df,
     write_missing_ack_df,
 )
+from booking_curve.plot_booking_curve import LEAD_TIME_PITCHES
 from build_daily_snapshots_from_folder import (
     DEFAULT_FULL_ALL_RATE,
     LOGS_DIR,
@@ -231,10 +231,7 @@ class BookingCurveApp(tk.Tk):
             raw_missing_target_months: list[str] = []
         else:
             raw_missing_target_months = sorted(
-                {
-                    str(value)
-                    for value in raw_missing_targets[raw_missing_mask & (raw_missing_dates == asof_max_ts)].dropna().unique()
-                },
+                {str(value) for value in raw_missing_targets[raw_missing_mask & (raw_missing_dates == asof_max_ts)].dropna().unique()},
             )
 
         asof_missing_mask = kind_series == "asof_missing"
@@ -254,9 +251,7 @@ class BookingCurveApp(tk.Tk):
             {
                 date_value.strftime("%Y-%m-%d")
                 for date_value in asof_missing_dates[asof_missing_mask]
-                if not pd.isna(date_value)
-                and date_value >= asof_min_ts
-                and date_value <= asof_max_ts
+                if not pd.isna(date_value) and date_value >= asof_min_ts and date_value <= asof_max_ts
             },
         )
         signature_payload = json.dumps(
@@ -1085,10 +1080,7 @@ class BookingCurveApp(tk.Tk):
             return
 
         ack_df = load_missing_ack_df(hotel_tag)
-        ack_keys = {
-            build_ack_key_from_row(row)
-            for _, row in ack_df.iterrows()
-        }
+        ack_keys = {build_ack_key_from_row(row) for _, row in ack_df.iterrows()}
 
         window = tk.Toplevel(self)
         window.title(f"欠損一覧（運用） - {hotel_tag}")

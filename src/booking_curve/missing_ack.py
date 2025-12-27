@@ -147,10 +147,20 @@ def update_missing_ack_df(
     return _normalize_ack_df(updated)
 
 
-def write_missing_ack_df(df: pd.DataFrame, path: Path) -> None:
+def _write_missing_ack_df(df: pd.DataFrame, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     df_out = _normalize_ack_df(df)
-    df_out.to_csv(path, index=False)
+    df_out.to_csv(path, index=False, encoding="utf-8-sig")
+
+
+def write_missing_ack_df(
+    hotel_id: str,
+    df: pd.DataFrame,
+    output_dir: Path | str = OUTPUT_DIR,
+) -> Path:
+    path = get_missing_ack_path(hotel_id, output_dir)
+    _write_missing_ack_df(df, path)
+    return path
 
 
 def _coerce_iterable(values: Iterable[str] | None) -> set[str]:
@@ -169,7 +179,7 @@ def write_missing_ack_df_from_keys(
 ) -> None:
     acked_keys_set = _coerce_iterable(acked_keys)
     if not acked_keys_set:
-        write_missing_ack_df(pd.DataFrame(columns=ACK_COLUMNS), get_missing_ack_path(hotel_id, output_dir))
+        write_missing_ack_df(hotel_id, pd.DataFrame(columns=ACK_COLUMNS), output_dir)
         return
 
     severity_set = _coerce_iterable(severities) or {"ERROR", "WARN"}
@@ -192,4 +202,4 @@ def write_missing_ack_df_from_keys(
             }
         )
     df = pd.DataFrame(rows, columns=ACK_COLUMNS)
-    write_missing_ack_df(df, get_missing_ack_path(hotel_id, output_dir))
+    write_missing_ack_df(hotel_id, df, output_dir)

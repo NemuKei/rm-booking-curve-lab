@@ -54,6 +54,14 @@ from booking_curve.gui_backend import (
     run_missing_check_for_gui,
 )
 from booking_curve.plot_booking_curve import LEAD_TIME_PITCHES
+from booking_curve.missing_ack import (
+    build_ack_key_from_row,
+    filter_missing_report_with_ack,
+    load_missing_ack_df,
+    load_missing_ack_set,
+    update_missing_ack_df,
+    write_missing_ack_df,
+)
 from build_daily_snapshots_from_folder import (
     DEFAULT_FULL_ALL_RATE,
     LOGS_DIR,
@@ -696,6 +704,11 @@ class BookingCurveApp(tk.Tk):
         ).grid(row=3, column=0, padx=4, pady=4, sticky="w")
         ttk.Button(
             advanced_frame,
+            text="欠損一覧（運用）",
+            command=self._on_open_missing_ops_list,
+        ).grid(row=3, column=1, padx=4, pady=4, sticky="w")
+        ttk.Button(
+            advanced_frame,
             text="欠損監査（全期間）",
             command=self._on_run_missing_audit,
         ).grid(row=4, column=0, padx=4, pady=4, sticky="w")
@@ -882,7 +895,11 @@ class BookingCurveApp(tk.Tk):
             self._set_master_missing_check_status("欠損検査：状態不明（CSV読込失敗）", "#EF6C00")
             return
 
-        severity_series = df.get("severity", pd.Series([], dtype=str)).fillna("")
+        hotel_tag = self.hotel_var.get().strip()
+        ack_set = load_missing_ack_set(hotel_tag) if hotel_tag else set()
+        filtered_df = filter_missing_report_with_ack(df, ack_set)
+
+        severity_series = filtered_df.get("severity", pd.Series([], dtype=str)).fillna("")
         error_count = int((severity_series == "ERROR").sum())
         warn_count = int((severity_series == "WARN").sum())
 
@@ -894,7 +911,6 @@ class BookingCurveApp(tk.Tk):
 
         text = f"欠損検査：最終実施 {last_run_text}（ERROR:{error_count} / WARN:{warn_count}）"
 
-        hotel_tag = self.hotel_var.get().strip()
         snapshots_path = OUTPUT_DIR / f"daily_snapshots_{hotel_tag}.csv" if hotel_tag else None
         needs_rerun = False
         if snapshots_path is not None and snapshots_path.exists():
@@ -1025,7 +1041,10 @@ class BookingCurveApp(tk.Tk):
         if df.empty or "kind" not in df.columns:
             return
 
-        severity_series = df.get("severity", pd.Series([], dtype=str)).fillna("")
+        hotel_tag = self.hotel_var.get().strip()
+        ack_set = load_missing_ack_set(hotel_tag) if hotel_tag else set()
+        filtered_df = filter_missing_report_with_ack(df, ack_set)
+        severity_series = filtered_df.get("severity", pd.Series([], dtype=str)).fillna("")
         error_count = int((severity_series == "ERROR").sum())
         warn_count = int((severity_series == "WARN").sum())
 
@@ -1036,6 +1055,128 @@ class BookingCurveApp(tk.Tk):
         msg_lines.append(f"ERROR: {error_count} 件 / WARN: {warn_count} 件")
         msg_lines.append("詳細は欠損レポートをご確認ください。")
         messagebox.showwarning("警告", "\n".join(msg_lines))
+
+    def _on_open_missing_ops_list(self) -> None:
+        hotel_tag = self.hotel_var.get().strip()
+        if not hotel_tag:
+            messagebox.showerror("エラー", "ホテルが選択されていません。")
+            return
+
+        report_path = OUTPUT_DIR / f"missing_report_{hotel_tag}_ops.csv"
+        if not report_path.exists():
+            messagebox.showerror("エラー", "欠損レポートが見つかりません。先に欠損チェックを実行してください。")
+            return
+
+        try:
+            df_report = pd.read_csv(report_path, dtype=str)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("エラー", f"欠損レポートの読み込みに失敗しました。\n{exc}")
+            return
+
+        if df_report.empty:
+            messagebox.showinfo("欠損一覧（運用）", "欠損レポートに表示対象の行がありません。")
+            return
+
+        df_report["severity"] = df_report.get("severity", "").fillna("")
+        df_report = df_report[df_report["severity"].isin(["ERROR", "WARN"])].copy()
+
+        if df_report.empty:
+            messagebox.showinfo("欠損一覧（運用）", "ERROR/WARN の欠損がありません。")
+            return
+
+        ack_df = load_missing_ack_df(hotel_tag)
+        ack_keys = {
+            build_ack_key_from_row(row)
+            for _, row in ack_df.iterrows()
+        }
+
+        window = tk.Toplevel(self)
+        window.title(f"欠損一覧（運用） - {hotel_tag}")
+        window.geometry("1100x600")
+
+        header = ttk.Label(window, text="ACK列をクリックして確認済みをトグルできます。")
+        header.pack(side=tk.TOP, anchor="w", padx=8, pady=(8, 4))
+
+        columns = ["ack", "kind", "target_month", "asof_date", "severity", "path", "message"]
+        headings = {
+            "ack": "ACK",
+            "kind": "kind",
+            "target_month": "target_month",
+            "asof_date": "asof_date",
+            "severity": "severity",
+            "path": "path",
+            "message": "message",
+        }
+
+        tree = ttk.Treeview(window, columns=columns, show="headings", selectmode="browse")
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(8, 0), pady=8)
+
+        scrollbar = ttk.Scrollbar(window, orient="vertical", command=tree.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 8), pady=8)
+        tree.configure(yscrollcommand=scrollbar.set)
+
+        for col in columns:
+            tree.heading(col, text=headings.get(col, col))
+            width = 60 if col == "ack" else 120
+            if col in {"path", "message"}:
+                width = 280 if col == "path" else 320
+            tree.column(col, width=width, anchor="w")
+
+        item_to_key: dict[str, str] = {}
+        for _, row in df_report.iterrows():
+            ack_key = build_ack_key_from_row(row)
+            ack_mark = "✓" if ack_key in ack_keys else ""
+            values = [
+                ack_mark,
+                row.get("kind", ""),
+                row.get("target_month", ""),
+                row.get("asof_date", ""),
+                row.get("severity", ""),
+                row.get("path", ""),
+                row.get("message", ""),
+            ]
+            item_id = tree.insert("", "end", values=values)
+            item_to_key[item_id] = ack_key
+
+        def on_toggle_ack(event: tk.Event) -> None:
+            region = tree.identify("region", event.x, event.y)
+            if region != "cell":
+                return
+            col = tree.identify_column(event.x)
+            if col != "#1":
+                return
+            item_id = tree.identify_row(event.y)
+            if not item_id:
+                return
+            current = tree.set(item_id, "ack")
+            tree.set(item_id, "ack", "" if current else "✓")
+
+        tree.bind("<Button-1>", on_toggle_ack)
+
+        button_frame = ttk.Frame(window)
+        button_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=8, pady=(0, 8))
+
+        def on_save_ack() -> None:
+            acked_keys: set[str] = set()
+            for item_id in tree.get_children():
+                if tree.set(item_id, "ack") == "✓":
+                    key = item_to_key.get(item_id)
+                    if key:
+                        acked_keys.add(key)
+
+            existing_df = load_missing_ack_df(hotel_tag)
+            updated_df = update_missing_ack_df(existing_df, df_report, acked_keys)
+            try:
+                write_missing_ack_df(hotel_tag, updated_df)
+            except Exception as exc:  # noqa: BLE001
+                messagebox.showerror("保存失敗", f"ACKの保存に失敗しました。\n{exc}")
+                return
+
+            self._update_master_missing_check_status(report_path)
+            messagebox.showinfo("保存完了", "ACKを保存しました。")
+
+        ttk.Button(button_frame, text="保存", command=on_save_ack).pack(side=tk.RIGHT, padx=4)
+        ttk.Button(button_frame, text="閉じる", command=window.destroy).pack(side=tk.RIGHT, padx=4)
 
     def _load_historical_lt_all_rate(self) -> float | None:
         if not LOGS_DIR.exists():

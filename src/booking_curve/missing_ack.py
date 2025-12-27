@@ -15,7 +15,8 @@ ACK_COLUMNS = ["kind", "target_month", "asof_date", "path", "acked_at", "severit
 
 
 def get_missing_ack_path(hotel_id: str, output_dir: Path | str = OUTPUT_DIR) -> Path:
-    return Path(output_dir) / f"missing_ack_{hotel_id}_ops.csv"
+    output_dir = Path(output_dir)
+    return output_dir / f"missing_ack_{hotel_id}_ops.csv"
 
 
 def _stringify(value: object) -> str:
@@ -23,23 +24,21 @@ def _stringify(value: object) -> str:
         return ""
     if isinstance(value, float) and pd.isna(value):
         return ""
-    if isinstance(value, pd.Timestamp) and pd.isna(value):
-        return ""
     return str(value)
 
 
 def build_ack_key(kind: object, target_month: object, asof_date: object, path: object) -> str:
-    return "||".join(
+    return "|".join(
         [
             _stringify(kind).strip(),
             _stringify(target_month).strip(),
             _stringify(asof_date).strip(),
             _stringify(path).strip(),
-        ],
+        ]
     )
 
 
-def build_ack_key_from_row(row: dict[str, object] | pd.Series) -> str:
+def build_ack_key_from_row(row: pd.Series) -> str:
     return build_ack_key(
         row.get("kind"),
         row.get("target_month"),
@@ -59,39 +58,51 @@ def _normalize_ack_df(df: pd.DataFrame) -> pd.DataFrame:
 def load_missing_ack_df(hotel_id: str, output_dir: Path | str = OUTPUT_DIR) -> pd.DataFrame:
     path = get_missing_ack_path(hotel_id, output_dir=output_dir)
     if not path.exists():
-        return pd.DataFrame(columns=ACK_COLUMNS)
+        return _normalize_ack_df(pd.DataFrame(columns=ACK_COLUMNS))
     try:
         df = pd.read_csv(path, dtype=str)
-    except Exception as exc:
-        logger.warning("missing_ack: failed to read %s: %s", path, exc)
-        return pd.DataFrame(columns=ACK_COLUMNS)
-    return _normalize_ack_df(df)
+        return _normalize_ack_df(df)
+    except Exception:
+        logger.exception("Failed to read missing ack file: %s", path)
+        return _normalize_ack_df(pd.DataFrame(columns=ACK_COLUMNS))
 
 
 def load_missing_ack_set(hotel_id: str, output_dir: Path | str = OUTPUT_DIR) -> set[str]:
     df = load_missing_ack_df(hotel_id, output_dir=output_dir)
     if df.empty:
         return set()
-    return {build_ack_key(row["kind"], row["target_month"], row["asof_date"], row["path"]) for _, row in df.iterrows()}
+    keys = df.apply(build_ack_key_from_row, axis=1).tolist()
+    return {k for k in keys if k}
 
 
 def filter_missing_report_with_ack(
     report_df: pd.DataFrame,
-    ack_set: Iterable[str],
+    acked_keys: set[str],
     *,
     severities: tuple[str, ...] = ("ERROR", "WARN"),
 ) -> pd.DataFrame:
-    if report_df.empty:
+    if report_df.empty or not acked_keys:
         return report_df
 
-    ack_keys = set(ack_set)
     df = report_df.copy()
-    df["severity"] = df.get("severity", "").fillna("")
-    df["_ack_key"] = df.apply(build_ack_key_from_row, axis=1)
-    severity_mask = df["severity"].isin(severities)
-    acked_mask = df["_ack_key"].isin(ack_keys)
-    filtered = df[~(severity_mask & acked_mask)].copy()
-    return filtered.drop(columns=["_ack_key"])
+    if "severity" not in df.columns:
+        return report_df
+
+    target_mask = df["severity"].isin(severities)
+    if not target_mask.any():
+        return report_df
+
+    subset = df.loc[target_mask].copy()
+    for col in ["kind", "target_month", "asof_date", "path"]:
+        if col not in subset.columns:
+            subset[col] = ""
+    subset["_ack_key"] = subset.apply(build_ack_key_from_row, axis=1)
+
+    keep_mask = ~subset["_ack_key"].isin(acked_keys)
+    kept_subset = subset.loc[keep_mask].drop(columns=["_ack_key"])
+    non_target = df.loc[~target_mask]
+
+    return pd.concat([non_target, kept_subset], ignore_index=True)
 
 
 def update_missing_ack_df(
@@ -112,7 +123,6 @@ def update_missing_ack_df(
             report_subset[col] = ""
     report_subset["_ack_key"] = report_subset.apply(build_ack_key_from_row, axis=1)
 
-    existing_keys = {build_ack_key(row["kind"], row["target_month"], row["asof_date"], row["path"]) for _, row in base_df.iterrows()}
     report_keys = set(report_subset["_ack_key"].tolist())
 
     preserved_rows = base_df[~base_df.apply(build_ack_key_from_row, axis=1).isin(report_keys)]
@@ -137,13 +147,49 @@ def update_missing_ack_df(
     return _normalize_ack_df(updated)
 
 
-def write_missing_ack_df(
-    hotel_id: str,
-    df: pd.DataFrame,
-    output_dir: Path | str = OUTPUT_DIR,
-) -> Path:
-    path = get_missing_ack_path(hotel_id, output_dir=output_dir)
+def write_missing_ack_df(df: pd.DataFrame, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    df_to_save = _normalize_ack_df(df)
-    df_to_save.to_csv(path, index=False, encoding="utf-8-sig")
-    return path
+    df_out = _normalize_ack_df(df)
+    df_out.to_csv(path, index=False)
+
+
+def _coerce_iterable(values: Iterable[str] | None) -> set[str]:
+    if not values:
+        return set()
+    return {str(v) for v in values if str(v).strip()}
+
+
+def write_missing_ack_df_from_keys(
+    hotel_id: str,
+    acked_keys: Iterable[str],
+    *,
+    output_dir: Path | str = OUTPUT_DIR,
+    acked_at: str | None = None,
+    severities: Iterable[str] | None = None,
+) -> None:
+    acked_keys_set = _coerce_iterable(acked_keys)
+    if not acked_keys_set:
+        write_missing_ack_df(pd.DataFrame(columns=ACK_COLUMNS), get_missing_ack_path(hotel_id, output_dir))
+        return
+
+    severity_set = _coerce_iterable(severities) or {"ERROR", "WARN"}
+    acked_at_value = acked_at or datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    rows = []
+    for key in acked_keys_set:
+        parts = key.split("|")
+        if len(parts) != 4:
+            continue
+        kind, target_month, asof_date, path = parts
+        rows.append(
+            {
+                "kind": kind,
+                "target_month": target_month,
+                "asof_date": asof_date,
+                "path": path,
+                "acked_at": acked_at_value,
+                "severity": next(iter(severity_set)),
+            }
+        )
+    df = pd.DataFrame(rows, columns=ACK_COLUMNS)
+    write_missing_ack_df(df, get_missing_ack_path(hotel_id, output_dir))

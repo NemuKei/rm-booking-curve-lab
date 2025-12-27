@@ -375,6 +375,15 @@ GUI の「モデル評価」タブは、このサマリをベースに
 
 を表示・比較する用途で使います。
 
+補足（GUI表示の派生列）：
+
+- GUI の「モデル評価」タブでは、`evaluation_*_detail.csv` から
+  - `rmse_pct`（RMSE%）
+  - `n_samples`（ASOF数）
+  を算出して表示する。
+- `evaluation_*_multi.csv` 自体には、現状この2列は含めない（将来、出力列として追加する余地はある）。
+
+
 ---
 
 ### 3-2. 日別誤差テーブル：`daily_errors_<hotel>.csv`

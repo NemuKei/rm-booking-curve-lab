@@ -182,7 +182,7 @@
 
 「1レコード = 1 target_month × 1 model × 1 ASOF」という形で `evaluation_*_detail.csv` に蓄積する。
 
-### 4.3 モデルごとの集計値（mean_error_pct / mae_pct）
+### 4.3 モデルごとの集計値（mean_error_pct / mae_pct / rmse_pct / n_samples）
 
 `evaluation_*_multi.csv` では、ASOF を跨いでモデルごとに集約する。
 
@@ -209,6 +209,12 @@
       \frac{1}{n} \sum_{\text{ASOF}} \left| \text{error\_pct}^{(m)} \right|
     \]
 
+  - RMSE（％）  
+    \[
+      \text{rmse\_pct} =
+      \sqrt{\frac{1}{n} \sum_{\text{ASOF}} \left(\text{error\_pct}^{(m)}\right)^2}
+    \]
+
 本書および README では、これらを以下のように読み替える：
 
 - `mean_error_pct` … **モデルのバイアス / MPE** として解釈する  
@@ -216,6 +222,10 @@
   - 負なら「平均して守り気味（過小予測）」
 - `mae_pct` … **MAPE** として解釈する  
   - 「平均して何％くらい外れているか」を表す。
+- `rmse_pct` … **RMSE（%）** として解釈する  
+  - 大きな外しにやや敏感な「平均的な外れ具合」。
+- `n_samples` … **評価に使った ASOF 数**  
+  - ASOFが少ない月の指標は信頼性が下がる。
 
 ---
 

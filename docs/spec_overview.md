@@ -234,15 +234,15 @@ PMS 生データを正規化し、ホテル共通で扱える形として定義�
 
 今後、機能追加や外部仕様の変更が入る際には、以下のルールでドキュメントを更新する。
 
-- 新しいデータレイヤや中間ファイルを追加した場合：
-  - `spec_data_layer.md` と本書（`spec_overview.md`）を両方更新する。
-- モデルロジック（avg / recent90 / recent90w 等）の定義を変更した場合：
-  - `spec_models.md`（将来追加）と本書を更新する。
+- 仕様の唯一の正（外部仕様・ロジック定義）：
+  - `docs/spec_overview.md`
+  - `docs/spec_data_layer.md`
+  - `docs/spec_models.md`
+  - `docs/spec_evaluation.md`
+- AI運用ルールの唯一の正：
+  - `AGENTS.md`
+- 計画（実装状況と混同しない）：
+  - `docs/roadmap.md`
+  - `docs/tasks_backlog.md`
 
-役割の整理：
-
-- 利用者向けの操作説明・FAQ：`BookingCurveLab_README.txt`
-- 開発者・AI エージェント向けの運用ルール：`AGENTS.md`
-- 仕様の上位整理：本書 `spec_overview.md`
-- データ構造の詳細：`spec_data_layer.md`
 

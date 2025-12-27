@@ -182,7 +182,7 @@
 
 「1レコード = 1 target_month × 1 model × 1 ASOF」という形で `evaluation_*_detail.csv` に蓄積する。
 
-### 4.3 モデルごとの集計値（mean_error_pct / mae_pct / rmse_pct / n_samples）
+### 4.3 モデルごとの集計値（mean_error_pct / mae_pct）
 
 `evaluation_*_multi.csv` では、ASOF を跨いでモデルごとに集約する。
 
@@ -199,21 +199,21 @@
 
   - 平均誤差率（％）  
     \[
-      \text{mean\_error\_pct} =
-      \frac{1}{n} \sum_{\text{ASOF}} \text{error\_pct}^{(m)}
+      \text{mean\_error\_pct} = \frac{1}{n}\sum_{\text{ASOF}} \text{error\_pct}^{(m)}
     \]
 
-  - 絶対誤差率平均（％）  
+  - 絶対誤差率の平均（％）  
     \[
-      \text{mae\_pct} =
-      \frac{1}{n} \sum_{\text{ASOF}} \left| \text{error\_pct}^{(m)} \right|
+      \text{mae\_pct} = \frac{1}{n}\sum_{\text{ASOF}} \left|\text{error\_pct}^{(m)}\right|
     \]
 
-  - RMSE（％）  
-    \[
-      \text{rmse\_pct} =
-      \sqrt{\frac{1}{n} \sum_{\text{ASOF}} \left(\text{error\_pct}^{(m)}\right)^2}
-    \]
+補足（GUI表示での派生値）：
+
+- 現状の `evaluation_*_multi.csv` には `rmse_pct` / `n_samples` を **出力列としては持たない**。
+- GUI では、`evaluation_*_detail.csv`（ASOF明細）から `rmse_pct` / `n_samples` を計算して表示することがある。
+  - `rmse_pct` は誤差率ベースの RMSE（%）相当（`sqrt(mean(error_pct^2))`）
+  - `n_samples` は集計に使った ASOF 数
+- これらは **仕様として固定しきらず**、売上予測も含めた評価設計の再考フェーズで整理する。
 
 本書および README では、これらを以下のように読み替える：
 
@@ -222,10 +222,6 @@
   - 負なら「平均して守り気味（過小予測）」
 - `mae_pct` … **MAPE** として解釈する  
   - 「平均して何％くらい外れているか」を表す。
-- `rmse_pct` … **RMSE（%）** として解釈する  
-  - 大きな外しにやや敏感な「平均的な外れ具合」。
-- `n_samples` … **評価に使った ASOF 数**  
-  - ASOFが少ない月の指標は信頼性が下がる。
 
 ---
 

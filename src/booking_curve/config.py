@@ -95,6 +95,20 @@ REQUIRED_HOTEL_KEYS = (
 LOCAL_OVERRIDES_VERSION = 1
 
 LOGGER = logging.getLogger(__name__)
+RUNTIME_INIT_ERRORS: list[str] = []
+STARTUP_INIT_LOG_PATH = LOGS_DIR / "startup_init.log"
+
+
+def _record_runtime_init_error(message: str) -> None:
+    RUNTIME_INIT_ERRORS.append(message)
+    LOGGER.warning(message)
+    try:
+        STARTUP_INIT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with STARTUP_INIT_LOG_PATH.open("a", encoding="utf-8") as handle:
+            handle.write(message + "\n")
+    except OSError:
+        # 起動時の初期化ログが書けなくてもクラッシュはさせない
+        return
 
 
 def _copy_if_missing(src: Path, dst: Path) -> None:
@@ -102,7 +116,7 @@ def _copy_if_missing(src: Path, dst: Path) -> None:
     dst が存在しない場合にのみ、src から dst へファイルをコピーする。
     - src が存在しない場合は何もしない。
     - dst がすでに存在する場合も何もしない（上書き禁止）。
-    - エラーが発生してもツール全体を落とさないように、例外は握りつぶす。
+    - エラーが発生してもツール全体を落とさないように、ログに残して終了する。
     """
     try:
         if not src.exists():
@@ -111,9 +125,10 @@ def _copy_if_missing(src: Path, dst: Path) -> None:
             return
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
-    except Exception:
-        # ログには出さずに黙って失敗する（起動は続行させる）
-        return
+    except Exception as exc:
+        _record_runtime_init_error(
+            f"Failed to copy template file: src={src} dst={dst} error={exc}"
+        )
 
 
 def _initialize_runtime_files() -> None:
@@ -198,9 +213,11 @@ def _write_local_overrides(hotels: dict[str, dict[str, Any]]) -> None:
 
 
 def _resolve_raw_root_dir(hotel_id: str, raw_root_dir: str | Path) -> Path:
-    """Resolve raw_root_dir to an absolute Path using BASE_DIR as the base.
+    """Resolve raw_root_dir to an absolute Path using APP_BASE_DIR as the base.
 
     raw_root_dir resolution is centralized here to keep HOTEL_CONFIG normalized.
+    Relative paths are anchored to APP_BASE_DIR to keep per-device independence
+    even when the executable directory moves.
     """
     try:
         raw_root_path = Path(raw_root_dir)
@@ -210,7 +227,7 @@ def _resolve_raw_root_dir(hotel_id: str, raw_root_dir: str | Path) -> Path:
         ) from exc
 
     if not raw_root_path.is_absolute():
-        raw_root_path = BASE_DIR / raw_root_path
+        raw_root_path = APP_BASE_DIR / raw_root_path
 
     try:
         return raw_root_path.resolve(strict=False)
@@ -298,6 +315,13 @@ def _validate_hotel_config(hotel_id: str, hotel_cfg: dict[str, Any]) -> dict[str
 
 def _load_hotels_json() -> dict[str, Any]:
     if not HOTEL_CONFIG_PATH.exists():
+        init_errors = pop_runtime_init_errors()
+        if init_errors:
+            details = "\n".join(init_errors)
+            raise RuntimeError(
+                f"Hotel config not found: {HOTEL_CONFIG_PATH}\n"
+                f"Startup init errors:\n{details}"
+            )
         raise RuntimeError(f"Hotel config not found: {HOTEL_CONFIG_PATH}")
 
     try:
@@ -359,6 +383,13 @@ def load_hotel_config() -> Dict[str, Dict[str, Any]]:
         validated[hotel_id] = _validate_hotel_config(hotel_id, hotel_cfg)
 
     return validated
+
+
+def pop_runtime_init_errors() -> list[str]:
+    """初期展開エラーを取得し、内部のリストをクリアする。"""
+    errors = list(RUNTIME_INIT_ERRORS)
+    RUNTIME_INIT_ERRORS.clear()
+    return errors
 
 
 def set_local_override_raw_root_dir(hotel_id: str, raw_root_dir: str | Path) -> None:

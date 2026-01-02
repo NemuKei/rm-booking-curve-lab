@@ -29,6 +29,8 @@ except ImportError:  # tkcalendar が無い環境向けフォールバック
 from booking_curve.config import (
     clear_local_override_raw_root_dir,
     get_local_overrides_path,
+    pop_runtime_init_errors,
+    STARTUP_INIT_LOG_PATH,
     set_local_override_raw_root_dir,
 )
 from booking_curve.gui_backend import (
@@ -97,6 +99,14 @@ class BookingCurveApp(tk.Tk):
         super().__init__()
         self.title("Booking Curve Lab GUI")
         self.geometry("1200x900")
+
+        init_errors = pop_runtime_init_errors()
+        if init_errors:
+            details = "\n".join(init_errors)
+            messagebox.showerror(
+                "初期化エラー",
+                f"{details}\n\nログ: {STARTUP_INIT_LOG_PATH}",
+            )
 
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill=tk.BOTH, expand=True)

@@ -12,7 +12,7 @@ import time
 import tkinter as tk
 from datetime import date, datetime
 from pathlib import Path
-from tkinter import messagebox, simpledialog, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Optional
 
 import numpy as np
@@ -52,6 +52,11 @@ from booking_curve.gui_backend import (
     run_import_missing_only,
     run_missing_audit_for_gui,
     run_missing_check_for_gui,
+)
+from booking_curve.config import (
+    clear_local_override_raw_root_dir,
+    get_local_overrides_path,
+    set_local_override_raw_root_dir,
 )
 from booking_curve.missing_ack import (
     build_ack_key_from_row,
@@ -667,6 +672,45 @@ class BookingCurveApp(tk.Tk):
             command=self._on_save_master_daily_caps,
         ).grid(row=0, column=4, padx=12, pady=2, sticky="e")
 
+        # ------- RAW取込元（このPCのみ） -------
+        raw_root_frame = ttk.LabelFrame(frame, text="RAW取込元（このPCのみ）")
+        raw_root_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 8))
+
+        ttk.Label(
+            raw_root_frame,
+            text="この設定はこのPCのみ有効です（hotels.jsonは変更しません）。",
+        ).grid(row=0, column=0, columnspan=3, padx=4, pady=(2, 6), sticky="w")
+
+        ttk.Label(raw_root_frame, text="現在のRAW取込元:").grid(row=1, column=0, sticky="nw", padx=4, pady=2)
+        self.master_raw_root_dir_var = tk.StringVar()
+        self.master_raw_root_dir_label = ttk.Label(
+            raw_root_frame,
+            textvariable=self.master_raw_root_dir_var,
+            wraplength=800,
+            justify="left",
+        )
+        self.master_raw_root_dir_label.grid(row=1, column=1, columnspan=2, padx=4, pady=2, sticky="w")
+
+        ttk.Button(
+            raw_root_frame,
+            text="変更...",
+            command=self._on_change_master_raw_root_dir,
+        ).grid(row=2, column=1, padx=4, pady=4, sticky="w")
+        ttk.Button(
+            raw_root_frame,
+            text="初期値に戻す",
+            command=self._on_clear_master_raw_root_dir,
+        ).grid(row=2, column=2, padx=4, pady=4, sticky="w")
+
+        local_overrides_path = get_local_overrides_path()
+        ttk.Label(
+            raw_root_frame,
+            text=f"ローカル設定ファイル: {local_overrides_path}",
+            foreground="#555555",
+            wraplength=800,
+            justify="left",
+        ).grid(row=3, column=0, columnspan=3, padx=4, pady=(2, 4), sticky="w")
+
         advanced_frame = ttk.LabelFrame(frame, text="Advanced / Daily snapshots")
         advanced_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 8))
 
@@ -724,12 +768,14 @@ class BookingCurveApp(tk.Tk):
         # 初期表示
         self._refresh_calendar_coverage()
         self._refresh_master_daily_caps()
+        self._refresh_master_raw_root_dir()
         self._update_master_missing_check_status()
 
     def _on_hotel_changed(self, event=None) -> None:
         # マスタ設定タブのホテル変更時に、カレンダー範囲とキャパ設定を両方更新
         self._refresh_calendar_coverage()
         self._refresh_master_daily_caps()
+        self._refresh_master_raw_root_dir()
         self._update_master_missing_check_status()
 
     def _on_global_hotel_changed(self, *args) -> None:
@@ -744,6 +790,7 @@ class BookingCurveApp(tk.Tk):
 
         self._refresh_calendar_coverage()
         self._refresh_master_daily_caps()
+        self._refresh_master_raw_root_dir()
         self._update_master_missing_check_status()
 
         if hasattr(self, "df_hotel_var"):
@@ -858,6 +905,57 @@ class BookingCurveApp(tk.Tk):
             self.master_occ_cap_var.set(str(int(occ_cap)))
         except Exception:
             self.master_occ_cap_var.set(str(occ_cap))
+
+    def _refresh_master_raw_root_dir(self) -> None:
+        if not hasattr(self, "master_raw_root_dir_var"):
+            return
+
+        hotel_tag = self.hotel_var.get().strip()
+        if not hotel_tag:
+            self.master_raw_root_dir_var.set("ホテル未選択")
+            return
+
+        cfg = HOTEL_CONFIG.get(hotel_tag, {})
+        raw_root_dir = cfg.get("raw_root_dir") or cfg.get("input_dir")
+        if not raw_root_dir:
+            self.master_raw_root_dir_var.set("未設定")
+            return
+
+        self.master_raw_root_dir_var.set(str(raw_root_dir))
+
+    def _on_change_master_raw_root_dir(self) -> None:
+        hotel_tag = self.hotel_var.get().strip()
+        if not hotel_tag:
+            messagebox.showerror("エラー", "ホテルが選択されていません。")
+            return
+
+        selected_dir = filedialog.askdirectory(title="RAW取込元フォルダを選択")
+        if not selected_dir:
+            return
+
+        try:
+            set_local_override_raw_root_dir(hotel_tag, selected_dir)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("エラー", f"RAW取込元フォルダの変更に失敗しました。\n{exc}")
+            return
+
+        self._refresh_master_raw_root_dir()
+        messagebox.showinfo("完了", "RAW取込元フォルダを更新しました（このPCのみ）。")
+
+    def _on_clear_master_raw_root_dir(self) -> None:
+        hotel_tag = self.hotel_var.get().strip()
+        if not hotel_tag:
+            messagebox.showerror("エラー", "ホテルが選択されていません。")
+            return
+
+        try:
+            clear_local_override_raw_root_dir(hotel_tag)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("エラー", f"RAW取込元フォルダの復帰に失敗しました。\n{exc}")
+            return
+
+        self._refresh_master_raw_root_dir()
+        messagebox.showinfo("完了", "RAW取込元フォルダを初期値に戻しました。")
 
     def _set_master_missing_check_status(self, text: str, color: str) -> None:
         self.master_missing_check_status_var.set(text)

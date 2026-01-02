@@ -27,10 +27,10 @@ except ImportError:  # tkcalendar が無い環境向けフォールバック
 
 # プロジェクト内モジュール
 from booking_curve.config import (
+    STARTUP_INIT_LOG_PATH,
     clear_local_override_raw_root_dir,
     get_local_overrides_path,
     pop_runtime_init_errors,
-    STARTUP_INIT_LOG_PATH,
     set_local_override_raw_root_dir,
 )
 from booking_curve.gui_backend import (

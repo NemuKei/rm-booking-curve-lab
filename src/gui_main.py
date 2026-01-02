@@ -4,7 +4,7 @@ import json
 import logging
 import tkinter as tk
 from datetime import date
-from tkinter import filedialog, messagebox, ttk
+from tkinter import messagebox, ttk
 from typing import Optional
 
 import pandas as pd
@@ -19,7 +19,6 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
 # プロジェクト内モジュール
-from booking_curve import config as booking_config
 from booking_curve.gui_backend import (
     HOTEL_CONFIG,
     OUTPUT_DIR,
@@ -39,11 +38,6 @@ from booking_curve.gui_backend import (
     run_daily_snapshots_for_gui,
     run_forecast_for_gui,
     run_full_evaluation_for_gui_range,
-)
-from booking_curve.config import (
-    clear_local_override_raw_root_dir,
-    get_local_overrides_path,
-    set_local_override_raw_root_dir,
 )
 from booking_curve.plot_booking_curve import LEAD_TIME_PITCHES
 
@@ -506,55 +500,14 @@ class BookingCurveApp(tk.Tk):
             command=self._on_save_master_daily_caps,
         ).grid(row=0, column=4, padx=12, pady=2, sticky="e")
 
-        # ------- RAW取込元フォルダ（端末ローカル） -------
-        raw_frame = ttk.LabelFrame(frame, text="RAW取込元（このPCのみ）")
-        raw_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 8))
-
-        ttk.Label(raw_frame, text="現在の設定:").grid(row=0, column=0, sticky="nw", padx=4, pady=2)
-        self.master_raw_root_var = tk.StringVar()
-        self.master_raw_root_label = ttk.Label(
-            raw_frame,
-            textvariable=self.master_raw_root_var,
-            wraplength=800,
-            justify="left",
-        )
-        self.master_raw_root_label.grid(row=0, column=1, columnspan=3, sticky="w", padx=4, pady=2)
-
-        ttk.Button(
-            raw_frame,
-            text="変更...",
-            command=self._on_change_master_raw_root_dir,
-        ).grid(row=1, column=1, padx=4, pady=2, sticky="w")
-
-        ttk.Button(
-            raw_frame,
-            text="初期値に戻す",
-            command=self._on_reset_master_raw_root_dir,
-        ).grid(row=1, column=2, padx=4, pady=2, sticky="w")
-
-        ttk.Label(
-            raw_frame,
-            text="※この設定は端末ローカルのみで、他PCには影響しません。",
-        ).grid(row=2, column=0, columnspan=4, sticky="w", padx=4, pady=(0, 2))
-
-        overrides_path = get_local_overrides_path()
-        ttk.Label(
-            raw_frame,
-            text=f"保存先: {overrides_path}",
-            wraplength=800,
-            justify="left",
-        ).grid(row=3, column=0, columnspan=4, sticky="w", padx=4, pady=(0, 4))
-
         # 初期表示
         self._refresh_calendar_coverage()
         self._refresh_master_daily_caps()
-        self._refresh_master_raw_root_dir()
 
     def _on_hotel_changed(self, event=None) -> None:
         # マスタ設定タブのホテル変更時に、カレンダー範囲とキャパ設定を両方更新
         self._refresh_calendar_coverage()
         self._refresh_master_daily_caps()
-        self._refresh_master_raw_root_dir()
 
     def _on_global_hotel_changed(self, *args) -> None:
         """
@@ -568,7 +521,6 @@ class BookingCurveApp(tk.Tk):
 
         self._refresh_calendar_coverage()
         self._refresh_master_daily_caps()
-        self._refresh_master_raw_root_dir()
 
         if hasattr(self, "df_hotel_var"):
             fc_cap, occ_cap = self._get_daily_caps_for_hotel(hotel_tag)
@@ -685,22 +637,6 @@ class BookingCurveApp(tk.Tk):
         except Exception:
             self.master_occ_cap_var.set(str(occ_cap))
 
-    def _refresh_master_raw_root_dir(self) -> None:
-        """マスタ設定タブの RAW 取込元フォルダ表示を更新する。"""
-        if not hasattr(self, "master_raw_root_var"):
-            return
-
-        hotel_tag = self.hotel_var.get().strip()
-        if not hotel_tag:
-            self.master_raw_root_var.set("ホテル未選択")
-            return
-
-        raw_root_dir = booking_config.HOTEL_CONFIG.get(hotel_tag, {}).get("raw_root_dir")
-        if raw_root_dir:
-            self.master_raw_root_var.set(str(raw_root_dir))
-        else:
-            self.master_raw_root_var.set("未設定（hotels.json の raw_root_dir を参照）")
-
     def _on_save_master_daily_caps(self) -> None:
         """マスタ設定タブからキャパシティを保存し、関連タブにも反映する。"""
         hotel_tag = self.hotel_var.get().strip()
@@ -730,44 +666,6 @@ class BookingCurveApp(tk.Tk):
             self.bc_forecast_cap_var.set(str(fc_val))
 
         messagebox.showinfo("保存完了", "キャパシティ設定を保存しました。")
-
-    def _on_change_master_raw_root_dir(self) -> None:
-        hotel_tag = self.hotel_var.get().strip()
-        if not hotel_tag:
-            messagebox.showerror("エラー", "ホテルが選択されていません。")
-            return
-
-        current_dir = booking_config.HOTEL_CONFIG.get(hotel_tag, {}).get("raw_root_dir")
-        selected_dir = filedialog.askdirectory(
-            title="RAW取込元フォルダを選択",
-            initialdir=str(current_dir) if current_dir else None,
-        )
-        if not selected_dir:
-            return
-
-        try:
-            set_local_override_raw_root_dir(hotel_tag, selected_dir)
-        except Exception as exc:
-            messagebox.showerror("エラー", f"RAW取込元の変更に失敗しました:\n{exc}")
-            return
-
-        self._refresh_master_raw_root_dir()
-        messagebox.showinfo("完了", "RAW取込元フォルダを変更しました。")
-
-    def _on_reset_master_raw_root_dir(self) -> None:
-        hotel_tag = self.hotel_var.get().strip()
-        if not hotel_tag:
-            messagebox.showerror("エラー", "ホテルが選択されていません。")
-            return
-
-        try:
-            clear_local_override_raw_root_dir(hotel_tag)
-        except Exception as exc:
-            messagebox.showerror("エラー", f"RAW取込元の初期値復帰に失敗しました:\n{exc}")
-            return
-
-        self._refresh_master_raw_root_dir()
-        messagebox.showinfo("完了", "RAW取込元フォルダを初期値に戻しました。")
 
     # =========================
     # 3) 日別フォーキャスト一覧タブ

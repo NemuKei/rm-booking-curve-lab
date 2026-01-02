@@ -27,10 +27,12 @@ except ImportError:  # tkcalendar が無い環境向けフォールバック
 
 # プロジェクト内モジュール
 from booking_curve.config import (
+    CONFIG_DIR,
     STARTUP_INIT_LOG_PATH,
     clear_local_override_raw_root_dir,
     get_local_overrides_path,
     pop_runtime_init_errors,
+    reload_hotel_config_inplace,
     set_local_override_raw_root_dir,
 )
 from booking_curve.gui_backend import (
@@ -176,6 +178,76 @@ class BookingCurveApp(tk.Tk):
 
     def _on_open_output_dir(self) -> None:
         open_file(OUTPUT_DIR)
+
+    def _on_open_config_dir(self) -> None:
+        open_file(CONFIG_DIR)
+
+    def _on_reload_settings_clicked(self) -> None:
+        old_keys = set(HOTEL_CONFIG.keys())
+        try:
+            reload_hotel_config_inplace()
+        except Exception as exc:
+            logging.exception("Failed to reload hotel config")
+            messagebox.showerror(
+                "エラー",
+                f"設定の再読み込みに失敗しました。\n{exc}",
+            )
+            return
+
+        new_keys = list(HOTEL_CONFIG.keys())
+        new_sorted = sorted(new_keys)
+        if old_keys and new_sorted:
+            self._update_hotel_combobox_values(old_keys, new_sorted)
+
+        for var_name in (
+            "hotel_var",
+            "me_hotel_var",
+            "asof_hotel_var",
+            "df_hotel_var",
+            "bc_hotel_var",
+            "mc_hotel_var",
+        ):
+            self._ensure_hotel_var_valid(var_name)
+
+        try:
+            clear_evaluation_detail_cache()
+        except Exception:
+            logging.exception("Failed to clear evaluation detail cache after config reload")
+
+        messagebox.showinfo(
+            "設定の再読み込み",
+            f"hotels.json の再読み込みが完了しました（ホテル数: {len(HOTEL_CONFIG)}）",
+        )
+
+    def _update_hotel_combobox_values(self, old_keys: set[str], new_values: list[str]) -> None:
+        if not old_keys or not new_values:
+            return
+
+        def walk_widgets(widget: tk.Widget) -> list[tk.Widget]:
+            widgets = []
+            for child in widget.winfo_children():
+                widgets.append(child)
+                widgets.extend(walk_widgets(child))
+            return widgets
+
+        for widget in walk_widgets(self):
+            if not isinstance(widget, ttk.Combobox):
+                continue
+            values = widget.cget("values")
+            if not values:
+                continue
+            values_set = set(values)
+            if values_set and values_set.issubset(old_keys):
+                widget["values"] = new_values
+
+    def _ensure_hotel_var_valid(self, var_name: str) -> None:
+        var = getattr(self, var_name, None)
+        if not isinstance(var, tk.StringVar):
+            return
+        current = (var.get() or "").strip()
+        if current and current in HOTEL_CONFIG:
+            return
+        var.set(next(iter(HOTEL_CONFIG.keys()), ""))
 
     def _get_missing_warning_ack(self, hotel_tag: str) -> str | None:
         master = self._settings.get("master_settings") or {}
@@ -740,6 +812,29 @@ class BookingCurveApp(tk.Tk):
             text="出力フォルダを開く",
             command=self._on_open_output_dir,
         ).grid(row=0, column=1, padx=8, pady=2, sticky="w")
+
+        config_frame = ttk.LabelFrame(frame, text="設定フォルダ")
+        config_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 8))
+
+        ttk.Label(
+            config_frame,
+            text=f"設定フォルダ: {CONFIG_DIR}",
+            foreground="#555555",
+            wraplength=800,
+            justify="left",
+        ).grid(row=0, column=0, padx=4, pady=2, sticky="w")
+
+        ttk.Button(
+            config_frame,
+            text="設定フォルダを開く",
+            command=self._on_open_config_dir,
+        ).grid(row=0, column=1, padx=8, pady=2, sticky="w")
+
+        ttk.Button(
+            config_frame,
+            text="設定を再読み込み",
+            command=self._on_reload_settings_clicked,
+        ).grid(row=0, column=2, padx=8, pady=2, sticky="w")
 
         advanced_frame = ttk.LabelFrame(frame, text="Advanced / Daily snapshots")
         advanced_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 8))

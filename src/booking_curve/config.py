@@ -385,6 +385,18 @@ def load_hotel_config() -> Dict[str, Dict[str, Any]]:
     return validated
 
 
+def reload_hotel_config_inplace() -> Dict[str, Dict[str, Any]]:
+    """Reload hotels.json and update HOTEL_CONFIG in place.
+
+    This keeps existing imports intact by clearing and updating the shared dict
+    instead of replacing it.
+    """
+    updated = load_hotel_config()
+    HOTEL_CONFIG.clear()
+    HOTEL_CONFIG.update(updated)
+    return HOTEL_CONFIG
+
+
 def pop_runtime_init_errors() -> list[str]:
     """初期展開エラーを取得し、内部のリストをクリアする。"""
     errors = list(RUNTIME_INIT_ERRORS)

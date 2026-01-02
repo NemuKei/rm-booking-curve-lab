@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -40,6 +42,10 @@ REQUIRED_HOTEL_KEYS = (
     "raw_root_dir",
     "include_subfolders",
 )
+
+LOCAL_OVERRIDES_VERSION = 1
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _get_template_root() -> Path | None:
@@ -107,6 +113,82 @@ def _initialize_runtime_files() -> None:
 
 
 _initialize_runtime_files()
+
+
+def _get_local_overrides_dir() -> Path:
+    """
+    端末ローカルの上書き設定ディレクトリを返す。
+
+    - Windows: %LOCALAPPDATA%/BookingCurveLab
+    - それ以外: ~/.config/BookingCurveLab（なければ ~/.booking_curve_lab）
+    """
+    if sys.platform.startswith("win"):
+        local_app_data = os.getenv("LOCALAPPDATA")
+        if local_app_data:
+            return Path(local_app_data) / "BookingCurveLab"
+
+    home_dir = Path.home()
+    config_root = home_dir / ".config"
+    if config_root.exists():
+        return config_root / "BookingCurveLab"
+
+    return home_dir / ".booking_curve_lab"
+
+
+def get_local_overrides_path() -> Path:
+    """端末ローカルの上書き設定ファイルパスを返す。"""
+    return _get_local_overrides_dir() / "local_overrides.json"
+
+
+def _load_local_overrides() -> dict[str, dict[str, Any]]:
+    overrides_path = get_local_overrides_path()
+    if not overrides_path.exists():
+        return {}
+
+    try:
+        with overrides_path.open("r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except json.JSONDecodeError as exc:
+        LOGGER.warning("Failed to parse local overrides JSON at %s: %s", overrides_path, exc)
+        return {}
+    except OSError as exc:  # pragma: no cover - I/O error boundary
+        LOGGER.warning("Failed to read local overrides at %s: %s", overrides_path, exc)
+        return {}
+
+    if not isinstance(raw, dict):
+        LOGGER.warning("Local overrides JSON must be an object: %s", overrides_path)
+        return {}
+
+    version = raw.get("version")
+    if version not in (None, LOCAL_OVERRIDES_VERSION):
+        LOGGER.warning(
+            "Unsupported local overrides version at %s: %s", overrides_path, version
+        )
+
+    hotels = raw.get("hotels", {})
+    if hotels is None:
+        return {}
+    if not isinstance(hotels, dict):
+        LOGGER.warning("Local overrides 'hotels' must be an object: %s", overrides_path)
+        return {}
+
+    normalized: dict[str, dict[str, Any]] = {}
+    for hotel_id, overrides in hotels.items():
+        if not isinstance(overrides, dict):
+            LOGGER.warning(
+                "Local overrides for hotel_id=%s must be an object: %s", hotel_id, overrides_path
+            )
+            continue
+        normalized[hotel_id] = dict(overrides)
+    return normalized
+
+
+def _write_local_overrides(hotels: dict[str, dict[str, Any]]) -> None:
+    overrides_path = get_local_overrides_path()
+    overrides_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"version": LOCAL_OVERRIDES_VERSION, "hotels": hotels}
+    with overrides_path.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
 
 
 def _resolve_raw_root_dir(hotel_id: str, raw_root_dir: str | Path) -> Path:
@@ -226,6 +308,36 @@ def _load_hotels_json() -> dict[str, Any]:
     return raw
 
 
+def _apply_local_raw_root_overrides(raw_hotels: dict[str, Any]) -> dict[str, Any]:
+    overrides = _load_local_overrides()
+    if not overrides:
+        return raw_hotels
+
+    merged: dict[str, Any] = {}
+    for hotel_id, hotel_cfg in raw_hotels.items():
+        merged_cfg = dict(hotel_cfg)
+        override_cfg = overrides.get(hotel_id)
+        if override_cfg:
+            raw_override = override_cfg.get("raw_root_dir")
+            if raw_override is not None:
+                raw_override_str = str(raw_override).strip()
+                if raw_override_str:
+                    merged_cfg["raw_root_dir"] = raw_override
+                else:
+                    LOGGER.warning(
+                        "Ignoring blank raw_root_dir override for hotel_id=%s", hotel_id
+                    )
+        merged[hotel_id] = merged_cfg
+
+    for hotel_id in overrides:
+        if hotel_id not in raw_hotels:
+            LOGGER.warning(
+                "Ignoring local override for unknown hotel_id=%s", hotel_id
+            )
+
+    return merged
+
+
 def load_hotel_config() -> Dict[str, Dict[str, Any]]:
     """config/hotels.json からホテル設定を読み込み、必須項目を検証する。
 
@@ -234,12 +346,49 @@ def load_hotel_config() -> Dict[str, Dict[str, Any]]:
     - raw_root_dir はこのモジュールで絶対 Path に正規化し、input_dir にも反映する。
     """
     raw = _load_hotels_json()
+    raw = _apply_local_raw_root_overrides(raw)
 
     validated: Dict[str, Dict[str, Any]] = {}
     for hotel_id, hotel_cfg in raw.items():
         validated[hotel_id] = _validate_hotel_config(hotel_id, hotel_cfg)
 
     return validated
+
+
+def set_local_override_raw_root_dir(hotel_id: str, raw_root_dir: str | Path) -> None:
+    """端末ローカルの raw_root_dir 上書きを保存して、HOTEL_CONFIG に反映する。"""
+    raw = _load_hotels_json()
+    if hotel_id not in raw:
+        raise ValueError(f"Unknown hotel_id: {hotel_id}")
+
+    raw_root_dir_str = str(raw_root_dir).strip() if raw_root_dir is not None else ""
+    if not raw_root_dir_str:
+        raise ValueError("raw_root_dir cannot be blank")
+
+    overrides = _load_local_overrides()
+    overrides[hotel_id] = {"raw_root_dir": raw_root_dir_str}
+    _write_local_overrides(overrides)
+
+    raw_root_path = Path(raw_root_dir_str)
+    if not raw_root_path.exists():
+        LOGGER.warning("raw_root_dir does not exist: %s", raw_root_dir_str)
+
+    updated_cfg = dict(raw[hotel_id])
+    updated_cfg["raw_root_dir"] = raw_root_dir_str
+    HOTEL_CONFIG[hotel_id] = _validate_hotel_config(hotel_id, updated_cfg)
+
+
+def clear_local_override_raw_root_dir(hotel_id: str) -> None:
+    """端末ローカルの raw_root_dir 上書きを削除して hotels.json の値に戻す。"""
+    raw = _load_hotels_json()
+    if hotel_id not in raw:
+        raise ValueError(f"Unknown hotel_id: {hotel_id}")
+
+    overrides = _load_local_overrides()
+    overrides.pop(hotel_id, None)
+    _write_local_overrides(overrides)
+
+    HOTEL_CONFIG[hotel_id] = _validate_hotel_config(hotel_id, raw[hotel_id])
 
 
 HOTEL_CONFIG: Dict[str, Dict[str, Any]] = load_hotel_config()

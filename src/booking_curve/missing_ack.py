@@ -7,14 +7,14 @@ from typing import Iterable
 
 import pandas as pd
 
-from booking_curve.config import OUTPUT_DIR
+from booking_curve.config import ACK_DIR
 
 logger = logging.getLogger(__name__)
 
 ACK_COLUMNS = ["kind", "target_month", "asof_date", "path", "acked_at", "severity"]
 
 
-def get_missing_ack_path(hotel_id: str, output_dir: Path | str = OUTPUT_DIR) -> Path:
+def get_missing_ack_path(hotel_id: str, output_dir: Path | str = ACK_DIR) -> Path:
     output_dir = Path(output_dir)
     return output_dir / f"missing_ack_{hotel_id}_ops.csv"
 
@@ -55,7 +55,7 @@ def _normalize_ack_df(df: pd.DataFrame) -> pd.DataFrame:
     return df_out[ACK_COLUMNS].fillna("")
 
 
-def load_missing_ack_df(hotel_id: str, output_dir: Path | str = OUTPUT_DIR) -> pd.DataFrame:
+def load_missing_ack_df(hotel_id: str, output_dir: Path | str = ACK_DIR) -> pd.DataFrame:
     path = get_missing_ack_path(hotel_id, output_dir=output_dir)
     if not path.exists():
         return _normalize_ack_df(pd.DataFrame(columns=ACK_COLUMNS))
@@ -67,7 +67,7 @@ def load_missing_ack_df(hotel_id: str, output_dir: Path | str = OUTPUT_DIR) -> p
         return _normalize_ack_df(pd.DataFrame(columns=ACK_COLUMNS))
 
 
-def load_missing_ack_set(hotel_id: str, output_dir: Path | str = OUTPUT_DIR) -> set[str]:
+def load_missing_ack_set(hotel_id: str, output_dir: Path | str = ACK_DIR) -> set[str]:
     df = load_missing_ack_df(hotel_id, output_dir=output_dir)
     if df.empty:
         return set()
@@ -156,7 +156,7 @@ def _write_missing_ack_df(df: pd.DataFrame, path: Path) -> None:
 def write_missing_ack_df(
     hotel_id: str,
     df: pd.DataFrame,
-    output_dir: Path | str = OUTPUT_DIR,
+    output_dir: Path | str = ACK_DIR,
 ) -> Path:
     path = get_missing_ack_path(hotel_id, output_dir)
     _write_missing_ack_df(df, path)
@@ -173,7 +173,7 @@ def write_missing_ack_df_from_keys(
     hotel_id: str,
     acked_keys: Iterable[str],
     *,
-    output_dir: Path | str = OUTPUT_DIR,
+    output_dir: Path | str = ACK_DIR,
     acked_at: str | None = None,
     severities: Iterable[str] | None = None,
 ) -> None:

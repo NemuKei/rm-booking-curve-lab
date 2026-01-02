@@ -103,7 +103,7 @@
 
 ### タスク
 - [ ] **P1.7-01** ACK保存先（CSV）とスキーマを確定する
-  - ファイル：`output/missing_ack_<hotel_id>_ops.csv`
+  - ファイル：`LOCALAPPDATA/BookingCurveLab/acks/missing_ack_<hotel_id>_ops.csv`
   - 同一性キー：`kind + target_month + asof_date + path`
   - 対象：`severity in (ERROR, WARN)` のみ
 

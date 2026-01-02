@@ -164,6 +164,9 @@ class BookingCurveApp(tk.Tk):
         except Exception:
             pass
 
+    def _on_open_output_dir(self) -> None:
+        open_file(OUTPUT_DIR)
+
     def _get_missing_warning_ack(self, hotel_tag: str) -> str | None:
         master = self._settings.get("master_settings") or {}
         ack_map = master.get("missing_warning_ack") or {}
@@ -710,6 +713,23 @@ class BookingCurveApp(tk.Tk):
             wraplength=800,
             justify="left",
         ).grid(row=3, column=0, columnspan=3, padx=4, pady=(2, 4), sticky="w")
+
+        output_frame = ttk.LabelFrame(frame, text="出力フォルダ")
+        output_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 8))
+
+        ttk.Label(
+            output_frame,
+            text=f"出力フォルダ: {OUTPUT_DIR}",
+            foreground="#555555",
+            wraplength=800,
+            justify="left",
+        ).grid(row=0, column=0, padx=4, pady=2, sticky="w")
+
+        ttk.Button(
+            output_frame,
+            text="出力フォルダを開く",
+            command=self._on_open_output_dir,
+        ).grid(row=0, column=1, padx=8, pady=2, sticky="w")
 
         advanced_frame = ttk.LabelFrame(frame, text="Advanced / Daily snapshots")
         advanced_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 8))

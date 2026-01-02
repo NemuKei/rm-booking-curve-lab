@@ -11,26 +11,75 @@ from typing import Any, Dict
 
 def _get_project_root() -> Path:
     """
-    開発環境 (.py 実行) と PyInstaller EXE 実行時の両方で、
-    実行時の「ルートディレクトリ」を返すヘルパー。
-
-    - 開発環境: src/booking_curve/config.py から 2階層上 (= リポジトリルート)
-    - EXE: dist/BookingCurveLab/_internal/.../config.py から 2階層上 (= dist/BookingCurveLab)
+    開発環境 (.py 実行) での「リポジトリルート」を返す。
     """
     return Path(__file__).resolve().parents[2]
 
 
-PROJECT_ROOT = _get_project_root()
-BASE_DIR = PROJECT_ROOT
-DATA_DIR = PROJECT_ROOT / "data"
-OUTPUT_DIR = PROJECT_ROOT / "output"
+def _get_resource_root() -> Path:
+    """
+    リソース参照用のルートを返す。
 
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+    - PyInstaller 実行時: sys._MEIPASS を優先
+    - 通常実行時: リポジトリルート
+    """
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        return Path(meipass)
+    return _get_project_root()
 
-CONFIG_DIR = PROJECT_ROOT / "config"
+
+def _get_executable_root() -> Path:
+    """
+    実行ファイルの位置を基準としたルートを返す。
+
+    - PyInstaller 実行時: sys.executable の親ディレクトリ
+    - 通常実行時: リポジトリルート
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return _get_project_root()
+
+
+def get_app_base_dir() -> Path:
+    """
+    アプリが書き込むベースディレクトリを返す。
+
+    - Windows: %LOCALAPPDATA%/BookingCurveLab
+    - macOS: ~/Library/Application Support/BookingCurveLab
+    - Linux: $XDG_DATA_HOME/BookingCurveLab or ~/.local/share/BookingCurveLab
+    """
+    if sys.platform.startswith("win"):
+        local_app_data = os.getenv("LOCALAPPDATA") or os.getenv("APPDATA")
+        if local_app_data:
+            return Path(local_app_data) / "BookingCurveLab"
+        return Path.home() / "AppData" / "Local" / "BookingCurveLab"
+
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "BookingCurveLab"
+
+    xdg_data_home = os.getenv("XDG_DATA_HOME")
+    if xdg_data_home:
+        return Path(xdg_data_home) / "BookingCurveLab"
+
+    return Path.home() / ".local" / "share" / "BookingCurveLab"
+
+
+RESOURCE_ROOT = _get_resource_root()
+BASE_DIR = _get_executable_root()
+APP_BASE_DIR = get_app_base_dir()
+
+DATA_DIR = RESOURCE_ROOT / "data"
+OUTPUT_DIR = APP_BASE_DIR / "output"
+LOGS_DIR = OUTPUT_DIR / "logs"
+ACK_DIR = APP_BASE_DIR / "acks"
+CONFIG_DIR = APP_BASE_DIR / "config"
+LOCAL_OVERRIDES_DIR = APP_BASE_DIR / "local_overrides"
+
 HOTEL_CONFIG_PATH = CONFIG_DIR / "hotels.json"
-CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+for directory in (APP_BASE_DIR, OUTPUT_DIR, LOGS_DIR, ACK_DIR, CONFIG_DIR, LOCAL_OVERRIDES_DIR):
+    directory.mkdir(parents=True, exist_ok=True)
 
 
 REQUIRED_HOTEL_KEYS = (
@@ -46,20 +95,6 @@ REQUIRED_HOTEL_KEYS = (
 LOCAL_OVERRIDES_VERSION = 1
 
 LOGGER = logging.getLogger(__name__)
-
-
-def _get_template_root() -> Path | None:
-    """
-    PyInstaller 実行時に、バンドルされたテンプレート群が置かれている
-    ルートディレクトリを返すヘルパー。
-
-    - EXE版: sys._MEIPASS が存在し、そのパス配下に config/, data/ がある前提。
-    - .py版: sys._MEIPASS は存在しないので None を返す。
-    """
-    meipass = getattr(sys, "_MEIPASS", None)
-    if meipass:
-        return Path(meipass)
-    return None
 
 
 def _copy_if_missing(src: Path, dst: Path) -> None:
@@ -83,32 +118,18 @@ def _copy_if_missing(src: Path, dst: Path) -> None:
 
 def _initialize_runtime_files() -> None:
     """
-    EXE版実行時に、_internal 配下にバンドルされているテンプレートから
-    config/ や data/ に最低限のファイルをコピーする初期化処理。
+    リソースに含まれるテンプレートを、端末ローカルへ初期展開する。
 
-    - .py 実行時 (開発環境) では何もしない。
-    - すでに config/ や data/ に同名ファイルが存在する場合は一切上書きしない。
-    - 現時点では、以下を対象とする:
-      - config/hotels.json
-      - data/ 以下の全てのファイル
+    - config/ 配下のファイルを app_base_dir/config にコピー（不足分のみ）
+    - 既存ファイルがある場合は上書きしない
     """
-    template_root = _get_template_root()
-    if template_root is None:
-        # PyInstaller で固めていない通常実行時はテンプレ展開不要
-        return
-
-    # hotels.json
-    template_hotels = template_root / "config" / "hotels.json"
-    _copy_if_missing(template_hotels, HOTEL_CONFIG_PATH)
-
-    # data/ 以下のテンプレを data/ 以下にコピー（不足分のみ）
-    template_data_root = template_root / "data"
-    if template_data_root.exists():
-        for src_path in template_data_root.rglob("*"):
+    template_config_root = RESOURCE_ROOT / "config"
+    if template_config_root.exists():
+        for src_path in template_config_root.rglob("*"):
             if not src_path.is_file():
                 continue
-            rel = src_path.relative_to(template_data_root)
-            dst_path = DATA_DIR / rel
+            rel = src_path.relative_to(template_config_root)
+            dst_path = CONFIG_DIR / rel
             _copy_if_missing(src_path, dst_path)
 
 
@@ -116,23 +137,8 @@ _initialize_runtime_files()
 
 
 def _get_local_overrides_dir() -> Path:
-    """
-    端末ローカルの上書き設定ディレクトリを返す。
-
-    - Windows: %LOCALAPPDATA%/BookingCurveLab
-    - それ以外: ~/.config/BookingCurveLab（なければ ~/.booking_curve_lab）
-    """
-    if sys.platform.startswith("win"):
-        local_app_data = os.getenv("LOCALAPPDATA")
-        if local_app_data:
-            return Path(local_app_data) / "BookingCurveLab"
-
-    home_dir = Path.home()
-    config_root = home_dir / ".config"
-    if config_root.exists():
-        return config_root / "BookingCurveLab"
-
-    return home_dir / ".booking_curve_lab"
+    """端末ローカルの上書き設定ディレクトリを返す。"""
+    return LOCAL_OVERRIDES_DIR
 
 
 def get_local_overrides_path() -> Path:

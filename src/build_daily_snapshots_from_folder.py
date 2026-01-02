@@ -10,7 +10,7 @@ from typing import Iterable
 
 import pandas as pd
 
-from booking_curve.config import HOTEL_CONFIG
+from booking_curve.config import HOTEL_CONFIG, OUTPUT_DIR
 from booking_curve.daily_snapshots import (
     get_latest_asof_date,
     rebuild_asof_dates_from_daily_snapshots,
@@ -24,7 +24,7 @@ from booking_curve.pms_adapter_nface import (
 )
 
 EXCEL_GLOB = "*.xls*"
-LOGS_DIR = Path("output/logs")
+LOGS_DIR = OUTPUT_DIR / "logs"
 DEFAULT_FULL_ALL_RATE = 0.5
 
 

@@ -1,35 +1,13 @@
 {
-  "daikokucho": {
-    "hotel_id": "daikokucho",
-    "display_name": "ソビアルなんば大国町",
-    "capacity": 171,
-    "forecast_cap": 167,
-    "data_subdir": "namba_daikokucho",
-    "timeseries_file": "大国町_時系列データ.xlsx",
+  "setup_me": {
+    "hotel_id": "setup_me",
+    "display_name": "【要設定】ここを自ホテルに書き換えてください",
+    "capacity": 0,
+    "forecast_cap": 0,
+    "data_subdir": "",
+    "timeseries_file": "",
     "adapter_type": "nface",
-    "raw_root_dir": "data/pms_nface_raw/daikokucho",
-    "include_subfolders": true
-  },
-  "kansai": {
-    "hotel_id": "kansai",
-    "display_name": "ホテル関西",
-    "capacity": 434,
-    "forecast_cap": 416,
-    "data_subdir": "hotel_kansai",
-    "timeseries_file": "ホテル関西_時系列データ.xlsx",
-    "adapter_type": "nface",
-    "raw_root_dir": "data/pms_nface_raw/kansai",
-    "include_subfolders": true
-  },
-  "domemae": {
-    "hotel_id": "domemae",
-    "display_name": "ソビアル大阪ドーム前",
-    "capacity": 158,
-    "forecast_cap": 158,
-    "data_subdir": "domemae",
-    "timeseries_file": "ドーム前_時系列データ.xlsx",
-    "adapter_type": "nface",
-    "raw_root_dir": "data/pms_nface_raw/domemae",
+    "raw_root_dir": "__PLEASE_SET_RAW_ROOT_DIR__",
     "include_subfolders": true
   }
 }

@@ -26,6 +26,11 @@ except ImportError:  # tkcalendar が無い環境向けフォールバック
     DateEntry = None
 
 # プロジェクト内モジュール
+from booking_curve.config import (
+    clear_local_override_raw_root_dir,
+    get_local_overrides_path,
+    set_local_override_raw_root_dir,
+)
 from booking_curve.gui_backend import (
     HOTEL_CONFIG,
     OUTPUT_DIR,
@@ -52,11 +57,6 @@ from booking_curve.gui_backend import (
     run_import_missing_only,
     run_missing_audit_for_gui,
     run_missing_check_for_gui,
-)
-from booking_curve.config import (
-    clear_local_override_raw_root_dir,
-    get_local_overrides_path,
-    set_local_override_raw_root_dir,
 )
 from booking_curve.missing_ack import (
     build_ack_key_from_row,

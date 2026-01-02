@@ -44,28 +44,34 @@ BookingCurveLab は、PMS の時系列オンハンドデータをもとに
 
 ※ 一般ユーザーが触るのは太字の部分だけを想定しています。
 
+【実行ファイル配置（任意の場所）】
 BookingCurveLab/
 ├─ BookingCurveLab.exe       … アプリ本体（これを起動）
+└─ _internal/                 … EXE 用ライブラリ（触らない）
+
+【端末ローカルの作業フォルダ】
+%LOCALAPPDATA%/BookingCurveLab/
 ├─ config/
 │   └─ hotels.json           … ホテル設定ファイル（管理者が編集）
-├─ data/
-│   ├─ namba_daikokucho/
-│   │   └─ 大国町_時系列データ.xlsx
-│   └─ hotel_kansai/
-│       └─ ホテル関西_時系列データ.xlsx
 ├─ output/
 │   ├─ lt_data_YYYYMM_<hotel>.csv
 │   ├─ monthly_curve_YYYYMM_<hotel>.csv
 │   ├─ forecast_*.csv
-│   └─ evaluation_*.csv
-└─ _internal/                 … EXE 用ライブラリ（触らない）
+│   ├─ evaluation_*.csv
+│   └─ logs/                 … 実行ログ
+├─ acks/
+│   └─ missing_ack_<hotel>_ops.csv
+└─ local_overrides/
+    └─ local_overrides.json  … RAW取込元のローカル上書き
 
 - config/hotels.json
-  - ホテルごとの表示名、データフォルダ（data_subdir）、デフォルトの「予測キャップ」「稼働率キャパ」をまとめた設定ファイル。
-- data/
-  - PMS から出力した「時系列オンハンドデータ」の Excel をホテル別に配置。
+  - ホテルごとの表示名、デフォルトの「予測キャップ」「稼働率キャパ」などをまとめた設定ファイル。
 - output/
   - アプリが自動生成する各種 CSV の置き場。基本的に手動編集は不要（分析用途で読み込むのは OK）。
+- acks/
+  - 欠損検査（ops）の ACK（確認済み）を端末ローカルに保持するフォルダ。
+- local_overrides/
+  - このPCのみ有効な RAW 取込元上書きを保持するフォルダ。
 
 
 4. 初期セットアップ（管理者向け）

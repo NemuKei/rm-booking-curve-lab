@@ -25,43 +25,89 @@ try:
 except ImportError:  # tkcalendar が無い環境向けフォールバック
     DateEntry = None
 
+def _show_fatal_startup_error(message: str) -> None:
+    root = tk.Tk()
+    root.withdraw()
+    messagebox.showerror("起動エラー", message)
+    root.destroy()
+
+
+def _get_fallback_startup_log_path() -> Path:
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        return (
+            Path(local_app_data)
+            / "BookingCurveLab"
+            / "output"
+            / "logs"
+            / "startup_init.log"
+        )
+    return (
+        Path.home()
+        / ".local"
+        / "share"
+        / "BookingCurveLab"
+        / "output"
+        / "logs"
+        / "startup_init.log"
+    )
+
+
 # プロジェクト内モジュール
-from booking_curve.config import (
-    CONFIG_DIR,
-    STARTUP_INIT_LOG_PATH,
-    clear_local_override_raw_root_dir,
-    get_local_overrides_path,
-    pop_runtime_init_errors,
-    reload_hotel_config_inplace,
-    set_local_override_raw_root_dir,
-)
-from booking_curve.gui_backend import (
-    HOTEL_CONFIG,
-    OUTPUT_DIR,
-    build_calendar_for_gui,
-    build_range_rebuild_plan_for_gui,
-    clear_evaluation_detail_cache,
-    get_all_target_months_for_lt_from_daily_snapshots,
-    get_best_model_for_month,
-    get_booking_curve_data,
-    get_calendar_coverage,
-    get_daily_forecast_table,
-    get_eval_monthly_by_asof,
-    get_eval_overview_by_asof,
-    get_latest_asof_for_hotel,
-    get_latest_asof_for_month,
-    get_model_evaluation_table,
-    get_monthly_curve_data,
-    get_monthly_forecast_scenarios,
-    run_build_lt_data_all_for_gui,
-    run_build_lt_data_for_gui,
-    run_daily_snapshots_for_gui,
-    run_forecast_for_gui,
-    run_full_evaluation_for_gui_range,
-    run_import_missing_only,
-    run_missing_audit_for_gui,
-    run_missing_check_for_gui,
-)
+try:
+    from booking_curve.config import (
+        CONFIG_DIR,
+        STARTUP_INIT_LOG_PATH,
+        clear_local_override_raw_root_dir,
+        get_local_overrides_path,
+        pop_runtime_init_errors,
+        reload_hotel_config_inplace,
+        set_local_override_raw_root_dir,
+    )
+except Exception as exc:
+    logging.exception("Failed to import booking_curve.config")
+    log_hint = _get_fallback_startup_log_path()
+    _show_fatal_startup_error(
+        "booking_curve.config の読み込みに失敗しました。\n"
+        f"{exc}\n\nログ: {log_hint}"
+    )
+    sys.exit(1)
+
+try:
+    from booking_curve.gui_backend import (
+        HOTEL_CONFIG,
+        OUTPUT_DIR,
+        build_calendar_for_gui,
+        build_range_rebuild_plan_for_gui,
+        clear_evaluation_detail_cache,
+        get_all_target_months_for_lt_from_daily_snapshots,
+        get_best_model_for_month,
+        get_booking_curve_data,
+        get_calendar_coverage,
+        get_daily_forecast_table,
+        get_eval_monthly_by_asof,
+        get_eval_overview_by_asof,
+        get_latest_asof_for_hotel,
+        get_latest_asof_for_month,
+        get_model_evaluation_table,
+        get_monthly_curve_data,
+        get_monthly_forecast_scenarios,
+        run_build_lt_data_all_for_gui,
+        run_build_lt_data_for_gui,
+        run_daily_snapshots_for_gui,
+        run_forecast_for_gui,
+        run_full_evaluation_for_gui_range,
+        run_import_missing_only,
+        run_missing_audit_for_gui,
+        run_missing_check_for_gui,
+    )
+except Exception as exc:
+    logging.exception("Failed to import booking_curve.gui_backend")
+    _show_fatal_startup_error(
+        "booking_curve.gui_backend の読み込みに失敗しました。\n"
+        f"{exc}\n\nログ: {STARTUP_INIT_LOG_PATH}"
+    )
+    sys.exit(1)
 from booking_curve.missing_ack import (
     build_ack_key_from_row,
     filter_missing_report_with_ack,

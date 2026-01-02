@@ -113,8 +113,8 @@ def _build_health(
 def build_raw_inventory(hotel_id: str) -> RawInventory:
     """Build raw inventory using paths resolved from booking_curve.config.HOTEL_CONFIG.
 
-    Path resolution is centralized in config.py; raw_root_dir is sourced only from HOTEL_CONFIG
-    and overrides are not supported.
+    raw_root_dir is read from HOTEL_CONFIG, which is constructed at startup by merging
+    hotels.json with a local override that can replace raw_root_dir only.
     """
     if hotel_id not in HOTEL_CONFIG:
         raise ValueError(f"hotel_id '{hotel_id}' not found in HOTEL_CONFIG")

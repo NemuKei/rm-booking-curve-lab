@@ -25,19 +25,21 @@ try:
 except ImportError:  # tkcalendar が無い環境向けフォールバック
     DateEntry = None
 
-
-def _show_fatal_startup_error(message: str) -> None:
-    root = tk.Tk()
-    root.withdraw()
-    messagebox.showerror("起動エラー", message)
-    root.destroy()
-
-
-def _get_fallback_startup_log_path() -> Path:
-    local_app_data = os.environ.get("LOCALAPPDATA")
-    if local_app_data:
-        return Path(local_app_data) / "BookingCurveLab" / "output" / "logs" / "startup_init.log"
-    return Path.home() / ".local" / "share" / "BookingCurveLab" / "output" / "logs" / "startup_init.log"
+from booking_curve.missing_ack import (
+    build_ack_key_from_row,
+    filter_missing_report_with_ack,
+    load_missing_ack_df,
+    load_missing_ack_set,
+    update_missing_ack_df,
+    write_missing_ack_df,
+)
+from booking_curve.plot_booking_curve import LEAD_TIME_PITCHES
+from build_daily_snapshots_from_folder import (
+    DEFAULT_FULL_ALL_RATE,
+    LOGS_DIR,
+    count_excel_files,
+    load_historical_full_all_rate,
+)
 
 
 # プロジェクト内モジュール
@@ -53,8 +55,24 @@ try:
     )
 except Exception as exc:
     logging.exception("Failed to import booking_curve.config")
-    log_hint = _get_fallback_startup_log_path()
-    _show_fatal_startup_error(f"booking_curve.config の読み込みに失敗しました。\n{exc}\n\nログ: {log_hint}")
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        log_hint = Path(local_app_data) / "BookingCurveLab" / "output" / "logs" / "startup_init.log"
+    else:
+        log_hint = Path.home() / ".local" / "share" / "BookingCurveLab" / "output" / "logs" / "startup_init.log"
+    try:
+        log_hint.parent.mkdir(parents=True, exist_ok=True)
+        with log_hint.open("a", encoding="utf-8") as f:
+            f.write(f"{datetime.now().isoformat()} booking_curve.config import failed: {exc}\n")
+    except Exception:
+        pass
+    root = tk.Tk()
+    root.withdraw()
+    messagebox.showerror(
+        "起動エラー",
+        f"booking_curve.config の読み込みに失敗しました。\n{exc}\n\nログ: {log_hint}",
+    )
+    root.destroy()
     sys.exit(1)
 
 try:
@@ -87,23 +105,20 @@ try:
     )
 except Exception as exc:
     logging.exception("Failed to import booking_curve.gui_backend")
-    _show_fatal_startup_error(f"booking_curve.gui_backend の読み込みに失敗しました。\n{exc}\n\nログ: {STARTUP_INIT_LOG_PATH}")
+    try:
+        STARTUP_INIT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with STARTUP_INIT_LOG_PATH.open("a", encoding="utf-8") as f:
+            f.write(f"{datetime.now().isoformat()} booking_curve.gui_backend import failed: {exc}\n")
+    except Exception:
+        pass
+    root = tk.Tk()
+    root.withdraw()
+    messagebox.showerror(
+        "起動エラー",
+        f"booking_curve.gui_backend の読み込みに失敗しました。\n{exc}\n\nログ: {STARTUP_INIT_LOG_PATH}",
+    )
+    root.destroy()
     sys.exit(1)
-from booking_curve.missing_ack import (
-    build_ack_key_from_row,
-    filter_missing_report_with_ack,
-    load_missing_ack_df,
-    load_missing_ack_set,
-    update_missing_ack_df,
-    write_missing_ack_df,
-)
-from booking_curve.plot_booking_curve import LEAD_TIME_PITCHES
-from build_daily_snapshots_from_folder import (
-    DEFAULT_FULL_ALL_RATE,
-    LOGS_DIR,
-    count_excel_files,
-    load_historical_full_all_rate,
-)
 
 # デフォルトホテル (現状は大国町のみ想定)
 DEFAULT_HOTEL = next(iter(HOTEL_CONFIG.keys()), "daikokucho")

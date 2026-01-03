@@ -438,18 +438,22 @@ class BookingCurveApp(tk.Tk):
         Returns (forecast_cap, occ_capacity).
         """
 
-        base_cap = float(HOTEL_CONFIG.get(hotel_tag, {}).get("capacity", 168.0))
+        def _safe_float(value: object, fallback: float) -> float:
+            if value is None or value == "":
+                return fallback
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return fallback
+
+        hotel_cfg = HOTEL_CONFIG.get(hotel_tag, {})
+        base_cap = _safe_float(hotel_cfg.get("capacity"), 100.0)
+        base_fc_cap = _safe_float(hotel_cfg.get("forecast_cap"), base_cap)
         daily = self._settings.get("daily_forecast", {})
         fc_map = daily.get("forecast_cap", {})
         occ_map = daily.get("occ_capacity", {})
-        try:
-            fc = float(fc_map.get(hotel_tag, base_cap))
-        except Exception:
-            fc = base_cap
-        try:
-            occ = float(occ_map.get(hotel_tag, base_cap))
-        except Exception:
-            occ = base_cap
+        fc = _safe_float(fc_map.get(hotel_tag, base_fc_cap), base_fc_cap)
+        occ = _safe_float(occ_map.get(hotel_tag, base_cap), base_cap)
         return fc, occ
 
     def _set_daily_caps_for_hotel(self, hotel_tag: str, forecast_cap: float, occ_capacity: float) -> None:

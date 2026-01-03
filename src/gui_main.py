@@ -41,7 +41,6 @@ from build_daily_snapshots_from_folder import (
     load_historical_full_all_rate,
 )
 
-
 # プロジェクト内モジュール
 try:
     from booking_curve.config import (

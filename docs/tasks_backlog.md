@@ -102,18 +102,18 @@
 - ただし全体の欠損状態は「欠損監査（audit）」で保持する（auditはACK除外しない）。
 
 ### タスク
-- [ ] **P1.7-01** ACK保存先（CSV）とスキーマを確定する
+- [x] **P1.7-01** ACK保存先（CSV）とスキーマを確定する
   - ファイル：`LOCALAPPDATA/BookingCurveLab/acks/missing_ack_<hotel_id>_ops.csv`
   - 同一性キー：`kind + target_month + asof_date + path`
   - 対象：`severity in (ERROR, WARN)` のみ
 
-- [ ] **P1.7-02** GUIに欠損一覧（ops）を表示し、行ごとに「確認済」チェックを付けられるようにする
+- [x] **P1.7-02** GUIに欠損一覧（ops）を表示し、行ごとに「確認済」チェックを付けられるようにする
   - 対象は ops のみ（auditはGUI一覧に出さない前提）
 
-- [ ] **P1.7-03** ops の集計（ERROR/WARN件数）から ACK を除外する
+- [x] **P1.7-03** ops の集計（ERROR/WARN件数）から ACK を除外する
   - 表示：`ERROR:x / WARN:y` は「未ACK分」の件数にする
 
-- [ ] **P1.7-04** 欠損監査（audit）はACKを除外しないことを仕様として固定する
+- [x] **P1.7-04** 欠損監査（audit）はACKを除外しないことを仕様として固定する
 
 ---
 

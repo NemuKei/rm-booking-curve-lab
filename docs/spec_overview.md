@@ -40,8 +40,12 @@ BookingCurveLab の主目的は、ホテルの PMS から取得したオンハ�
 - `data_subdir`：PMS 時系列データや生データを置くサブフォルダ
 - `capacity`：理論最大稼働室数
 - `forecast_cap`：予測時に上限として用いる稼働室数（安全マージン込み）
+- `raw_root_dir`：RAW Excel の取り込み元フォルダ（唯一の正）
+- `include_subfolders`：サブフォルダも探索対象にするか
+- `adapter_type`：PMSアダプタ種別（現状は nface）
 
 これらは「外部仕様」として扱い、互換性を壊す変更は行わない方針です。
+hotels.json が欠けている／必須キー不足の場合は 安全側に STOP し、推測で続行しない
 
 ### 2-2. データソースと中間生成物
 
@@ -100,6 +104,13 @@ PMS 生データを正規化し、ホテル共通で扱える形として定義�
 - 一般ユーザー向け配布形態：
   - `BookingCurveLab.exe`（pyinstaller でビルド）として Windows 10 / 11 上で動作
   - EXE 利用者には Python は不要
+- 実行時の保存先（重要）：
+  - アプリの設定・生成物・ログは **APP_BASE_DIR** 配下に集約する（EXE配下へは出力しない）。
+  - Windows の既定：`%LOCALAPPDATA%/BookingCurveLab/`
+    - `config/hotels.json`（端末ごとの設定）
+    - `output/`（CSV・ログ）
+    - `acks/`（欠損検査 ops の確認済み）
+    - `local_overrides/`（RAW取込元の端末ローカル上書き）
 - 管理者・開発者：
   - Python 実行環境＋必要ライブラリを整備し、CLI スクリプトやモジュールを直接実行・編集できる前提
 
@@ -114,7 +125,7 @@ PMS 生データを正規化し、ホテル共通で扱える形として定義�
   - ASOF より先の日付について、実績（ACT）が存在しないのに「埋まっているように見える」挙動は禁止。
   - グラフ上の ACT は ASOF 時点までで止まること。
 - モデルロジック（avg / recent90 / recent90w 等）・評価ロジック（MAE / MAPE / Bias / RMSE / MPE 等）は、
-  - 既存実装（`booking_curve/forecast_simple.py`, `booking_curve/evaluation_multi.py` 等）に揃える。
+  - 既存実装（`booking_curve/forecast_simple.py`, `run_full_evaluation.py` 等）に揃える。
 
 ### 3-3. 運用・ユーザーロール
 
@@ -160,7 +171,7 @@ PMS 生データを正規化し、ホテル共通で扱える形として定義�
 - この時点では **LT_DATA / 月次カーブは依然として時系列 Excel ベース**。
   - 標準スナップショットは「あくまで次フェーズ用のインフラ」。
 
-#### v0.6.5（想定：`feature/lt-from-daily-snapshots` マージ後）
+#### v0.6.5（`feature/lt-from-daily-snapshots` マージ後）
 
 - **LT_DATA を daily_snapshots ベースで生成できるルートを追加。**
   - `booking_curve.lt_builder.build_lt_data_from_daily_snapshots_for_month(...)`
@@ -185,6 +196,43 @@ PMS 生データを正規化し、ホテル共通で扱える形として定義�
   - 欠損値の補完（NOCB）はまだ実装しておらず、生の NaN がそのままグラフに反映される。
     → これは次フェーズ（欠損 NOCB ブランチ）で対応する。
 
+#### v0.6.6（`feature/missing-values-nocb` マージ後）
+
+- **欠損値補完ポリシーを整理（データレイヤーは生の NaN を保持）。**
+  - daily snapshots / LT_DATA / monthly_curve は **生の NaN を保持**する。
+  - グラフ描画・評価で参照する「ビュー用 DataFrame」に対して、LT方向の補完を適用する。
+    - 実装上は「LTが若い方向へ進む」ことを時系列とみなし、**LOCF（Carry Forward）** を採用。
+    - `LT=-1 (ACT)` を `LT=0` から埋めるような補完は行わない（軸の並びと意味に反するため）。
+
+- **日別フォーキャストタブの表示仕様をハイブリッド化。**
+  - `Actual`：着地済み日の ACT（最終実績）を表示（未着地は NaN / 空欄）。
+  - `ASOF_OH`：指定ASOF時点の OH を表示（着地済み日も「その時点の月累計」として値を持つ）。
+  - `Forecast`：指定ASOFを起点にモデルで算出した予測値。
+  - これにより、
+    - 「予測 vs 最終着地（検証用途）」
+    - 「予測時点のOH（当時の前提）と、その後の伸び」
+    の両方を同一画面で確認できる。
+
+- **GUI から LT_DATA / monthly_curve を生成できる導線を整備。**
+  - `LTソース`（timeseries / daily_snapshots）を選択可能。
+  - `daily_snapshots` をソースにする場合、LT生成時に snapshots 更新を任意で実行できる。
+  - `timeseries` 選択時は snapshots 更新オプションを無効化（不要な処理時間を発生させない）。
+
+#### v0.6.7（`feature/daily-snapshots-partial-build` リリース）
+
+- daily snapshots の部分生成（RANGE_REBUILD 等）の運用安定化。
+- RAW（N@FACE）現場加工パターン差への対応強化（誤取り込み防止、STOP条件の明確化）。
+- 欠損検査（ops）/ 欠損監査（audit）による運用警告の整理（マスタ設定タブ）。
+- 欠損検査（ops）のACK（確認済み除外）＋GUI欠損一覧（opsのみ）を同ブランチで完走（実装済）。
+  - 同一性キー：`kind + target_month + asof_date + path`
+  - 対象：`severity in (ERROR, WARN)`
+  - audit は全体像のためACK除外しない
+- EXE配布を前提に、APP_BASE_DIR（%LOCALAPPDATA%）へ寄せ切り：
+  - EXEの置き場所に依存せず運用できる（EXE移動で壊れない）
+  - 端末ごと独立運用（設定・ACK・出力は共有しない）
+- マスタ設定タブに「設定フォルダを開く」「設定を再読み込み」を追加（迷子防止）。
+- 初回テンプレ展開（hotels.json 等）が失敗した場合は、showerror＋ログで通知して握りつぶさない。
+
 
 #### 今後の予定（概要）
 
@@ -198,15 +246,15 @@ PMS 生データを正規化し、ホテル共通で扱える形として定義�
 
 今後、機能追加や外部仕様の変更が入る際には、以下のルールでドキュメントを更新する。
 
-- 新しいデータレイヤや中間ファイルを追加した場合：
-  - `spec_data_layer.md` と本書（`spec_overview.md`）を両方更新する。
-- モデルロジック（avg / recent90 / recent90w 等）の定義を変更した場合：
-  - `spec_models.md`（将来追加）と本書を更新する。
+- 仕様の唯一の正（外部仕様・ロジック定義）：
+  - `docs/spec_overview.md`
+  - `docs/spec_data_layer.md`
+  - `docs/spec_models.md`
+  - `docs/spec_evaluation.md`
+- AI運用ルールの唯一の正：
+  - `AGENTS.md`
+- 計画（実装状況と混同しない）：
+  - `docs/roadmap.md`
+  - `docs/tasks_backlog.md`
 
-役割の整理：
-
-- 利用者向けの操作説明・FAQ：`BookingCurveLab_README.txt`
-- 開発者・AI エージェント向けの運用ルール：`AGENTS.md`
-- 仕様の上位整理：本書 `spec_overview.md`
-- データ構造の詳細：`spec_data_layer.md`
 

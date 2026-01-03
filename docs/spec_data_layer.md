@@ -7,6 +7,12 @@
 2. `LT_DATA`（宿泊日×LT テーブル＋月次カーブ）
 3. 評価用データ（モデル精度評価・日別誤差・セグメント別要約）
 
+> 補足：パスの基準（重要）
+>
+> 本仕様中の `output/...` / `config/...` は **論理パス** を表す。
+> 実体の保存先は **APP_BASE_DIR** 配下（Windows 既定：`%LOCALAPPDATA%/BookingCurveLab/`）であり、
+> EXE配下（配置フォルダ）には出力しない。
+
 ---
 
 ## 1. daily snapshots（標準日別スナップショット）
@@ -83,7 +89,41 @@
 
 ---
 
-### 1-4. N@FACE アダプタとの関係（参考）
+### 1-4. 生成モード（全量再生成 / 部分生成）
+
+daily snapshots は **「唯一の正」** のレイヤーであり、LT_DATA / monthly_curve の生成元となるため、
+運用上は「いつ・どの範囲を再生成するか」を明確にする必要があります。
+
+#### (A) 全量再生成（Full rebuild）
+- 対象：指定ホテルの *元データ一式*（N@FACE 生データフォルダ）
+- 出力：`output/daily_snapshots_<hotel_id>.csv` を **原則として作り直す**
+- 用途：
+  - 初期導入（過去2〜3年分を一括投入）
+  - 元データの構造変更や、変換ロジック（アダプタ）修正後の整合性取り直し
+
+#### (B) 部分生成（Partial rebuild / Upsert）
+- 対象：指定ホテルの *元データの一部*（例：直近の ASOF のみ / 直近数ヶ月のみ）
+- 目的：週次運用などで、データ量増加による処理時間の悪化を避ける
+- 方式（推奨）：
+  1. 既存 `daily_snapshots_<hotel_id>.csv` を読み込む
+  2. 「今回再生成する対象範囲（例：as_of_date の範囲）」に該当する行を既存CSVから除外
+  3. 元データから対象範囲だけ再生成して append
+  4. `(hotel_id, as_of_date, stay_date)` をキーに `drop_duplicates(keep="last")` 等で重複排除
+  5. ソートして保存（`hotel_id, as_of_date, stay_date`）
+- 注意：
+  - daily snapshots 自体は **欠損（NaN）を保持**する（補完はビュー/評価レイヤーで行う）
+  - upsert の「対象範囲の定義」は、GUI・CLI で統一する
+
+#### (C) GUI からの再生成（LT生成時の連動）
+GUI では、LT_DATA 生成時に daily snapshots を更新できるオプションを持つ（チェックボックス等）。
+
+- `LTソース = daily_snapshots` のときのみ有効
+- 目的：検証時に「daily snapshots → LT_DATA → monthly_curve」を一気通貫で更新し、整合性確認を容易にする
+- 初期実装は Full rebuild でもよいが、運用フェーズでは Partial rebuild を優先して実装する（別ブランチで対応）。
+
+---
+
+### 1-5. N@FACE アダプタとの関係（参考）
 
 `pms_adapter_nface.py` にて、N@FACE の生 Excel を読み込み、  
 `normalize_daily_snapshots_df` → `append_daily_snapshots` を通して標準 CSV に変換する。
@@ -341,6 +381,15 @@ GUI の「モデル評価」タブは、このサマリをベースに
 
 を表示・比較する用途で使います。
 
+補足（GUI表示の派生列）：
+
+- GUI の「モデル評価」タブでは、`evaluation_*_detail.csv` から
+  - `rmse_pct`（RMSE%）
+  - `n_samples`（ASOF数）
+  を算出して表示する。
+- `evaluation_*_multi.csv` 自体には、現状この2列は含めない（将来、出力列として追加する余地はある）。
+
+
 ---
 
 ### 3-2. 日別誤差テーブル：`daily_errors_<hotel>.csv`
@@ -421,6 +470,88 @@ GUI の「モデル評価」タブは、このサマリをベースに
   - 副業でのコンサル時には、「現状の運用がどこでブレているか」の説明に使える。
 - **セグメント別サマリ（error_summary_〜）**
   - モデルのクセ＋運用のクセ（例：三連休中日の価格設定が甘い）を短時間で把握するための要約ビュー。
+
+---
+
+## 4. 運用・監査（欠損レポート）
+
+daily snapshots を「唯一の正」として運用する前提では、
+「そもそも daily snapshots が最新まで揃っているか」「RAW→snapshots 変換が落ちていないか」を
+GUI上で安全に検知できる必要がある。
+
+この目的のために、欠損レポート（missing report）を以下2系統で提供する。
+
+- 欠損検査（ops）：日常運用向け（最新〜近未来の取りこぼし検知）
+- 欠損監査（audit）：全期間監査向け（歴史的なギャップの検知）
+
+### 4-1. 出力ファイル
+
+- `output/missing_report_<hotel_id>_ops.csv`
+- `output/missing_report_<hotel_id>_audit.csv`
+- `output/raw_parse_failures_<hotel_id>.csv`（欠損レポートに取り込まれる）
+- ops（運用）のみ ACK（確認済み）を持つ：
+  - 保存先：`acks/missing_ack_<hotel_id>_ops.csv`（端末ローカル）
+  - ops の集計（ERROR/WARN件数）は ACK 済みを除外する（運用ノイズ除去のため）
+  - audit（監査）は全体像の保持を優先し、ACK除外しない
+
+### 4-2. CSV列仕様（共通）
+
+missing_report および raw_parse_failures は、以下の列構造を共通で持つ。
+
+| column | 内容 |
+|---|---|
+| kind | 欠損・異常の種類（例：layout_unknown 等） |
+| hotel_id | ホテルID |
+| asof_date | ASOF日付（必要な場合のみ） |
+| target_month | 対象宿泊月（必要な場合のみ） |
+| missing_count | 件数（または 0） |
+| missing_sample | サンプル（任意） |
+| message | 人間向け説明 |
+| path | 対象ファイルのパス（フルパス運用可） |
+| severity | `ERROR` / `WARN` / `INFO` |
+
+#### severity の運用方針
+- `ERROR`：運用上「見逃すと危ない」もの（STOP相当、未生成、致命的欠損など）
+- `WARN`：品質警告（運用は可能だが注意）
+- `INFO`：参考情報（集計対象外でもよい）
+
+### 4-3. 欠損検査（ops）の定義（運用）
+
+目的：日々の更新運用で「直近の取りこぼし」を素早く検知する。
+
+- 対象は「最新ASOF近辺」と「直近〜近未来の対象月」に絞る（全期間は見ない）
+- 例：ASOF窓（既定：180日）＋ forward_months（既定：3ヶ月）など
+- 出力は `missing_report_<hotel_id>_ops.csv`
+
+GUIのマスタ設定タブでは、欠損検査（ops）の結果サマリを表示する。
+
+### 4-4. 欠損監査（audit）の定義（全期間）
+
+目的：データの網羅性を監査する（運用者が「全体の欠損状態」を把握するため）。
+
+- 対象は「stay_month 全域」に広げ、歴史的なギャップも検知する
+- 出力は `missing_report_<hotel_id>_audit.csv`
+
+※監査は「運用上の除外（ACK）」を反映しない（全体像を保つため）。
+
+### 4-5. raw_parse_failures（変換失敗ログ）
+
+`raw_parse_failures_<hotel_id>.csv` は、RAW→daily snapshots 変換での失敗（例：layout_unknown）を記録する。
+欠損レポート生成時に読み込まれ、missing_report に統合される。
+
+- フルパス運用は許容する（ZIP共有時はダミーパス置換など運用側で対応）
+
+### 4-6. （予定）欠損ACK（確認済み除外）
+
+運用上「欠損が確定しており、毎回アラートに出てほしくない」項目を除外できるようにする。
+
+- ACKは欠損検査（ops）の集計（ERROR/WARN件数）から除外する
+- 欠損監査（audit）は除外しない（全体の欠損状態を保持）
+
+ACKの同一性キー（運用の最小要件）：
+- `kind + target_month + asof_date + path`
+ACK対象：
+- `severity in (ERROR, WARN)` のみ
 
 ---
 

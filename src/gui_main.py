@@ -1,49 +1,140 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import os
+import re
+import subprocess
+import sys
+import threading
+import time
 import tkinter as tk
-from datetime import date
-from tkinter import messagebox, ttk
+from datetime import date, datetime
+from pathlib import Path
+from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Optional
 
+import numpy as np
 import pandas as pd
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
 
 try:
     from tkcalendar import DateEntry
 except ImportError:  # tkcalendar が無い環境向けフォールバック
     DateEntry = None
 
-import numpy as np
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.figure import Figure
-
-# プロジェクト内モジュール
-from booking_curve.gui_backend import (
-    HOTEL_CONFIG,
-    OUTPUT_DIR,
-    build_calendar_for_gui,
-    get_best_model_for_month,
-    get_booking_curve_data,
-    get_calendar_coverage,
-    get_daily_forecast_table,
-    get_eval_monthly_by_asof,
-    get_eval_overview_by_asof,
-    get_latest_asof_for_hotel,
-    get_latest_asof_for_month,
-    get_model_evaluation_table,
-    get_monthly_curve_data,
-    get_monthly_forecast_scenarios,
-    run_build_lt_data_for_gui,
-    run_daily_snapshots_for_gui,
-    run_forecast_for_gui,
-    run_full_evaluation_for_gui_range,
+from booking_curve.missing_ack import (
+    build_ack_key_from_row,
+    filter_missing_report_with_ack,
+    load_missing_ack_df,
+    load_missing_ack_set,
+    update_missing_ack_df,
+    write_missing_ack_df,
 )
 from booking_curve.plot_booking_curve import LEAD_TIME_PITCHES
+from build_daily_snapshots_from_folder import (
+    DEFAULT_FULL_ALL_RATE,
+    LOGS_DIR,
+    count_excel_files,
+    load_historical_full_all_rate,
+)
+
+# プロジェクト内モジュール
+try:
+    from booking_curve.config import (
+        CONFIG_DIR,
+        STARTUP_INIT_LOG_PATH,
+        clear_local_override_raw_root_dir,
+        get_local_overrides_path,
+        pop_runtime_init_errors,
+        reload_hotel_config_inplace,
+        set_local_override_raw_root_dir,
+    )
+except Exception as exc:
+    logging.exception("Failed to import booking_curve.config")
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        log_hint = Path(local_app_data) / "BookingCurveLab" / "output" / "logs" / "startup_init.log"
+    else:
+        log_hint = Path.home() / ".local" / "share" / "BookingCurveLab" / "output" / "logs" / "startup_init.log"
+    try:
+        log_hint.parent.mkdir(parents=True, exist_ok=True)
+        with log_hint.open("a", encoding="utf-8") as f:
+            f.write(f"{datetime.now().isoformat()} booking_curve.config import failed: {exc}\n")
+    except Exception:
+        pass
+    root = tk.Tk()
+    root.withdraw()
+    messagebox.showerror(
+        "起動エラー",
+        f"booking_curve.config の読み込みに失敗しました。\n{exc}\n\nログ: {log_hint}",
+    )
+    root.destroy()
+    sys.exit(1)
+
+try:
+    from booking_curve.gui_backend import (
+        HOTEL_CONFIG,
+        OUTPUT_DIR,
+        build_calendar_for_gui,
+        build_range_rebuild_plan_for_gui,
+        clear_evaluation_detail_cache,
+        get_all_target_months_for_lt_from_daily_snapshots,
+        get_best_model_for_month,
+        get_booking_curve_data,
+        get_calendar_coverage,
+        get_daily_forecast_table,
+        get_eval_monthly_by_asof,
+        get_eval_overview_by_asof,
+        get_latest_asof_for_hotel,
+        get_latest_asof_for_month,
+        get_model_evaluation_table,
+        get_monthly_curve_data,
+        get_monthly_forecast_scenarios,
+        run_build_lt_data_all_for_gui,
+        run_build_lt_data_for_gui,
+        run_daily_snapshots_for_gui,
+        run_forecast_for_gui,
+        run_full_evaluation_for_gui_range,
+        run_import_missing_only,
+        run_missing_audit_for_gui,
+        run_missing_check_for_gui,
+    )
+except Exception as exc:
+    logging.exception("Failed to import booking_curve.gui_backend")
+    try:
+        STARTUP_INIT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with STARTUP_INIT_LOG_PATH.open("a", encoding="utf-8") as f:
+            f.write(f"{datetime.now().isoformat()} booking_curve.gui_backend import failed: {exc}\n")
+    except Exception:
+        pass
+    root = tk.Tk()
+    root.withdraw()
+    messagebox.showerror(
+        "起動エラー",
+        f"booking_curve.gui_backend の読み込みに失敗しました。\n{exc}\n\nログ: {STARTUP_INIT_LOG_PATH}",
+    )
+    root.destroy()
+    sys.exit(1)
 
 # デフォルトホテル (現状は大国町のみ想定)
 DEFAULT_HOTEL = next(iter(HOTEL_CONFIG.keys()), "daikokucho")
 SETTINGS_FILE = OUTPUT_DIR / "gui_settings.json"
+
+
+def open_file(path: str | Path) -> None:
+    path_obj = Path(path)
+    path_str = str(path_obj)
+    if sys.platform.startswith("win"):
+        os.startfile(path_str)  # type: ignore[attr-defined]
+        return
+
+    if sys.platform == "darwin":
+        subprocess.run(["open", path_str], check=False)
+    else:
+        subprocess.run(["xdg-open", path_str], check=False)
 
 
 class BookingCurveApp(tk.Tk):
@@ -51,6 +142,14 @@ class BookingCurveApp(tk.Tk):
         super().__init__()
         self.title("Booking Curve Lab GUI")
         self.geometry("1200x900")
+
+        init_errors = pop_runtime_init_errors()
+        if init_errors:
+            details = "\n".join(init_errors)
+            messagebox.showerror(
+                "初期化エラー",
+                f"{details}\n\nログ: {STARTUP_INIT_LOG_PATH}",
+            )
 
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill=tk.BOTH, expand=True)
@@ -89,6 +188,7 @@ class BookingCurveApp(tk.Tk):
         self.me_to_var = tk.StringVar(value="")
         self._asof_overview_view_df: Optional[pd.DataFrame] = None
         self._asof_detail_view_df: Optional[pd.DataFrame] = None
+        self._latest_asof_label_defaults: dict[tk.Label, tuple[str, str]] = {}
 
         self._init_daily_forecast_tab()
         self._init_model_eval_tab()
@@ -116,6 +216,204 @@ class BookingCurveApp(tk.Tk):
                 json.dump(self._settings, f, ensure_ascii=False, indent=2)
         except Exception:
             pass
+
+    def _on_open_output_dir(self) -> None:
+        open_file(OUTPUT_DIR)
+
+    def _on_open_config_dir(self) -> None:
+        open_file(CONFIG_DIR)
+
+    def _on_reload_settings_clicked(self) -> None:
+        old_keys = set(HOTEL_CONFIG.keys())
+        try:
+            reload_hotel_config_inplace()
+        except Exception as exc:
+            logging.exception("Failed to reload hotel config")
+            messagebox.showerror(
+                "エラー",
+                f"設定の再読み込みに失敗しました。\n{exc}",
+            )
+            return
+
+        new_keys = list(HOTEL_CONFIG.keys())
+        new_sorted = sorted(new_keys)
+        if old_keys and new_sorted:
+            self._update_hotel_combobox_values(old_keys, new_sorted)
+
+        for var_name in (
+            "hotel_var",
+            "me_hotel_var",
+            "asof_hotel_var",
+            "df_hotel_var",
+            "bc_hotel_var",
+            "mc_hotel_var",
+        ):
+            self._ensure_hotel_var_valid(var_name)
+
+        try:
+            clear_evaluation_detail_cache()
+        except Exception:
+            logging.exception("Failed to clear evaluation detail cache after config reload")
+
+        messagebox.showinfo(
+            "設定の再読み込み",
+            f"hotels.json の再読み込みが完了しました（ホテル数: {len(HOTEL_CONFIG)}）",
+        )
+
+    def _update_hotel_combobox_values(self, old_keys: set[str], new_values: list[str]) -> None:
+        if not old_keys or not new_values:
+            return
+
+        def walk_widgets(widget: tk.Widget) -> list[tk.Widget]:
+            widgets = []
+            for child in widget.winfo_children():
+                widgets.append(child)
+                widgets.extend(walk_widgets(child))
+            return widgets
+
+        for widget in walk_widgets(self):
+            if not isinstance(widget, ttk.Combobox):
+                continue
+            values = widget.cget("values")
+            if not values:
+                continue
+            values_set = set(values)
+            if values_set and values_set.issubset(old_keys):
+                widget["values"] = new_values
+
+    def _ensure_hotel_var_valid(self, var_name: str) -> None:
+        var = getattr(self, var_name, None)
+        if not isinstance(var, tk.StringVar):
+            return
+        current = (var.get() or "").strip()
+        if current and current in HOTEL_CONFIG:
+            return
+        var.set(next(iter(HOTEL_CONFIG.keys()), ""))
+
+    def _get_missing_warning_ack(self, hotel_tag: str) -> str | None:
+        master = self._settings.get("master_settings") or {}
+        ack_map = master.get("missing_warning_ack") or {}
+        if isinstance(ack_map, dict):
+            value = ack_map.get(hotel_tag)
+            return value if isinstance(value, str) else None
+        return None
+
+    def _set_missing_warning_ack(self, hotel_tag: str, asof_value: str) -> None:
+        master = self._settings.setdefault("master_settings", {})
+        ack_map = master.setdefault("missing_warning_ack", {})
+        if not isinstance(ack_map, dict):
+            master["missing_warning_ack"] = {}
+            ack_map = master["missing_warning_ack"]
+        ack_map[hotel_tag] = asof_value
+        self._save_settings()
+
+    def _get_missing_warning_sig_ack(self, hotel_tag: str) -> str | None:
+        master = self._settings.get("master_settings") or {}
+        ack_map = master.get("missing_warning_sig_ack") or {}
+        if isinstance(ack_map, dict):
+            value = ack_map.get(hotel_tag)
+            return value if isinstance(value, str) else None
+        return None
+
+    def _set_missing_warning_sig_ack(self, hotel_tag: str, sig_value: str) -> None:
+        master = self._settings.setdefault("master_settings", {})
+        ack_map = master.setdefault("missing_warning_sig_ack", {})
+        if not isinstance(ack_map, dict):
+            master["missing_warning_sig_ack"] = {}
+            ack_map = master["missing_warning_sig_ack"]
+        ack_map[hotel_tag] = sig_value
+        self._save_settings()
+
+    def _precheck_missing_report_for_range_rebuild(
+        self,
+        hotel_tag: str,
+        asof_min: pd.Timestamp,
+        asof_max: pd.Timestamp,
+    ) -> bool:
+        asof_max_str = asof_max.strftime("%Y-%m-%d")
+
+        try:
+            report_path = run_missing_check_for_gui(hotel_tag)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("欠損チェック失敗", f"欠損チェックの実行に失敗しました。\n{exc}")
+            return False
+
+        try:
+            df_report = pd.read_csv(report_path, dtype=str)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("欠損チェック失敗", f"欠損レポートの読み込みに失敗しました。\n{exc}")
+            return False
+
+        if df_report.empty:
+            return True
+
+        kind_series = df_report.get("kind", pd.Series([], dtype=str))
+        if kind_series.empty:
+            return True
+
+        asof_max_ts = pd.Timestamp(asof_max).normalize()
+        asof_min_ts = pd.Timestamp(asof_min).normalize()
+
+        raw_missing_mask = kind_series == "raw_missing"
+        raw_missing_dates = pd.to_datetime(df_report.get("asof_date"), errors="coerce").dt.normalize()
+        raw_missing_count = int((raw_missing_mask & (raw_missing_dates == asof_max_ts)).sum())
+        raw_missing_targets = df_report.get("target_month")
+        if raw_missing_targets is None:
+            raw_missing_target_months: list[str] = []
+        else:
+            raw_missing_target_months = sorted(
+                {str(value) for value in raw_missing_targets[raw_missing_mask & (raw_missing_dates == asof_max_ts)].dropna().unique()},
+            )
+
+        asof_missing_mask = kind_series == "asof_missing"
+        asof_missing_col = "missing_asof_date" if "missing_asof_date" in df_report.columns else "asof_date"
+        asof_missing_dates = pd.to_datetime(df_report.get(asof_missing_col), errors="coerce").dt.normalize()
+        asof_missing_count = int(
+            (asof_missing_mask & asof_missing_dates.between(asof_min_ts, asof_max_ts)).sum(),
+        )
+
+        if raw_missing_dates.isna().all() and asof_missing_dates.isna().all():
+            return True
+
+        if raw_missing_count == 0 and asof_missing_count == 0:
+            return True
+
+        asof_missing_list = sorted(
+            {
+                date_value.strftime("%Y-%m-%d")
+                for date_value in asof_missing_dates[asof_missing_mask]
+                if not pd.isna(date_value) and date_value >= asof_min_ts and date_value <= asof_max_ts
+            },
+        )
+        signature_payload = json.dumps(
+            {
+                "raw_missing_count": raw_missing_count,
+                "raw_missing_target_months": raw_missing_target_months,
+                "asof_missing_dates": asof_missing_list,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        current_sig = hashlib.sha1(signature_payload.encode("utf-8")).hexdigest()
+        saved_sig = self._get_missing_warning_sig_ack(hotel_tag)
+        if saved_sig == current_sig:
+            return True
+
+        message = (
+            "直近レンジ内の欠損が検出されました。\n"
+            f"RAW欠損(最新ASOF): {raw_missing_count} 件\n"
+            f"ASOF欠損(直近レンジ): {asof_missing_count} 件\n"
+            f"レポート: {report_path}\n\n"
+            "続行しますか？"
+        )
+
+        proceed = messagebox.askokcancel("欠損警告", message)
+        if not proceed:
+            return False
+
+        self._set_missing_warning_ack(hotel_tag, asof_max_str)
+        self._set_missing_warning_sig_ack(hotel_tag, current_sig)
+        return True
 
     def _on_hotel_var_changed(self, *args) -> None:
         """
@@ -500,14 +798,151 @@ class BookingCurveApp(tk.Tk):
             command=self._on_save_master_daily_caps,
         ).grid(row=0, column=4, padx=12, pady=2, sticky="e")
 
+        # ------- RAW取込元（このPCのみ） -------
+        raw_root_frame = ttk.LabelFrame(frame, text="RAW取込元（このPCのみ）")
+        raw_root_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 8))
+
+        ttk.Label(
+            raw_root_frame,
+            text="この設定はこのPCのみ有効です（hotels.jsonは変更しません）。",
+        ).grid(row=0, column=0, columnspan=3, padx=4, pady=(2, 6), sticky="w")
+
+        ttk.Label(raw_root_frame, text="現在のRAW取込元:").grid(row=1, column=0, sticky="nw", padx=4, pady=2)
+        self.master_raw_root_dir_var = tk.StringVar()
+        self.master_raw_root_dir_label = ttk.Label(
+            raw_root_frame,
+            textvariable=self.master_raw_root_dir_var,
+            wraplength=800,
+            justify="left",
+        )
+        self.master_raw_root_dir_label.grid(row=1, column=1, columnspan=2, padx=4, pady=2, sticky="w")
+
+        ttk.Button(
+            raw_root_frame,
+            text="変更...",
+            command=self._on_change_master_raw_root_dir,
+        ).grid(row=2, column=1, padx=4, pady=4, sticky="w")
+        ttk.Button(
+            raw_root_frame,
+            text="初期値に戻す",
+            command=self._on_clear_master_raw_root_dir,
+        ).grid(row=2, column=2, padx=4, pady=4, sticky="w")
+
+        local_overrides_path = get_local_overrides_path()
+        ttk.Label(
+            raw_root_frame,
+            text=f"ローカル設定ファイル: {local_overrides_path}",
+            foreground="#555555",
+            wraplength=800,
+            justify="left",
+        ).grid(row=3, column=0, columnspan=3, padx=4, pady=(2, 4), sticky="w")
+
+        output_frame = ttk.LabelFrame(frame, text="出力フォルダ")
+        output_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 8))
+
+        ttk.Label(
+            output_frame,
+            text=f"出力フォルダ: {OUTPUT_DIR}",
+            foreground="#555555",
+            wraplength=800,
+            justify="left",
+        ).grid(row=0, column=0, padx=4, pady=2, sticky="w")
+
+        ttk.Button(
+            output_frame,
+            text="出力フォルダを開く",
+            command=self._on_open_output_dir,
+        ).grid(row=0, column=1, padx=8, pady=2, sticky="w")
+
+        config_frame = ttk.LabelFrame(frame, text="設定フォルダ")
+        config_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 8))
+
+        ttk.Label(
+            config_frame,
+            text=f"設定フォルダ: {CONFIG_DIR}",
+            foreground="#555555",
+            wraplength=800,
+            justify="left",
+        ).grid(row=0, column=0, padx=4, pady=2, sticky="w")
+
+        ttk.Button(
+            config_frame,
+            text="設定フォルダを開く",
+            command=self._on_open_config_dir,
+        ).grid(row=0, column=1, padx=8, pady=2, sticky="w")
+
+        ttk.Button(
+            config_frame,
+            text="設定を再読み込み",
+            command=self._on_reload_settings_clicked,
+        ).grid(row=0, column=2, padx=8, pady=2, sticky="w")
+
+        advanced_frame = ttk.LabelFrame(frame, text="Advanced / Daily snapshots")
+        advanced_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 8))
+
+        ttk.Label(
+            advanced_frame,
+            text="FULL_ALL は大量処理です。事前確認のうえ実行してください。",
+        ).grid(row=0, column=0, columnspan=2, padx=4, pady=2, sticky="w")
+        self.full_all_button = ttk.Button(
+            advanced_frame,
+            text="Daily snapshots 全量再生成（危険）",
+            command=self._on_run_full_all_snapshots,
+        )
+        self.full_all_button.grid(row=1, column=0, padx=4, pady=4, sticky="w")
+        self.full_all_status_var = tk.StringVar(value="")
+        ttk.Label(advanced_frame, textvariable=self.full_all_status_var).grid(row=1, column=1, padx=4, pady=4, sticky="w")
+
+        self.lt_all_button = ttk.Button(
+            advanced_frame,
+            text="LT_DATA 全期間生成（危険）",
+            command=self._on_run_lt_all,
+        )
+        self.lt_all_button.grid(row=2, column=0, padx=4, pady=4, sticky="w")
+        self.lt_all_status_var = tk.StringVar(value="")
+        ttk.Label(advanced_frame, textvariable=self.lt_all_status_var).grid(row=2, column=1, padx=4, pady=4, sticky="w")
+
+        ttk.Button(
+            advanced_frame,
+            text="欠損チェック（運用）",
+            command=self._on_run_missing_check,
+        ).grid(row=3, column=0, padx=4, pady=4, sticky="w")
+        ttk.Button(
+            advanced_frame,
+            text="欠損一覧（運用）",
+            command=self._on_open_missing_ops_list,
+        ).grid(row=3, column=1, padx=4, pady=4, sticky="w")
+        ttk.Button(
+            advanced_frame,
+            text="欠損監査（全期間）",
+            command=self._on_run_missing_audit,
+        ).grid(row=4, column=0, padx=4, pady=4, sticky="w")
+        ttk.Button(
+            advanced_frame,
+            text="欠損だけ取り込み",
+            command=self._on_run_import_missing_only,
+        ).grid(row=5, column=0, padx=4, pady=4, sticky="w")
+
+        self.master_missing_check_status_var = tk.StringVar(value="欠損検査：未実施")
+        self.master_missing_check_status_label = ttk.Label(
+            advanced_frame,
+            textvariable=self.master_missing_check_status_var,
+            foreground="#555555",
+        )
+        self.master_missing_check_status_label.grid(row=6, column=0, columnspan=2, padx=4, pady=(8, 4), sticky="w")
+
         # 初期表示
         self._refresh_calendar_coverage()
         self._refresh_master_daily_caps()
+        self._refresh_master_raw_root_dir()
+        self._update_master_missing_check_status()
 
     def _on_hotel_changed(self, event=None) -> None:
         # マスタ設定タブのホテル変更時に、カレンダー範囲とキャパ設定を両方更新
         self._refresh_calendar_coverage()
         self._refresh_master_daily_caps()
+        self._refresh_master_raw_root_dir()
+        self._update_master_missing_check_status()
 
     def _on_global_hotel_changed(self, *args) -> None:
         """
@@ -521,6 +956,8 @@ class BookingCurveApp(tk.Tk):
 
         self._refresh_calendar_coverage()
         self._refresh_master_daily_caps()
+        self._refresh_master_raw_root_dir()
+        self._update_master_missing_check_status()
 
         if hasattr(self, "df_hotel_var"):
             fc_cap, occ_cap = self._get_daily_caps_for_hotel(hotel_tag)
@@ -530,13 +967,11 @@ class BookingCurveApp(tk.Tk):
             self._update_df_best_model_label()
 
             if hasattr(self, "df_tree"):
+                self._reset_df_selection_state()
                 for item in self.df_tree.get_children():
                     self.df_tree.delete(item)
             self.df_daily_forecast_df = None
             self.df_table_df = None
-            self._df_cell_anchor = None
-            self._df_cell_end = None
-            self._clear_df_selection_rect()
 
         if hasattr(self, "bc_hotel_var"):
             fc_cap, _ = self._get_daily_caps_for_hotel(hotel_tag)
@@ -637,6 +1072,124 @@ class BookingCurveApp(tk.Tk):
         except Exception:
             self.master_occ_cap_var.set(str(occ_cap))
 
+    def _refresh_master_raw_root_dir(self) -> None:
+        if not hasattr(self, "master_raw_root_dir_var"):
+            return
+
+        hotel_tag = self.hotel_var.get().strip()
+        if not hotel_tag:
+            self.master_raw_root_dir_var.set("ホテル未選択")
+            return
+
+        cfg = HOTEL_CONFIG.get(hotel_tag, {})
+        raw_root_dir = cfg.get("raw_root_dir") or cfg.get("input_dir")
+        if not raw_root_dir:
+            self.master_raw_root_dir_var.set("未設定")
+            return
+
+        self.master_raw_root_dir_var.set(str(raw_root_dir))
+
+    def _on_change_master_raw_root_dir(self) -> None:
+        hotel_tag = self.hotel_var.get().strip()
+        if not hotel_tag:
+            messagebox.showerror("エラー", "ホテルが選択されていません。")
+            return
+
+        selected_dir = filedialog.askdirectory(title="RAW取込元フォルダを選択")
+        if not selected_dir:
+            return
+
+        try:
+            set_local_override_raw_root_dir(hotel_tag, selected_dir)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("エラー", f"RAW取込元フォルダの変更に失敗しました。\n{exc}")
+            return
+
+        self._refresh_master_raw_root_dir()
+        messagebox.showinfo("完了", "RAW取込元フォルダを更新しました（このPCのみ）。")
+
+    def _on_clear_master_raw_root_dir(self) -> None:
+        hotel_tag = self.hotel_var.get().strip()
+        if not hotel_tag:
+            messagebox.showerror("エラー", "ホテルが選択されていません。")
+            return
+
+        try:
+            clear_local_override_raw_root_dir(hotel_tag)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("エラー", f"RAW取込元フォルダの復帰に失敗しました。\n{exc}")
+            return
+
+        self._refresh_master_raw_root_dir()
+        messagebox.showinfo("完了", "RAW取込元フォルダを初期値に戻しました。")
+
+    def _set_master_missing_check_status(self, text: str, color: str) -> None:
+        self.master_missing_check_status_var.set(text)
+        try:
+            self.master_missing_check_status_label.configure(foreground=color)
+        except Exception:
+            logging.debug("欠損検査ステータスラベルの色設定に失敗しました", exc_info=True)
+
+    def _update_master_missing_check_status(self, csv_path: str | Path | None = None) -> None:
+        default_text = "欠損検査：未実施"
+        default_color = "#C62828"
+
+        if not hasattr(self, "master_missing_check_status_var"):
+            return
+
+        target_path: Path | None
+        if csv_path is not None:
+            target_path = Path(csv_path)
+        else:
+            hotel_tag = self.hotel_var.get().strip()
+            target_path = OUTPUT_DIR / f"missing_report_{hotel_tag}_ops.csv" if hotel_tag else None
+
+        if target_path is None or not target_path.exists():
+            self._set_master_missing_check_status(default_text, default_color)
+            return
+
+        try:
+            df = pd.read_csv(target_path, dtype=str)
+        except Exception:
+            self._set_master_missing_check_status("欠損検査：状態不明（CSV読込失敗）", "#EF6C00")
+            return
+
+        hotel_tag = self.hotel_var.get().strip()
+        ack_set = load_missing_ack_set(hotel_tag) if hotel_tag else set()
+        filtered_df = filter_missing_report_with_ack(df, ack_set)
+
+        severity_series = filtered_df.get("severity", pd.Series([], dtype=str)).fillna("")
+        error_count = int((severity_series == "ERROR").sum())
+        warn_count = int((severity_series == "WARN").sum())
+
+        try:
+            last_run = datetime.fromtimestamp(target_path.stat().st_mtime)
+            last_run_text = last_run.strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            last_run_text = "不明"
+
+        text = f"欠損検査：最終実施 {last_run_text}（ERROR:{error_count} / WARN:{warn_count}）"
+
+        snapshots_path = OUTPUT_DIR / f"daily_snapshots_{hotel_tag}.csv" if hotel_tag else None
+        needs_rerun = False
+        if snapshots_path is not None and snapshots_path.exists():
+            try:
+                needs_rerun = snapshots_path.stat().st_mtime > target_path.stat().st_mtime
+            except Exception:
+                needs_rerun = False
+
+        if needs_rerun:
+            text = f"{text} 要再実施"
+
+        if error_count > 0 or needs_rerun:
+            color = "#C62828"
+        elif warn_count > 0:
+            color = "#EF6C00"
+        else:
+            color = "#2E7D32"
+
+        self._set_master_missing_check_status(text, color)
+
     def _on_save_master_daily_caps(self) -> None:
         """マスタ設定タブからキャパシティを保存し、関連タブにも反映する。"""
         hotel_tag = self.hotel_var.get().strip()
@@ -666,6 +1219,517 @@ class BookingCurveApp(tk.Tk):
             self.bc_forecast_cap_var.set(str(fc_val))
 
         messagebox.showinfo("保存完了", "キャパシティ設定を保存しました。")
+
+    def _on_run_missing_check(self) -> None:
+        hotel_tag = self.hotel_var.get().strip()
+        if not hotel_tag:
+            messagebox.showerror("エラー", "ホテルが選択されていません。")
+            return
+
+        try:
+            csv_path = run_missing_check_for_gui(hotel_tag)
+            self._show_stale_asof_warning(csv_path)
+            open_file(csv_path)
+            self._update_master_missing_check_status(csv_path)
+        except Exception as e:
+            logging.exception("欠損チェックに失敗しました")
+            messagebox.showerror("エラー", f"欠損チェックに失敗しました:\n{e}")
+
+    def _on_run_missing_audit(self) -> None:
+        hotel_tag = self.hotel_var.get().strip()
+        if not hotel_tag:
+            messagebox.showerror("エラー", "ホテルが選択されていません。")
+            return
+
+        try:
+            csv_path = run_missing_audit_for_gui(hotel_tag)
+            open_file(csv_path)
+            self._update_master_missing_check_status()
+        except Exception as e:
+            logging.exception("欠損監査に失敗しました")
+            messagebox.showerror("エラー", f"欠損監査に失敗しました:\n{e}")
+
+    def _on_run_import_missing_only(self) -> None:
+        hotel_tag = self.hotel_var.get().strip()
+        if not hotel_tag:
+            messagebox.showerror("エラー", "ホテルが選択されていません。")
+            return
+
+        try:
+            result = run_import_missing_only(hotel_tag)
+        except ValueError as e:
+            logging.exception("欠損だけ取り込みに失敗しました")
+            messagebox.showerror("エラー", f"欠損だけ取り込みに失敗しました:\n{e}")
+            return
+        except Exception as e:  # noqa: BLE001
+            logging.exception("欠損だけ取り込みに失敗しました")
+            messagebox.showerror("エラー", f"欠損だけ取り込みに失敗しました:\n{e}")
+            return
+
+        processed_pairs = result.get("processed_pairs", 0)
+        skipped_raw = result.get("skipped_missing_raw_pairs", 0)
+        skipped_asof_missing = result.get("skipped_asof_missing_rows", 0)
+        updated = len(result.get("updated_pairs", []))
+        coverage_warning = result.get("coverage_warning")
+        msg_lines = [
+            f"処理対象ペア数: {processed_pairs}",
+            f"raw欠損でスキップ: {skipped_raw}",
+            f"ASOF丸抜けでスキップ: {skipped_asof_missing}",
+            f"更新したペア数: {updated}",
+        ]
+        if isinstance(coverage_warning, (int, float)):
+            msg_lines.append(f"daily snapshot coverage (WARN): {coverage_warning:.1%}")
+        messagebox.showinfo("完了", "\n".join(msg_lines))
+
+        report_path = result.get("missing_report_path")
+        if report_path:
+            try:
+                open_file(report_path)
+            except Exception:
+                pass
+            self._update_master_missing_check_status(report_path)
+        else:
+            self._update_master_missing_check_status()
+
+    def _show_stale_asof_warning(self, csv_path: str | Path) -> None:
+        try:
+            df = pd.read_csv(csv_path, dtype=str)
+        except Exception:
+            return
+
+        if df.empty or "kind" not in df.columns:
+            return
+
+        hotel_tag = self.hotel_var.get().strip()
+        ack_set = load_missing_ack_set(hotel_tag) if hotel_tag else set()
+        filtered_df = filter_missing_report_with_ack(df, ack_set)
+        severity_series = filtered_df.get("severity", pd.Series([], dtype=str)).fillna("")
+        error_count = int((severity_series == "ERROR").sum())
+        warn_count = int((severity_series == "WARN").sum())
+
+        if error_count == 0 and warn_count == 0:
+            return
+
+        msg_lines = ["欠損検査結果に警告があります。"]
+        msg_lines.append(f"ERROR: {error_count} 件 / WARN: {warn_count} 件")
+        msg_lines.append("詳細は欠損レポートをご確認ください。")
+        messagebox.showwarning("警告", "\n".join(msg_lines))
+
+    def _on_open_missing_ops_list(self) -> None:
+        hotel_tag = self.hotel_var.get().strip()
+        if not hotel_tag:
+            messagebox.showerror("エラー", "ホテルが選択されていません。")
+            return
+
+        report_path = OUTPUT_DIR / f"missing_report_{hotel_tag}_ops.csv"
+        if not report_path.exists():
+            messagebox.showerror("エラー", "欠損レポートが見つかりません。先に欠損チェックを実行してください。")
+            return
+
+        try:
+            df_report = pd.read_csv(report_path, dtype=str)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("エラー", f"欠損レポートの読み込みに失敗しました。\n{exc}")
+            return
+
+        if df_report.empty:
+            messagebox.showinfo("欠損一覧（運用）", "欠損レポートに表示対象の行がありません。")
+            return
+
+        df_report["severity"] = df_report.get("severity", "").fillna("")
+        df_report = df_report[df_report["severity"].isin(["ERROR", "WARN"])].copy()
+
+        if df_report.empty:
+            messagebox.showinfo("欠損一覧（運用）", "ERROR/WARN の欠損がありません。")
+            return
+
+        ack_df = load_missing_ack_df(hotel_tag)
+        acked_keys_state = {build_ack_key_from_row(row) for _, row in ack_df.iterrows()}
+
+        window = tk.Toplevel(self)
+        window.title(f"欠損一覧（運用） - {hotel_tag}")
+        window.geometry("1200x600")
+        window.minsize(900, 400)
+        window.columnconfigure(0, weight=1)
+        window.rowconfigure(1, weight=1)
+
+        header_frame = ttk.Frame(window)
+        header_frame.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
+        header_frame.columnconfigure(1, weight=1)
+
+        header = ttk.Label(header_frame, text="ACK列をクリックして確認済みをトグルできます。")
+        header.grid(row=0, column=0, sticky="w")
+
+        hide_acked_var = tk.BooleanVar(value=True)
+        hide_acked_check = ttk.Checkbutton(
+            header_frame,
+            text="ACK済を非表示",
+            variable=hide_acked_var,
+        )
+        hide_acked_check.grid(row=0, column=1, sticky="e")
+
+        columns = ["ack", "kind", "target_month", "asof_date", "severity", "path", "message"]
+        headings = {
+            "ack": "ACK",
+            "kind": "kind",
+            "target_month": "target_month",
+            "asof_date": "asof_date",
+            "severity": "severity",
+            "path": "path",
+            "message": "message",
+        }
+
+        tree_frame = ttk.Frame(window)
+        tree_frame.grid(row=1, column=0, sticky="nsew", padx=8, pady=8)
+        tree_frame.rowconfigure(0, weight=1)
+        tree_frame.columnconfigure(0, weight=1)
+
+        tree = ttk.Treeview(tree_frame, columns=columns, show="headings", selectmode="browse")
+        tree.grid(row=0, column=0, sticky="nsew")
+
+        scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns", padx=(4, 0))
+        tree.configure(yscrollcommand=scrollbar.set)
+
+        for col in columns:
+            tree.heading(col, text=headings.get(col, col))
+            width = 60 if col == "ack" else 120
+            if col in {"path", "message"}:
+                width = 280 if col == "path" else 320
+            tree.column(col, width=width, anchor="w")
+
+        def safe_cell(value: object) -> str:
+            if value is None or pd.isna(value):
+                return ""
+            return str(value)
+
+        item_to_key: dict[str, str] = {}
+
+        def refresh_tree() -> None:
+            nonlocal item_to_key
+            children = tree.get_children()
+            if children:
+                tree.delete(*children)
+            item_to_key = {}
+            for _, row in df_report.iterrows():
+                ack_key = build_ack_key_from_row(row)
+                if hide_acked_var.get() and ack_key in acked_keys_state:
+                    continue
+                ack_mark = "✓" if ack_key in acked_keys_state else ""
+                values = [
+                    ack_mark,
+                    safe_cell(row.get("kind", "")),
+                    safe_cell(row.get("target_month", "")),
+                    safe_cell(row.get("asof_date", "")),
+                    safe_cell(row.get("severity", "")),
+                    safe_cell(row.get("path", "")),
+                    safe_cell(row.get("message", "")),
+                ]
+                item_id = tree.insert("", "end", values=values)
+                item_to_key[item_id] = ack_key
+
+        def on_toggle_hide_acked() -> None:
+            refresh_tree()
+
+        hide_acked_check.configure(command=on_toggle_hide_acked)
+        refresh_tree()
+
+        def on_toggle_ack(event: tk.Event) -> None:
+            region = tree.identify("region", event.x, event.y)
+            if region != "cell":
+                return
+            col = tree.identify_column(event.x)
+            if col != "#1":
+                return
+            item_id = tree.identify_row(event.y)
+            if not item_id:
+                return
+            ack_key = item_to_key.get(item_id)
+            if not ack_key:
+                return
+            if ack_key in acked_keys_state:
+                acked_keys_state.remove(ack_key)
+            else:
+                acked_keys_state.add(ack_key)
+            refresh_tree()
+
+        tree.bind("<Button-1>", on_toggle_ack)
+
+        button_frame = ttk.Frame(window)
+        button_frame.grid(row=2, column=0, sticky="e", padx=8, pady=(0, 8))
+
+        def on_save_ack() -> None:
+            existing_df = load_missing_ack_df(hotel_tag)
+            updated_df = update_missing_ack_df(existing_df, df_report, acked_keys_state)
+            try:
+                write_missing_ack_df(hotel_tag, updated_df)
+            except Exception as exc:  # noqa: BLE001
+                messagebox.showerror("保存失敗", f"ACKの保存に失敗しました。\n{exc}")
+                return
+
+            self._update_master_missing_check_status(report_path)
+            refresh_tree()
+            messagebox.showinfo("保存完了", "ACKを保存しました。")
+
+        ttk.Button(button_frame, text="保存", command=on_save_ack).pack(side=tk.RIGHT, padx=4)
+        ttk.Button(button_frame, text="閉じる", command=window.destroy).pack(side=tk.RIGHT, padx=4)
+
+    def _load_historical_lt_all_rate(self) -> float | None:
+        if not LOGS_DIR.exists():
+            return None
+
+        for log_path in sorted(LOGS_DIR.glob("lt_all_*.log"), reverse=True):
+            try:
+                lines = log_path.read_text(encoding="utf-8").splitlines()
+            except Exception:
+                continue
+            for line in reversed(lines):
+                match = re.search(r"rate_months_per_sec=([0-9.]+)", line)
+                if match:
+                    try:
+                        return float(match.group(1))
+                    except ValueError:
+                        continue
+        return None
+
+    def _on_run_full_all_snapshots(self) -> None:
+        hotel_tag = self.hotel_var.get().strip()
+        if not hotel_tag:
+            messagebox.showerror("エラー", "ホテルが選択されていません。")
+            return
+
+        cfg = HOTEL_CONFIG.get(hotel_tag)
+        if cfg is None:
+            messagebox.showerror("エラー", f"ホテル設定が見つかりません: {hotel_tag}")
+            return
+
+        input_dir_raw = cfg.get("raw_root_dir") or cfg.get("input_dir")
+        if not input_dir_raw:
+            messagebox.showerror("エラー", f"入力ディレクトリが設定されていません: {hotel_tag}")
+            return
+
+        recursive = bool(cfg.get("include_subfolders", False))
+        input_dir = Path(input_dir_raw)
+        file_count = count_excel_files(input_dir, recursive=recursive)
+        rate = load_historical_full_all_rate(LOGS_DIR) or DEFAULT_FULL_ALL_RATE
+        estimate_sec = file_count / rate if rate > 0 and file_count else None
+        log_file = LOGS_DIR / f"full_all_{datetime.now().strftime('%Y%m%d_%H%M')}.log"
+
+        estimate_text = (
+            f"概算時間: ~{estimate_sec:.1f} 秒 (rate {rate:.2f} files/sec)"
+            if estimate_sec is not None
+            else f"概算時間: 不明 (rate {rate:.2f} files/sec)"
+        )
+
+        subfolder_label = "含む" if recursive else "含まない"
+        message = (
+            "Daily snapshots を全量再生成します。\n"
+            f"ホテル: {hotel_tag}\n"
+            f"対象ファイル数: {file_count} (サブフォルダ{subfolder_label})\n"
+            f"{estimate_text}\n"
+            f"ログ: {log_file}"
+        )
+
+        messagebox.showinfo("FULL_ALL 事前確認", message)
+
+        confirm = simpledialog.askstring("最終確認", '続行するには "FULL_ALL" と入力してください。')
+        if confirm is None or confirm.strip().upper() != "FULL_ALL":
+            messagebox.showinfo("中断", "FULL_ALL を入力しなかったため処理を中止しました。")
+            return
+
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("エラー", f"ログファイルを開けませんでした。\n{exc}")
+            return
+        file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s - %(message)s"))
+        self.full_all_button.state(["disabled"])
+        self.full_all_status_var.set("実行中...")
+
+        threading.Thread(
+            target=self._run_full_all_snapshots_async,
+            args=(hotel_tag, log_file, file_handler),
+            daemon=True,
+        ).start()
+
+    def _run_full_all_snapshots_async(self, hotel_tag: str, log_file: Path, file_handler: logging.Handler) -> None:
+        root_logger = logging.getLogger()
+        root_logger.addHandler(file_handler)
+
+        success = True
+        error: Exception | None = None
+        try:
+            run_daily_snapshots_for_gui(hotel_tag=hotel_tag, mode="FULL_ALL")
+        except Exception as exc:  # noqa: BLE001
+            success = False
+            error = exc
+            logging.exception("FULL_ALL 実行中にエラーが発生しました")
+        finally:
+            root_logger.removeHandler(file_handler)
+            try:
+                file_handler.close()
+            except Exception:
+                logging.warning("FULL_ALL ログファイルのクローズに失敗しました", exc_info=True)
+
+        self.after(0, lambda: self._on_full_all_complete(success, hotel_tag, log_file, error))
+
+    def _on_full_all_complete(self, success: bool, hotel_tag: str, log_file: Path, error: Exception | None) -> None:
+        self.full_all_button.state(["!disabled"])
+        self.full_all_status_var.set("")
+        try:
+            self._update_bc_latest_asof_label(update_asof_if_empty=False)
+            self._update_df_latest_asof_label(update_asof_if_empty=False)
+            self._update_master_missing_check_status()
+        except Exception:
+            logging.warning("最新ASOF表示の更新に失敗しました", exc_info=True)
+
+        if success:
+            messagebox.showinfo("完了", f"Daily snapshots FULL_ALL が完了しました。\nログ: {log_file}")
+            proceed = messagebox.askyesno("確認", "続けて全期間LT_DATA生成を実行しますか？")
+            if proceed:
+                self._on_run_lt_all(hotel_tag)
+        else:
+            messagebox.showerror(
+                "エラー",
+                f"FULL_ALL 実行に失敗しました。\n{error}\nログ: {log_file}",
+            )
+
+    def _on_run_lt_all(self, hotel_tag: str | None = None) -> None:
+        target_hotel = hotel_tag or self.hotel_var.get().strip()
+        if not target_hotel:
+            messagebox.showerror("エラー", "ホテルが選択されていません。")
+            return
+
+        try:
+            months = get_all_target_months_for_lt_from_daily_snapshots(target_hotel)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("エラー", f"全期間LT_DATA生成の対象月取得に失敗しました:\n{exc}")
+            return
+
+        if not months:
+            messagebox.showerror("エラー", "対象月を取得できませんでした。daily snapshots を確認してください。")
+            return
+
+        rate = self._load_historical_lt_all_rate()
+        estimate_sec = len(months) / rate if rate and rate > 0 else None
+        log_file = LOGS_DIR / f"lt_all_{datetime.now().strftime('%Y%m%d_%H%M')}.log"
+        estimate_text = f"概算時間: ~{estimate_sec:.1f} 秒 (rate {rate:.3f} months/sec)" if estimate_sec is not None else "概算時間: 不明"
+
+        precheck_message = (
+            "LT_DATA を全期間生成します。\n"
+            f"ホテル: {target_hotel}\n"
+            f"対象月数: {len(months)}\n"
+            f"範囲: {months[0]}〜{months[-1]}\n"
+            f"{estimate_text}\n"
+            f"ログ: {log_file}"
+        )
+        messagebox.showinfo("LT_ALL 事前確認", precheck_message)
+
+        confirm = simpledialog.askstring("最終確認", '続行するには "LT_ALL" と入力してください。')
+        if confirm is None or confirm.strip().upper() != "LT_ALL":
+            messagebox.showinfo("中断", "LT_ALL を入力しなかったため処理を中止しました。")
+            return
+
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("エラー", f"ログファイルを開けませんでした。\n{exc}")
+            return
+        file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s - %(message)s"))
+
+        if hasattr(self, "lt_all_button"):
+            self.lt_all_button.state(["disabled"])
+        if hasattr(self, "lt_all_status_var"):
+            self.lt_all_status_var.set("実行中...")
+
+        threading.Thread(
+            target=self._run_lt_all_async,
+            args=(target_hotel, log_file, file_handler),
+            daemon=True,
+        ).start()
+
+    def _run_lt_all_async(self, hotel_tag: str, log_file: Path, file_handler: logging.Handler) -> None:
+        root_logger = logging.getLogger()
+        root_logger.addHandler(file_handler)
+
+        success = True
+        error: Exception | None = None
+        months: list[str] = []
+        duration_sec: float | None = None
+        rate: float | None = None
+
+        start = time.monotonic()
+        try:
+            months = run_build_lt_data_all_for_gui(hotel_tag, source="daily_snapshots")
+            duration_sec = time.monotonic() - start
+            rate = (len(months) / duration_sec) if duration_sec and duration_sec > 0 else 0.0
+            logging.info(
+                "LT_ALL completed: months=%s duration_sec=%.3f rate_months_per_sec=%.3f",
+                len(months),
+                duration_sec,
+                rate,
+            )
+        except Exception as exc:  # noqa: BLE001
+            success = False
+            error = exc
+            logging.exception("LT_ALL 実行中にエラーが発生しました")
+        finally:
+            root_logger.removeHandler(file_handler)
+            try:
+                file_handler.close()
+            except Exception:
+                logging.warning("LT_ALL ログファイルのクローズに失敗しました", exc_info=True)
+
+        self.after(
+            0,
+            lambda: self._on_lt_all_complete(
+                success,
+                hotel_tag,
+                months,
+                log_file,
+                error,
+                duration_sec,
+                rate,
+            ),
+        )
+
+    def _on_lt_all_complete(
+        self,
+        success: bool,
+        hotel_tag: str,
+        months: list[str],
+        log_file: Path,
+        error: Exception | None,
+        duration_sec: float | None,
+        rate: float | None,
+    ) -> None:
+        if hasattr(self, "lt_all_button"):
+            self.lt_all_button.state(["!disabled"])
+        if hasattr(self, "lt_all_status_var"):
+            self.lt_all_status_var.set("")
+
+        try:
+            self._update_bc_latest_asof_label(update_asof_if_empty=False)
+            self._update_df_latest_asof_label(update_asof_if_empty=False)
+        except Exception:
+            logging.warning("最新ASOF表示の更新に失敗しました", exc_info=True)
+
+        if success:
+            range_text = f"{months[0]}〜{months[-1]}" if months else "N/A"
+            extra = ""
+            if duration_sec is not None and rate is not None:
+                extra = f"\n所要時間: {duration_sec:.1f} 秒 (rate {rate:.3f} months/sec)"
+            messagebox.showinfo(
+                "完了",
+                f"LT_DATA 全期間生成が完了しました。\nホテル: {hotel_tag}\n対象月: {range_text} ({len(months)}ヶ月)\nログ: {log_file}{extra}",
+            )
+        else:
+            messagebox.showerror(
+                "エラー",
+                f"LT_DATA 全期間生成に失敗しました。\n{error}\nログ: {log_file}",
+            )
 
     # =========================
     # 3) 日別フォーキャスト一覧タブ
@@ -711,7 +1775,12 @@ class BookingCurveApp(tk.Tk):
 
         self.df_latest_asof_var = tk.StringVar(value="")
         ttk.Label(form, text="最新ASOF:").grid(row=0, column=6, sticky="w")
-        ttk.Label(form, textvariable=self.df_latest_asof_var, width=12).grid(row=0, column=7, padx=4, pady=2, sticky="w")
+        self.df_latest_asof_label = tk.Label(form, textvariable=self.df_latest_asof_var, width=12, anchor="w")
+        self._latest_asof_label_defaults[self.df_latest_asof_label] = (
+            self.df_latest_asof_label.cget("background"),
+            self.df_latest_asof_label.cget("foreground"),
+        )
+        self.df_latest_asof_label.grid(row=0, column=7, padx=4, pady=2, sticky="w")
         ttk.Button(form, text="最新に反映", command=self._on_df_set_asof_to_latest).grid(row=0, column=8, padx=4, pady=2, sticky="w")
 
         # モデル
@@ -877,12 +1946,34 @@ class BookingCurveApp(tk.Tk):
 
         self._update_df_latest_asof_label(update_asof_if_empty=True)
 
+    def _apply_latest_asof_freshness(self, label: tk.Label, latest_asof_str: str) -> None:
+        default_bg, default_fg = self._latest_asof_label_defaults.get(
+            label,
+            (label.cget("background"), label.cget("foreground")),
+        )
+        try:
+            latest_date = datetime.strptime(latest_asof_str, "%Y-%m-%d").date()
+        except Exception:
+            label.configure(background=default_bg, foreground=default_fg)
+            return
+
+        age_days = (date.today() - latest_date).days
+        if age_days <= 0:
+            bg, fg = default_bg, default_fg
+        elif age_days == 1:
+            bg, fg = "yellow", "black"
+        else:
+            bg, fg = "red", "white"
+
+        label.configure(background=bg, foreground=fg)
+
     def _update_df_latest_asof_label(self, update_asof_if_empty: bool = False) -> None:
         hotel = self.df_hotel_var.get().strip()
         try:
             latest = get_latest_asof_for_hotel(hotel)
         except Exception:
             self.df_latest_asof_var.set("(未取得)")
+            self._apply_latest_asof_freshness(self.df_latest_asof_label, self.df_latest_asof_var.get())
             return
 
         if latest is None:
@@ -898,6 +1989,7 @@ class BookingCurveApp(tk.Tk):
                 if (not current) or (current == today_str):
                     self.df_asof_var.set(latest)
 
+        self._apply_latest_asof_freshness(self.df_latest_asof_label, self.df_latest_asof_var.get())
         self._update_df_best_model_label()
 
     def _update_df_best_model_label(self) -> None:
@@ -930,6 +2022,7 @@ class BookingCurveApp(tk.Tk):
             latest = get_latest_asof_for_hotel(hotel)
         except Exception:
             self.bc_latest_asof_var.set("(未取得)")
+            self._apply_latest_asof_freshness(self.bc_latest_asof_label, self.bc_latest_asof_var.get())
             return
 
         if latest is None:
@@ -945,6 +2038,7 @@ class BookingCurveApp(tk.Tk):
                 if (not current) or (current == today_str):
                     self.bc_asof_var.set(latest)
 
+        self._apply_latest_asof_freshness(self.bc_latest_asof_label, self.bc_latest_asof_var.get())
         self._update_bc_best_model_label()
 
     def _update_bc_best_model_label(self) -> None:
@@ -1053,9 +2147,7 @@ class BookingCurveApp(tk.Tk):
             messagebox.showerror("エラー", f"日別フォーキャスト読み込みに失敗しました:\n{e}")
             return
 
-        self._df_cell_anchor = None
-        self._df_cell_end = None
-        self._clear_df_selection_rect()
+        self._reset_df_selection_state()
 
         # 既存行クリア
         for row_id in self.df_tree.get_children():
@@ -1184,27 +2276,50 @@ class BookingCurveApp(tk.Tk):
         """リサイズ時の再描画フック（Canvasなし版: 何もしない）。"""
         return
 
+    def _reset_df_selection_state(self) -> None:
+        self._df_cell_anchor = None
+        self._df_cell_end = None
+        self._clear_df_selection_rect()
+        if hasattr(self, "df_tree"):
+            self.df_tree.focus("")
+            selection = self.df_tree.selection()
+            if selection:
+                self.df_tree.selection_remove(selection)
+
     def _on_df_tree_copy(self, event=None) -> None:
         """選択セル範囲をTSV形式でクリップボードにコピーする。"""
         if self._df_cell_anchor is None or self._df_cell_end is None:
+            return
+        if not hasattr(self, "df_tree"):
+            return
+
+        anchor_row, anchor_col = self._df_cell_anchor
+        end_row, end_col = self._df_cell_end
+        if not anchor_row or not anchor_col or not end_row or not end_col:
+            return
+        if not self.df_tree.exists(anchor_row) or not self.df_tree.exists(end_row):
             return
 
         rows = list(self.df_tree.get_children(""))
         if not rows:
             return
 
-        a_r, a_c = self._df_get_row_col_index(*self._df_cell_anchor)
-        e_r, e_c = self._df_get_row_col_index(*self._df_cell_end)
+        a_r, a_c = self._df_get_row_col_index(anchor_row, anchor_col)
+        e_r, e_c = self._df_get_row_col_index(end_row, end_col)
         if a_r < 0 or e_r < 0 or a_c < 0 or e_c < 0:
             return
 
         r_lo, r_hi = sorted((a_r, e_r))
         c_lo, c_hi = sorted((a_c, e_c))
         columns = list(self.df_tree["columns"])
+        if not columns:
+            return
 
         lines: list[str] = []
         for r_idx in range(r_lo, r_hi + 1):
             row_id = rows[r_idx]
+            if not self.df_tree.exists(row_id):
+                continue
             row_values = []
             for c_idx in range(c_lo, c_hi + 1):
                 if not (0 <= c_idx < len(columns)):
@@ -1376,6 +2491,8 @@ class BookingCurveApp(tk.Tk):
         except Exception as e:
             messagebox.showerror("エラー", f"評価CSVの再計算に失敗しました:\n{e}")
             return
+
+        clear_evaluation_detail_cache(hotel)
 
         try:
             self._on_load_model_eval()
@@ -1657,8 +2774,8 @@ class BookingCurveApp(tk.Tk):
             from_ym = self.asof_from_ym_var.get().strip() or None
             to_ym = self.asof_to_ym_var.get().strip() or None
 
-            overview_df = get_eval_overview_by_asof(hotel, from_ym=from_ym, to_ym=to_ym)
-            detail_df = get_eval_monthly_by_asof(hotel, from_ym=from_ym, to_ym=to_ym)
+            overview_df = get_eval_overview_by_asof(hotel, from_ym=from_ym, to_ym=to_ym, force_reload=True)
+            detail_df = get_eval_monthly_by_asof(hotel, from_ym=from_ym, to_ym=to_ym, force_reload=True)
         except Exception as exc:
             self._asof_overview_df = None
             self._asof_detail_df = None
@@ -1925,7 +3042,12 @@ class BookingCurveApp(tk.Tk):
 
         self.bc_latest_asof_var = tk.StringVar(value="")
         ttk.Label(form, text="最新ASOF:").grid(row=1, column=2, sticky="w", pady=(4, 2))
-        ttk.Label(form, textvariable=self.bc_latest_asof_var, width=12).grid(row=1, column=3, padx=4, pady=(4, 2), sticky="w")
+        self.bc_latest_asof_label = tk.Label(form, textvariable=self.bc_latest_asof_var, width=12, anchor="w")
+        self._latest_asof_label_defaults[self.bc_latest_asof_label] = (
+            self.bc_latest_asof_label.cget("background"),
+            self.bc_latest_asof_label.cget("foreground"),
+        )
+        self.bc_latest_asof_label.grid(row=1, column=3, padx=4, pady=(4, 2), sticky="w")
         ttk.Button(form, text="最新に反映", command=self._on_bc_set_asof_to_latest).grid(row=1, column=4, padx=4, pady=(4, 2), sticky="w")
 
         ttk.Label(form, text="モデル:").grid(row=1, column=5, sticky="w", pady=(4, 2))
@@ -2006,6 +3128,7 @@ class BookingCurveApp(tk.Tk):
         draw_btn = ttk.Button(row2_frame, text="描画", command=self._on_draw_booking_curve)
         draw_btn.pack(side=tk.LEFT, padx=8)
 
+        self.lt_source_var.trace_add("write", self._on_lt_source_changed)
         self.lt_source_combo.bind("<<ComboboxSelected>>", self._on_lt_source_changed)
         self._sync_daily_snapshots_checkbox_state()
 
@@ -2123,10 +3246,36 @@ class BookingCurveApp(tk.Tk):
             return
 
         try:
+            snapshots_updated = False
             lt_source = self.lt_source_var.get() or "daily_snapshots"
             # 必要に応じて daily snapshots を先に更新
             if self.update_daily_snapshots_var.get() and lt_source == "daily_snapshots":
-                run_daily_snapshots_for_gui(hotel_tag, mode="partial")
+                if not target_months:
+                    messagebox.showwarning(
+                        "LT_DATA生成エラー",
+                        "対象月が未指定のため、daily snapshots の更新をスキップします。",
+                    )
+                    return
+
+                plan = build_range_rebuild_plan_for_gui(
+                    hotel_tag,
+                    buffer_days=30,
+                    lookahead_days=120,
+                )
+                if not self._precheck_missing_report_for_range_rebuild(
+                    hotel_tag,
+                    plan["asof_min"],
+                    plan["asof_max"],
+                ):
+                    return
+
+                run_daily_snapshots_for_gui(
+                    hotel_tag=hotel_tag,
+                    mode="RANGE_REBUILD",
+                    target_months=target_months,
+                    buffer_days=30,
+                )
+                snapshots_updated = True
             elif self.update_daily_snapshots_var.get():
                 logging.info("LT生成: source=timeseries のため daily snapshots 更新はスキップ")
 
@@ -2149,6 +3298,12 @@ class BookingCurveApp(tk.Tk):
             self._update_df_latest_asof_label(update_asof_if_empty=False)
         except Exception:
             pass
+
+        if snapshots_updated:
+            try:
+                self._update_master_missing_check_status()
+            except Exception:
+                logging.warning("欠損検査ステータスの更新に失敗しました", exc_info=True)
 
         messagebox.showinfo(
             "LT_DATA生成",
@@ -2263,9 +3418,21 @@ class BookingCurveApp(tk.Tk):
             return
 
         try:
+            snapshots_updated = False
             lt_source = self.lt_source_var.get() or "daily_snapshots"
             if self.update_daily_snapshots_var.get() and lt_source == "daily_snapshots":
-                run_daily_snapshots_for_gui(hotel_tag, mode="partial")
+                if not target_months:
+                    messagebox.showwarning(
+                        "LT_DATA生成エラー",
+                        "対象月が未指定のため、daily snapshots の更新をスキップします。",
+                    )
+                    return
+                run_daily_snapshots_for_gui(
+                    hotel_tag=hotel_tag,
+                    mode="FULL_MONTHS",
+                    target_months=target_months,
+                )
+                snapshots_updated = True
             elif self.update_daily_snapshots_var.get():
                 logging.info("LT生成: source=timeseries のため daily snapshots 更新はスキップ")
 
@@ -2288,6 +3455,12 @@ class BookingCurveApp(tk.Tk):
             self._update_df_latest_asof_label(update_asof_if_empty=False)
         except Exception:
             pass
+
+        if snapshots_updated:
+            try:
+                self._update_master_missing_check_status()
+            except Exception:
+                logging.warning("欠損検査ステータスの更新に失敗しました", exc_info=True)
 
         messagebox.showinfo(
             "LT_DATA生成",
@@ -2802,6 +3975,8 @@ class BookingCurveApp(tk.Tk):
         curves: list[tuple[str, pd.DataFrame, str, str, float]] = []
         max_lt = -1
         has_act = False
+        skipped_months: list[str] = []
+        skipped_prev_months: list[str] = []
 
         def load_month_df(month_str: str) -> pd.DataFrame:
             """月次カーブ用DFを読み込み、LT・ACT情報を更新する。"""
@@ -2830,15 +4005,19 @@ class BookingCurveApp(tk.Tk):
         for idx, month_str in enumerate(main_months):
             try:
                 df_m = load_month_df(month_str)
-            except FileNotFoundError:
-                # その月のCSVが無ければスキップ
-                continue
-            except Exception as e:
-                messagebox.showerror(
-                    "Error",
-                    f"月次カーブ取得に失敗しました: {month_str}\n{e}",
+            except Exception as exc:
+                logging.warning(
+                    "Monthly curve not available for %s (%s): %s",
+                    month_str,
+                    hotel_tag,
+                    exc,
                 )
-                return
+                skipped_months.append(f"{month_str}: {exc}")
+                continue
+
+            if df_m is None or df_m.empty:
+                skipped_months.append(f"{month_str}: no data")
+                continue
 
             color = line_colors[min(idx, len(line_colors) - 1)]
             linewidth = 2.0 if month_str == ym else 1.6
@@ -2852,18 +4031,30 @@ class BookingCurveApp(tk.Tk):
 
                 try:
                     df_prev = load_month_df(prev_month_str)
-                except FileNotFoundError:
-                    continue
-                except Exception as e:
-                    messagebox.showerror(
-                        "Error",
-                        f"前年同月の取得に失敗しました: {prev_month_str}\n{e}",
+                except Exception as exc:
+                    logging.warning(
+                        "Previous-year monthly curve not available for %s (%s): %s",
+                        prev_month_str,
+                        hotel_tag,
+                        exc,
                     )
-                    return
+                    skipped_prev_months.append(f"{prev_month_str}: {exc}")
+                    continue
 
-                if df_prev is not None and not df_prev.empty:
-                    color = line_colors[min(idx, len(line_colors) - 1)]
-                    curves.append((f"{prev_month_str} (prev)", df_prev, color, "--", 1.6))
+                if df_prev is None or df_prev.empty:
+                    skipped_prev_months.append(f"{prev_month_str}: no data")
+                    continue
+
+                color = line_colors[min(idx, len(line_colors) - 1)]
+                curves.append((f"{prev_month_str} (prev)", df_prev, color, "--", 1.6))
+
+        if skipped_months:
+            logging.warning("Monthly curves were skipped for months: %s", ", ".join(sorted(skipped_months)))
+        if skipped_prev_months:
+            logging.warning(
+                "Previous-year monthly curves were skipped for months: %s",
+                ", ".join(sorted(skipped_prev_months)),
+            )
 
         if not curves:
             self.mc_ax.clear()
@@ -2876,7 +4067,19 @@ class BookingCurveApp(tk.Tk):
                 transform=self.mc_ax.transAxes,
             )
             self.mc_canvas.draw()
+            skipped_msg = "\n".join(skipped_months + skipped_prev_months)
+            detail = f"\n{skipped_msg}" if skipped_msg else ""
+            messagebox.showerror("Error", f"月次カーブの描画対象データがありません。{detail}")
             return
+
+        if skipped_months or skipped_prev_months:
+            warn_parts: list[str] = []
+            if skipped_months:
+                warn_parts.append("取得できなかった月次カーブ: " + ", ".join(sorted(skipped_months)))
+            if skipped_prev_months:
+                warn_parts.append("取得できなかった前年同月: " + ", ".join(sorted(skipped_prev_months)))
+            warn_parts.append("必要なら daily snapshots を更新してください。")
+            messagebox.showwarning("Warning", "\n".join(warn_parts))
 
         # ---- ここから描画ロジック ----
         self.mc_ax.clear()

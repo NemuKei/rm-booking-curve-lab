@@ -47,6 +47,7 @@ ASOF_TYPES = ["M-2_END", "M-1_END", "M10", "M20"]
 LT_MIN = -1
 LT_MAX = 90
 CAPACITY = 168.0
+RECENT90_MIN_COUNT_WEEKDAY = 6
 
 
 def resolve_asof_dates_for_month(target_month: str) -> list[tuple[str, str]]:
@@ -87,10 +88,82 @@ def get_avg_history_months(target_month: str, months_back: int = 3) -> list[str]
     return months
 
 
+def _load_lt_data_csv(csv_path: Path, target_month: str, hotel_tag: str) -> pd.DataFrame:
+    try:
+        raw_df = pd.read_csv(csv_path)
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(f"LT_DATA CSV not found: {csv_path}") from exc
+    except Exception as exc:
+        raise ValueError(f"Failed to read LT_DATA CSV: {csv_path}") from exc
+
+    if "stay_date" not in raw_df.columns:
+        if raw_df.empty or raw_df.shape[1] == 0:
+            raise ValueError(
+                f"LT_DATA CSV missing stay_date column: {csv_path} (target_month={target_month}, hotel={hotel_tag})"
+            )
+        raw_df = raw_df.rename(columns={raw_df.columns[0]: "stay_date"})
+
+    raw_df["stay_date"] = pd.to_datetime(raw_df["stay_date"], errors="coerce")
+    df = raw_df.dropna(subset=["stay_date"]).copy()
+    if df.empty:
+        sample = raw_df.head(3).to_dict(orient="list")
+        raise ValueError(
+            f"LT_DATA CSV has no valid index rows after cleaning: {csv_path} "
+            f"(target_month={target_month}, hotel={hotel_tag}; head={sample})"
+        )
+
+    df = df.set_index("stay_date")
+
+    lt_columns: list[str] = []
+    for col in df.columns:
+        try:
+            int(col)
+        except (TypeError, ValueError):
+            continue
+        lt_columns.append(str(col))
+
+    if not lt_columns:
+        raise ValueError(
+            f"LT_DATA CSV has no LT columns convertible to int: {csv_path} "
+            f"(target_month={target_month}, hotel={hotel_tag}; columns={list(raw_df.columns)})"
+        )
+
+    df_lt = df[lt_columns].apply(pd.to_numeric, errors="coerce")
+
+    target_month_str = str(target_month).replace("-", "").replace("/", "")
+    if len(target_month_str) < 6:
+        raise ValueError(
+            f"Invalid target_month format: {target_month} (expected YYYYMM) "
+            f"for hotel={hotel_tag}, file={csv_path}"
+        )
+    target_period = pd.Period(target_month_str[:6], freq="M")
+    df_lt = df_lt.loc[df_lt.index.to_period("M") == target_period]
+
+    df_lt = df_lt.dropna(how="all", subset=lt_columns)
+
+    if df_lt.empty:
+        sample = raw_df.head(3).to_dict(orient="list")
+        raise ValueError(
+            f"LT_DATA CSV has no valid index rows after cleaning: {csv_path} "
+            f"(target_month={target_month}, hotel={hotel_tag}; head={sample})"
+        )
+
+    return df_lt
+
+
 def load_lt_csv(month: str, hotel_tag: str) -> pd.DataFrame:
     file_name = f"lt_data_{month}_{hotel_tag}.csv"
     file_path = Path(OUTPUT_DIR) / file_name
-    return pd.read_csv(file_path, index_col=0)
+    try:
+        return _load_lt_data_csv(file_path, target_month=month, hotel_tag=hotel_tag)
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(
+            f"LT_DATA CSV not found for month={month}, hotel={hotel_tag}: {file_path}"
+        ) from exc
+    except ValueError as exc:
+        raise ValueError(
+            f"Invalid LT_DATA CSV for month={month}, hotel={hotel_tag}: {file_path}"
+        ) from exc
 
 
 def _get_actual_series(lt_df: pd.DataFrame, index: pd.Index) -> pd.Series:
@@ -120,8 +193,8 @@ def _build_projected_series(
     forecast_series = pd.Series(forecasts, dtype=float)
     forecast_series = forecast_series.reindex(all_dates)
 
-    forecast_int = forecast_series.round().astype("Int64")
-    actual_series = _get_actual_series(lt_df, all_dates)
+    forecast_int = pd.to_numeric(forecast_series, errors="coerce").round().astype("Int64")
+    actual_series = pd.to_numeric(_get_actual_series(lt_df, all_dates), errors="coerce")
 
     projected = []
     for dt in all_dates:
@@ -204,13 +277,21 @@ def build_monthly_forecast(
             history_all = pd.concat(history_dfs, axis=0)
             history_all.index = pd.to_datetime(history_all.index)
             avg_curve = moving_average_recent_90days(
-                lt_df=history_all, as_of_date=as_of_ts, lt_min=LT_MIN, lt_max=LT_MAX
+                lt_df=history_all,
+                as_of_date=as_of_ts,
+                lt_min=LT_MIN,
+                lt_max=LT_MAX,
+                min_count=RECENT90_MIN_COUNT_WEEKDAY,
             )
         elif model_name in {"recent90w", "recent90w_adj"}:
             history_all = pd.concat(history_dfs, axis=0)
             history_all.index = pd.to_datetime(history_all.index)
             avg_curve = moving_average_recent_90days_weighted(
-                lt_df=history_all, as_of_date=as_of_ts, lt_min=LT_MIN, lt_max=LT_MAX
+                lt_df=history_all,
+                as_of_date=as_of_ts,
+                lt_min=LT_MIN,
+                lt_max=LT_MAX,
+                min_count=RECENT90_MIN_COUNT_WEEKDAY,
             )
         else:
             raise ValueError(f"Unknown model_name: {model_name}")
@@ -260,14 +341,30 @@ def build_monthly_forecast(
 
 def build_evaluation_detail(hotel_tag: str, target_months: list[str]) -> pd.DataFrame:
     records: list[dict] = []
+    today = date.today()
 
     for target_month in target_months:
+        month_period = pd.Period(target_month, freq="M")
+        month_end = month_period.to_timestamp(how="end").date()
+        is_landed_month = month_end < today
         lt_csv_path = Path(OUTPUT_DIR) / f"lt_data_{target_month}_{hotel_tag}.csv"
-        lt_df = pd.read_csv(lt_csv_path, index_col=0)
+        try:
+            lt_df = _load_lt_data_csv(
+                lt_csv_path,
+                target_month=target_month,
+                hotel_tag=hotel_tag,
+            )
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(
+                f"{exc} (target_month={target_month}, hotel={hotel_tag})"
+            ) from exc
+        except ValueError as exc:
+            raise ValueError(f"{exc} (target_month={target_month}, hotel={hotel_tag})") from exc
 
-        all_dates = pd.to_datetime(lt_df.index)
-        actual_series = _get_actual_series(lt_df, all_dates)
-        actual_total_rooms = float(pd.to_numeric(actual_series, errors="coerce").sum(skipna=True))
+        all_dates = pd.to_datetime(lt_df.index, errors="coerce")
+        actual_series = pd.to_numeric(_get_actual_series(lt_df, all_dates), errors="coerce")
+        actual_total_rooms = float(actual_series.sum(skipna=True))
+        actual_nan_days = int(actual_series.isna().sum())
 
         for asof_type, asof_date_str in resolve_asof_dates_for_month(target_month):
             asof_ts = pd.to_datetime(asof_date_str)
@@ -279,22 +376,40 @@ def build_evaluation_detail(hotel_tag: str, target_months: list[str]) -> pd.Data
                 "recent90w",
                 "recent90w_adj",
             ]:
-                forecast_series = build_monthly_forecast(
-                    lt_df=lt_df,
-                    model_name=model_name,
-                    as_of_date=asof_ts,
-                    hotel_tag=hotel_tag,
-                )
-                forecast_total_rooms = float(
-                    pd.to_numeric(forecast_series, errors="coerce").sum(skipna=True)
-                )
+                try:
+                    forecast_series = build_monthly_forecast(
+                        lt_df=lt_df,
+                        model_name=model_name,
+                        as_of_date=asof_ts,
+                        hotel_tag=hotel_tag,
+                    )
+                except Exception as exc:
+                    raise type(exc)(
+                        f"{exc} (target_month={target_month}, hotel={hotel_tag}, asof={asof_ts.date()}, model={model_name})"
+                    ) from exc
 
-                error = forecast_total_rooms - actual_total_rooms
-                if actual_total_rooms > 0:
-                    error_pct = (error / actual_total_rooms) * 100.0
+                forecast_series = pd.to_numeric(forecast_series, errors="coerce")
+                forecast_total_rooms = float(forecast_series.sum(skipna=True))
+                forecast_nan_days = int(forecast_series.isna().sum())
+
+                status = "OK"
+                error = float("nan")
+                error_pct = float("nan")
+                abs_error_pct = float("nan")
+
+                if not is_landed_month:
+                    status = "INCOMPLETE_MONTH"
+                elif actual_nan_days > 0:
+                    status = "ACT_MISSING"
+                elif forecast_nan_days > 0:
+                    status = "FORECAST_NAN"
                 else:
-                    error_pct = 0.0
-                abs_error_pct = abs(error_pct)
+                    error = forecast_total_rooms - actual_total_rooms
+                    if actual_total_rooms > 0:
+                        error_pct = (error / actual_total_rooms) * 100.0
+                    else:
+                        error_pct = 0.0
+                    abs_error_pct = abs(error_pct)
 
                 records.append(
                     {
@@ -304,6 +419,8 @@ def build_evaluation_detail(hotel_tag: str, target_months: list[str]) -> pd.Data
                         "model": model_name,
                         "actual_total_rooms": actual_total_rooms,
                         "forecast_total_rooms": forecast_total_rooms,
+                        "status": status,
+                        "forecast_nan_days": forecast_nan_days,
                         "error": error,
                         "error_pct": error_pct,
                         "abs_error_pct": abs_error_pct,

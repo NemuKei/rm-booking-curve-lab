@@ -199,15 +199,21 @@
 
   - 平均誤差率（％）  
     \[
-      \text{mean\_error\_pct} =
-      \frac{1}{n} \sum_{\text{ASOF}} \text{error\_pct}^{(m)}
+      \text{mean\_error\_pct} = \frac{1}{n}\sum_{\text{ASOF}} \text{error\_pct}^{(m)}
     \]
 
-  - 絶対誤差率平均（％）  
+  - 絶対誤差率の平均（％）  
     \[
-      \text{mae\_pct} =
-      \frac{1}{n} \sum_{\text{ASOF}} \left| \text{error\_pct}^{(m)} \right|
+      \text{mae\_pct} = \frac{1}{n}\sum_{\text{ASOF}} \left|\text{error\_pct}^{(m)}\right|
     \]
+
+補足（GUI表示での派生値）：
+
+- 現状の `evaluation_*_multi.csv` には `rmse_pct` / `n_samples` を **出力列としては持たない**。
+- GUI では、`evaluation_*_detail.csv`（ASOF明細）から `rmse_pct` / `n_samples` を計算して表示することがある。
+  - `rmse_pct` は誤差率ベースの RMSE（%）相当（`sqrt(mean(error_pct^2))`）
+  - `n_samples` は集計に使った ASOF 数
+- これらは **仕様として固定しきらず**、売上予測も含めた評価設計の再考フェーズで整理する。
 
 本書および README では、これらを以下のように読み替える：
 
@@ -305,8 +311,9 @@ ASOF 単位の detail から `groupby(["target_month", "model"])` で集約し�
   - 現状は「月次トータルの誤差率」を主指標としているが、
     将来的には「日別誤差から再集計した月次 MAPE」等も検討余地あり。
 - **RMSE など他指標**
-  - 現在の実装には含まれていないが、
-    「大外し日」の影響を強く見る指標として RMSE を導入する可能性がある。
+  - 評価指標は将来（売上予測も含めた評価設計の再考フェーズ）で再整理する。
+  - 現時点では GUI 表示の参考値として `rmse_pct`（誤差率ベースのRMSE%相当）が出ることがあるが、
+    仕様として固定はしていない（roomsベース/売上ベースも含めて再検討対象）。
 - **評価期間の選定**
   - 評価に使う宿泊月（`TARGET_MONTHS`）や ASOF セットは、
     ロードマップ／研究の目的に応じて変える。

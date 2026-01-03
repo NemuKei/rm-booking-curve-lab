@@ -75,7 +75,15 @@ OCC モデルの主な入力は、`lt_data_YYYYMM_<hotel>.csv` に代表され�
     \]
 
 - 評価結果の `evaluation_*_multi.csv` では、ASOF を跨いでモデルごとに集計した
-  `mean_error_pct` / `mae_pct` などが算出される（詳細は `spec_evaluation.md` 参照）。
+  `mean_error_pct` / `mae_pct` が算出される（詳細は `spec_evaluation.md` 参照）。
+
+  さらに GUI では `evaluation_*_detail.csv` から以下も算出して表示する：
+
+  - `rmse_pct` … **RMSE（%）** に相当  
+    \[
+      \text{rmse\_pct} = \sqrt{\frac{1}{n}\sum_{\text{ASOF}}\left(\text{error\_pct}^{(m)}\right)^2}
+    \]
+  - `n_samples` … 集計に使ったサンプル数（ASOF数）
 
   本書では便宜上、以下のように読み替える：
 
@@ -83,8 +91,13 @@ OCC モデルの主な入力は、`lt_data_YYYYMM_<hotel>.csv` に代表され�
     （正なら「攻め気味」、負なら「守り気味」）
   - `mae_pct` … **MAPE（%）** に相当  
     （誤差の方向は無視した平均的な外れ具合）
+  - `rmse_pct` … **RMSE（%）** に相当  
+    （大きな外しにやや敏感な、平均的な外れ具合の指標）
 
-  ※ RMSE など他の指標は将来拡張の候補。現状の実装では使用していない。
+  ※ RMSE は「正式採用して仕様固定」しているわけではないが、
+  GUIでは参考値として `rmse_pct`（誤差率 error_pct を元にした RMSE% 相当）を表示することがある。
+  売上予測も含めた評価設計の再考フェーズで、指標体系（rooms / % / 売上）を再整理する。
+
 
 ---
 

@@ -160,8 +160,13 @@ def moving_average_recent_90days(
     as_of_date: pd.Timestamp,
     lt_min: int = -1,
     lt_max: int = 90,
+    min_count: int = 1,
 ) -> pd.Series:
-    """Compute LT-wise averages using a moving 90-day stay-date window."""
+    """Compute LT-wise averages using a moving 90-day stay-date window.
+
+    ``min_count`` requires a minimum number of non-missing observations per LT
+    before emitting an average; insufficient samples yield ``NaN``.
+    """
 
     if lt_min > lt_max:
         raise ValueError("lt_min must be less than or equal to lt_max")
@@ -191,10 +196,13 @@ def moving_average_recent_90days(
         mask = (df.index >= start) & (df.index <= end)
         values = df.loc[mask, lt_col_map[lt]]
 
-        if values.empty:
+        count = values.notna().sum()
+        mean = values.mean(skipna=True)
+
+        if count < min_count:
             result[lt] = np.nan
         else:
-            result[lt] = values.mean(skipna=True)
+            result[lt] = mean
 
     result_series = pd.Series(result, dtype=float)
     result_series.index.name = "LT"
@@ -208,6 +216,7 @@ def moving_average_recent_90days_weighted(
     lt_min: int = -1,
     lt_max: int = 90,
     weights: tuple[float, float, float] | None = None,
+    min_count: int = 1,
 ) -> pd.Series:
     """Compute LT-wise weighted averages using a moving 90-day stay-date window.
 
@@ -216,7 +225,9 @@ def moving_average_recent_90days_weighted(
     2.0, 31–90 days = 1.0. Observations outside that range are ignored. The
     ``weights`` argument can be used to override these defaults by passing a
     tuple ``(w_recent, w_mid, w_old)``; when omitted, ``(3.0, 2.0, 1.0)`` is
-    applied.
+    applied. ``min_count`` requires a minimum number of non-missing
+    observations per LT before computing the weighted mean; insufficient
+    samples yield ``NaN``.
     """
 
     if lt_min > lt_max:
@@ -264,6 +275,11 @@ def moving_average_recent_90days_weighted(
 
         mask = (df.index >= start) & (df.index <= end)
         values = df.loc[mask, lt_col_map[lt]]
+
+        count = values.notna().sum()
+        if count < min_count:
+            result[lt] = np.nan
+            continue
 
         weighted_sum = 0.0
         weight_sum = 0.0
@@ -315,21 +331,18 @@ def forecast_month_from_recent90(
     if act_col is not None:
         actual_series = df_target[act_col]
         actual_series.index = all_dates
-        out_df["actual_rooms"] = actual_series
+        out_df["actual_rooms"] = pd.to_numeric(actual_series, errors="coerce").astype("Float64")
     else:
-        out_df["actual_rooms"] = pd.NA
+        out_df["actual_rooms"] = pd.Series(pd.NA, index=all_dates, dtype="Float64")
 
     out_df["forecast_rooms"] = result.reindex(all_dates)
     out_df["forecast_rooms_int"] = out_df["forecast_rooms"].round().astype("Int64")
 
-    projected = []
-    for dt in out_df.index:
-        if dt < as_of_ts:
-            projected.append(out_df.loc[dt, "actual_rooms"])
-        else:
-            projected.append(out_df.loc[dt, "forecast_rooms_int"])
-
-    out_df["projected_rooms"] = projected
+    out_df["projected_rooms"] = out_df["actual_rooms"].where(
+        out_df.index < as_of_ts,
+        out_df["forecast_rooms_int"].astype("Float64"),
+    )
+    out_df["projected_rooms"] = pd.to_numeric(out_df["projected_rooms"], errors="coerce").astype("Float64")
 
     hotel_tag_value = hotel_tag or HOTEL_TAG
     out_df = apply_segment_adjustment(out_df, hotel_tag=hotel_tag_value)

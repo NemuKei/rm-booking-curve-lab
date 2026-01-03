@@ -2,23 +2,77 @@ from __future__ import annotations
 
 import logging
 import re
+import warnings
+from datetime import date, datetime
 from pathlib import Path
 from typing import Literal, Optional
 
 import pandas as pd
 
+from booking_curve.config import OUTPUT_DIR
 from booking_curve.daily_snapshots import (
-    append_daily_snapshots,
+    append_daily_snapshots_by_hotel,
     normalize_daily_snapshots_df,
+    upsert_daily_snapshots_range_by_hotel,
 )
 
-# layout="auto" 時は A列の日付行の間隔から自動判定する
-# "shifted": 宿泊日行(row_idx)の1行下(row_idx+1)に OH があるレイアウト (無加工/A/B)
-# "inline" : 宿泊日行(row_idx)と同じ行に OH があるレイアウト (加工C)
-# "auto"   : A列の日付行の間隔から自動判定
+# layout="auto" 時は A列の宿泊日行から 1行持ち/2行持ちを自動判定する
+# "shifted": 宿泊日行(row_idx)の1行下(row_idx+1)に OH があるレイアウト (2行持ち)
+# "inline" : 宿泊日行(row_idx)と同じ行に OH があるレイアウト (1行持ち)
+# "auto"   : A列の宿泊日行インデックスから自動判定
 LayoutType = Literal["shifted", "inline", "auto"]
 
 logger = logging.getLogger(__name__)
+
+MIN_STAY_DATE_ROWS = 5
+START_STAY_DATE_ROW_IDX = 8
+WEEKDAY_SET = {"月", "火", "水", "木", "金", "土", "日"}
+WEEKDAY_SPACER_INLINE_RATIO = 0.6
+WEEKDAY_IN_DATE_ROW_SHIFTED_RATIO = 0.6
+WEEKDAY_ABOVE_DATE_ROW_INLINE_RATIO = 0.6
+INLINE_CONSECUTIVE_RATIO = 0.8
+
+
+def _parse_date_cell(value: object) -> pd.Timestamp | None:
+    def _normalize(ts: pd.Timestamp | None) -> pd.Timestamp | None:
+        if ts is None or pd.isna(ts):
+            return None
+        return pd.Timestamp(ts).normalize()
+
+    if isinstance(value, (pd.Timestamp, datetime, date)):
+        return _normalize(pd.to_datetime(value, errors="coerce"))
+
+    parsed_candidates: list[pd.Timestamp | None] = []
+
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        for fmt in ("%Y/%m/%d", "%Y-%m-%d", "%Y/%m/%d %H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M"):
+            parsed_candidates.append(pd.to_datetime(stripped, format=fmt, errors="coerce"))
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="Could not infer format.*", category=UserWarning)
+            parsed_candidates.append(pd.to_datetime(stripped, errors="coerce"))
+        numeric_value = pd.to_numeric(stripped, errors="coerce")
+        if pd.notna(numeric_value):
+            parsed_candidates.append(
+                pd.to_datetime(float(numeric_value), unit="D", origin="1899-12-30", errors="coerce"),
+            )
+    else:
+        numeric_value = pd.to_numeric(value, errors="coerce")
+        if pd.notna(numeric_value):
+            parsed_candidates.append(
+                pd.to_datetime(float(numeric_value), unit="D", origin="1899-12-30", errors="coerce"),
+            )
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="Parsing Dates", category=UserWarning)
+            parsed_candidates.append(pd.to_datetime(value, errors="coerce"))
+
+    for candidate in parsed_candidates:
+        normalized = _normalize(candidate)
+        if normalized is not None:
+            return normalized
+    return None
 
 
 def _parse_target_month(df: pd.DataFrame, file_path: Path) -> Optional[pd.Timestamp]:
@@ -34,103 +88,440 @@ def _parse_target_month(df: pd.DataFrame, file_path: Path) -> Optional[pd.Timest
     return pd.Timestamp(year=dt.year, month=dt.month, day=1).normalize()
 
 
-def _parse_asof_date(df: pd.DataFrame, file_path: Path) -> Optional[pd.Timestamp]:
-    """Parse the as-of date from cell Q1 or fallback to filename."""
+def _parse_asof_date(df: pd.DataFrame, file_path: Path, filename_asof_ymd: str | None) -> Optional[pd.Timestamp]:
+    """Parse the as-of date prioritizing the cell value and falling back to filename."""
+
     try:
         raw_value = df.iloc[0, 16]
     except IndexError:
         raw_value = pd.NA
-    dt = pd.to_datetime(raw_value, errors="coerce")
 
-    if pd.isna(dt):
-        m = re.search(r"(20\d{6})", file_path.name)
-        if m:
-            dt = pd.to_datetime(m.group(1), format="%Y%m%d", errors="coerce")
+    cell_ts: pd.Timestamp | None
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Parsing Dates", category=UserWarning)
+        dt = pd.to_datetime(raw_value, errors="coerce")
+    cell_ts = None if pd.isna(dt) else pd.Timestamp(dt).normalize()
 
-    if pd.isna(dt):
-        logger.error("%s: ASOF 日付を取得できませんでした", file_path)
+    filename_ts: pd.Timestamp | None = None
+    if filename_asof_ymd:
+        ts = pd.to_datetime(filename_asof_ymd, format="%Y%m%d", errors="coerce")
+        if pd.isna(ts):
+            logger.warning("%s: ファイル名のASOF(%s)を日付に変換できません", file_path, filename_asof_ymd)
+        else:
+            filename_ts = pd.Timestamp(ts).normalize()
+
+    if cell_ts is not None:
+        if filename_ts is not None and filename_ts != cell_ts:
+            logger.warning(
+                "%s: セルASOF(%s)とファイル名ASOF(%s)が一致しません",
+                file_path,
+                cell_ts.date(),
+                filename_ts.date(),
+            )
+        return cell_ts
+
+    if filename_ts is not None:
+        return filename_ts
+
+    logger.error("%s: ASOF 日付を取得できませんでした", file_path)
+    return None
+
+
+def parse_nface_filename(file_path: Path) -> tuple[str | None, str | None]:
+    """Extract target month and as-of date from filename.
+
+    The expected pattern is ``YYYYMM_YYYYMMDD``.
+    """
+
+    m = re.search(r"(?P<ym>\d{6})_(?P<asof>\d{8})", file_path.name)
+    if not m:
+        logger.warning("%s: ファイル名から宿泊月/ASOFを解釈できません", file_path)
+        return None, None
+
+    return m.group("ym"), m.group("asof")
+
+
+def _parse_nface_filename(file_path: Path) -> tuple[str | None, str | None]:
+    """Backward-compatible wrapper for :func:`parse_nface_filename`.
+
+    Deprecated: use :func:`parse_nface_filename` instead.
+    """
+
+    return parse_nface_filename(file_path)
+
+
+def _discover_excel_files(input_path: Path, glob: str, *, recursive: bool) -> list[Path]:
+    """Discover Excel files under the input path with optional recursion."""
+    candidates = input_path.rglob(glob) if recursive else input_path.glob(glob)
+
+    files = sorted(
+        p
+        for p in candidates
+        if p.is_file()
+        and p.suffix.lower().startswith(".xls")
+        and not p.name.startswith("~$")
+    )
+    return files
+
+
+def _validate_no_duplicate_keys(files: list[Path]) -> None:
+    """Validate that there are no duplicate (target_month, asof_date) keys among files."""
+    seen: dict[tuple[str, str], Path] = {}
+    for file_path in files:
+        target_month, asof_ymd = parse_nface_filename(file_path)
+        if target_month is None or asof_ymd is None:
+            continue
+        key = (target_month, asof_ymd)
+        if key in seen:
+            existing = seen[key]
+            raise ValueError(
+                f"Duplicate key detected for {key}: {existing} and {file_path}",
+            )
+        seen[key] = file_path
+
+
+def _normalize_boundary_timestamp(value: pd.Timestamp | str | None, param_name: str) -> pd.Timestamp | None:
+    if value is None:
         return None
 
-    return pd.Timestamp(dt).normalize()
-
-
-def _iter_stay_rows(df: pd.DataFrame) -> list[tuple[int, pd.Timestamp]]:
-    """Return list of (row_idx, stay_date) where column A is a valid date."""
-    stay_rows: list[tuple[int, pd.Timestamp]] = []
-    for i in range(df.shape[0]):
-        stay_raw = df.iloc[i, 0] if df.shape[1] > 0 else pd.NA
-        stay_dt = pd.to_datetime(stay_raw, errors="coerce")
-        if pd.isna(stay_dt):
-            continue
-        stay_rows.append((i, pd.Timestamp(stay_dt).normalize()))
-    return stay_rows
-
-
-def _extract_oh_values_for_row(
-    df: pd.DataFrame,
-    row_idx: int,
-    layout: LayoutType,
-    file_path: Path,
-) -> tuple[object, object, object]:
-    """宿泊日行から OH 値を抽出する。"""
-    if layout == "shifted":
-        oh_idx = row_idx + 1
-        if oh_idx >= df.shape[0]:
-            logger.warning("%s: OH行がシート末尾を超えています (row=%s)", file_path, row_idx)
-            rooms_oh = pax_oh = revenue_oh = pd.NA
+    if isinstance(value, str):
+        stripped = value.strip()
+        if re.fullmatch(r"\d{8}", stripped):
+            ts = pd.to_datetime(stripped, format="%Y%m%d", errors="coerce")
         else:
-            rooms_oh = df.iloc[oh_idx, 4] if df.shape[1] > 4 else pd.NA
-            pax_oh = df.iloc[oh_idx, 5] if df.shape[1] > 5 else pd.NA
-            revenue_oh = df.iloc[oh_idx, 6] if df.shape[1] > 6 else pd.NA
-    elif layout == "inline":
-        rooms_oh = df.iloc[row_idx, 4] if df.shape[1] > 4 else pd.NA
-        pax_oh = df.iloc[row_idx, 5] if df.shape[1] > 5 else pd.NA
-        revenue_oh = df.iloc[row_idx, 6] if df.shape[1] > 6 else pd.NA
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message="Parsing Dates", category=UserWarning)
+                ts = pd.to_datetime(stripped, errors="coerce")
     else:
-        raise ValueError(f"Unknown layout: {layout!r}")
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="Parsing Dates", category=UserWarning)
+            ts = pd.to_datetime(value, errors="coerce")
+
+    if pd.isna(ts):
+        raise ValueError(f"{param_name} must be convertible to a valid date")
+    return pd.Timestamp(ts).normalize()
+
+
+def _format_asof_ymd(asof_ymd: str | None) -> str:
+    if not asof_ymd:
+        return ""
+    asof_ts = pd.to_datetime(asof_ymd, format="%Y%m%d", errors="coerce")
+    if pd.isna(asof_ts):
+        return ""
+    return pd.Timestamp(asof_ts).strftime("%Y-%m-%d")
+
+
+def _classify_parse_failure(exc: Exception) -> str:
+    message = str(exc)
+    if "A列の日付行が少なすぎ" in message:
+        return "A列日付不足"
+    if message == "layout_unknown":
+        return "layout_unknown"
+    return "other"
+
+
+def _build_parse_failure_record(
+    *,
+    hotel_id: str,
+    asof_ymd: str | None,
+    target_month: str | None,
+    file_path: Path,
+    exc: Exception,
+) -> dict[str, object]:
+    return {
+        "kind": "raw_parse_failed",
+        "hotel_id": hotel_id,
+        "asof_date": _format_asof_ymd(asof_ymd),
+        "target_month": target_month or "",
+        "missing_count": 1,
+        "missing_sample": _classify_parse_failure(exc),
+        "message": str(exc),
+        "path": str(file_path),
+        "severity": "ERROR",
+    }
+
+
+def _write_raw_parse_failures(
+    failures: list[dict[str, object]],
+    *,
+    hotel_id: str,
+    output_dir: Optional[Path],
+) -> Path:
+    base_dir = Path(output_dir) if output_dir is not None else OUTPUT_DIR
+    output_path = base_dir / f"raw_parse_failures_{hotel_id}.csv"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    df = pd.DataFrame(
+        failures,
+        columns=[
+            "kind",
+            "hotel_id",
+            "asof_date",
+            "target_month",
+            "missing_count",
+            "missing_sample",
+            "message",
+            "path",
+            "severity",
+        ],
+    )
+    df.to_csv(output_path, index=False, encoding="utf-8-sig")
+    return output_path
+
+
+def _extract_date_rows_from_column_a(
+    df: pd.DataFrame,
+    file_path: Path,
+    *,
+    start_row: int = START_STAY_DATE_ROW_IDX,
+) -> list[tuple[int, pd.Timestamp]]:
+    date_rows: list[tuple[int, pd.Timestamp]] = []
+    for offset, value in enumerate(df.iloc[start_row:, 0]):
+        row_idx = start_row + offset
+        stay_ts = _parse_date_cell(value)
+        if stay_ts is None:
+            continue
+        date_rows.append((row_idx, stay_ts))
+
+    if len(date_rows) < MIN_STAY_DATE_ROWS:
+        logger.error(
+            "%s: A列の日付行が少なすぎます (start_row=%s, found=%s, threshold=%s)",
+            file_path,
+            start_row + 1,
+            len(date_rows),
+            MIN_STAY_DATE_ROWS,
+        )
+        raise ValueError("A列の日付行が少なすぎるため解析を停止します")
+    return date_rows
+
+
+def _is_empty_cell(value: object) -> bool:
+    if pd.isna(value):
+        return True
+    if isinstance(value, str):
+        return value.strip() == ""
+    return False
+
+
+def _is_zero_or_na(value: object) -> bool:
+    if pd.isna(value):
+        return True
+    numeric = pd.to_numeric(value, errors="coerce")
+    if pd.isna(numeric):
+        return False
+    return float(numeric) == 0.0
+
+
+def _resolve_oh_rows(
+    date_rows: list[tuple[int, pd.Timestamp]],
+    layout: Literal["inline", "shifted"],
+    df: pd.DataFrame,
+    file_path: Path,
+) -> list[tuple[int, pd.Timestamp]]:
+    actual_rows: list[tuple[int, pd.Timestamp]] = []
+
+    if layout == "inline":
+        for row_idx, stay_date in date_rows:
+            actual_rows.append((row_idx, stay_date))
+        return actual_rows
+
+    skip_next = False
+    for idx, (row_idx, stay_date) in enumerate(date_rows):
+        if skip_next:
+            skip_next = False
+            continue
+
+        oh_row = row_idx + 1
+
+        if oh_row >= df.shape[0]:
+            logger.warning(
+                "%s: OH行がシート末尾を超えるため宿泊日 %s をスキップします (row=%s)",
+                file_path,
+                stay_date.date(),
+                row_idx,
+            )
+            continue
+
+        if idx + 1 < len(date_rows) and date_rows[idx + 1][1] == stay_date:
+            next_row_idx = date_rows[idx + 1][0]
+            if next_row_idx != oh_row:
+                logger.error(
+                    "%s: 同一日付が連続していますが行インデックスが不正です (stay_row=%s, expected_oh_row=%s, next_date_row=%s)",
+                    file_path,
+                    row_idx,
+                    oh_row,
+                    next_row_idx,
+                )
+                raise ValueError("layout_unknown")
+            stay_date_on_oh = _parse_date_cell(df.iloc[oh_row, 0])
+            if stay_date_on_oh is None or stay_date_on_oh != stay_date:
+                logger.error(
+                    "%s: 同一日付連続レイアウトでOH行のA列日付が一致しません (stay_row=%s, oh_row=%s)",
+                    file_path,
+                    row_idx,
+                    oh_row,
+                )
+                raise ValueError("layout_unknown")
+            skip_next = True
+        else:
+            oh_date_cell = _parse_date_cell(df.iloc[oh_row, 0])
+            if oh_date_cell is not None:
+                logger.error(
+                    "%s: shiftedレイアウト想定だがOH行のA列に日付が入っています (stay_row=%s, oh_row=%s, value=%s)",
+                    file_path,
+                    row_idx,
+                    oh_row,
+                    df.iloc[oh_row, 0],
+                )
+                raise ValueError("layout_unknown")
+
+        actual_rows.append((oh_row, stay_date))
+    return actual_rows
+
+
+def _is_weekday_cell(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    return value.strip() in WEEKDAY_SET
+
+
+def _row_efg_values(df: pd.DataFrame, row_idx: int) -> list[object]:
+    return [
+        df.iloc[row_idx, 4] if df.shape[1] > 4 else pd.NA,
+        df.iloc[row_idx, 5] if df.shape[1] > 5 else pd.NA,
+        df.iloc[row_idx, 6] if df.shape[1] > 6 else pd.NA,
+    ]
+
+
+def _row_efg_all_na(df: pd.DataFrame, row_idx: int) -> bool:
+    values = _row_efg_values(df, row_idx)
+    return all(pd.isna(value) for value in values)
+
+
+def _is_weekday_spacer_row(df: pd.DataFrame, row_idx: int) -> bool:
+    if row_idx < 0 or row_idx >= df.shape[0]:
+        return False
+    if not _is_empty_cell(df.iloc[row_idx, 0]):
+        return False
+    weekday_cell = df.iloc[row_idx, 2] if df.shape[1] > 2 else pd.NA
+    if not _is_weekday_cell(weekday_cell):
+        return False
+    values = _row_efg_values(df, row_idx)
+    return all(_is_zero_or_na(value) for value in values)
+
+
+def _resolve_layout_auto(
+    date_rows: list[tuple[int, pd.Timestamp]],
+    df: pd.DataFrame,
+    file_path: Path,
+) -> Literal["inline", "shifted"]:
+    for idx in range(len(date_rows) - 1):
+        if date_rows[idx + 1][1] == date_rows[idx][1]:
+            logger.info("%s: dup2判定でshifted確定", file_path)
+            return "shifted"
+
+    above_weekday_hits = 0
+    for row_idx, _ in date_rows:
+        above_row_idx = row_idx - 1
+        if above_row_idx < 0 or above_row_idx >= df.shape[0]:
+            continue
+        above_date_cell = df.iloc[above_row_idx, 0]
+        if not _is_empty_cell(above_date_cell):
+            continue
+        above_weekday_cell = df.iloc[above_row_idx, 2] if df.shape[1] > 2 else pd.NA
+        if not _is_weekday_cell(above_weekday_cell):
+            continue
+        date_row_weekday_cell = df.iloc[row_idx, 2] if df.shape[1] > 2 else pd.NA
+        if _is_weekday_cell(date_row_weekday_cell):
+            continue
+        above_weekday_hits += 1
+
+    above_weekday_ratio = above_weekday_hits / len(date_rows)
+    if above_weekday_ratio >= WEEKDAY_ABOVE_DATE_ROW_INLINE_RATIO:
+        logger.info(
+            "%s: 日付行の1行上に曜日がある比率が高いためinline確定 (ratio=%.2f)",
+            file_path,
+            above_weekday_ratio,
+        )
+        return "inline"
+
+    spacer_hits = sum(1 for row_idx, _ in date_rows if _is_weekday_spacer_row(df, row_idx - 1))
+    spacer_ratio = spacer_hits / len(date_rows)
+    if spacer_ratio >= WEEKDAY_SPACER_INLINE_RATIO:
+        logger.info(
+            "%s: weekday spacer比率が高いためinline確定 (ratio=%.2f)",
+            file_path,
+            spacer_ratio,
+        )
+        return "inline"
+
+    weekday_hits = 0
+    for row_idx, _ in date_rows:
+        weekday_cell = df.iloc[row_idx, 2] if df.shape[1] > 2 else pd.NA
+        if _is_weekday_cell(weekday_cell):
+            weekday_hits += 1
+    weekday_ratio = weekday_hits / len(date_rows)
+    if weekday_ratio >= WEEKDAY_IN_DATE_ROW_SHIFTED_RATIO:
+        logger.info(
+            "%s: 日付行の曜日セル比率が高いためshifted確定 (ratio=%.2f)",
+            file_path,
+            weekday_ratio,
+        )
+        return "shifted"
+
+    consecutive_hits = 0
+    total_pairs = len(date_rows) - 1
+    if total_pairs > 0:
+        for (row_idx, stay_date), (next_row_idx, next_stay_date) in zip(date_rows, date_rows[1:]):
+            if next_row_idx == row_idx + 1 and (next_stay_date - stay_date).days == 1:
+                consecutive_hits += 1
+        consecutive_ratio = consecutive_hits / total_pairs
+        if consecutive_ratio >= INLINE_CONSECUTIVE_RATIO:
+            logger.info(
+                "%s: 行/日付の連続性が高いためinline確定 (ratio=%.2f)",
+                file_path,
+                consecutive_ratio,
+            )
+            return "inline"
+
+    logger.error("%s: layout auto判定に失敗しました", file_path)
+    raise ValueError("layout_unknown")
+
+
+def _validate_target_month_dates(
+    stay_dates: list[pd.Timestamp],
+    target_month: pd.Timestamp,
+    file_path: Path,
+) -> None:
+    month_start = pd.Timestamp(target_month).normalize()
+    month_end = month_start + pd.offsets.MonthEnd(0)
+    in_month = [d for d in stay_dates if month_start <= d <= month_end]
+    if not in_month:
+        logger.error("%s: target_month に一致する宿泊日が見つかりません", file_path)
+        raise ValueError("stay_date_missing")
+    if len(in_month) != len({d for d in in_month}):
+        logger.error("%s: target_month 内の宿泊日が重複しています", file_path)
+        raise ValueError("stay_date_duplicate")
+    expected = pd.date_range(month_start, month_end, freq="D")
+    if len(in_month) != len(expected) or set(in_month) != set(expected):
+        logger.error(
+            "%s: target_month の宿泊日が揃っていません (found=%s, expected=%s)",
+            file_path,
+            len(in_month),
+            len(expected),
+        )
+        raise ValueError("stay_date_incomplete")
+
+
+def _extract_oh_values(df: pd.DataFrame, row_idx: int, file_path: Path) -> tuple[object, object, object]:
+    rooms_oh = df.iloc[row_idx, 4] if df.shape[1] > 4 else pd.NA
+    pax_oh = df.iloc[row_idx, 5] if df.shape[1] > 5 else pd.NA
+    revenue_oh = df.iloc[row_idx, 6] if df.shape[1] > 6 else pd.NA
 
     values = [rooms_oh, pax_oh, revenue_oh]
-    if all(pd.isna(v) or v == 0 for v in values):
-        logger.warning("%s: OH値が全て0/NaNです (row=%s)", file_path, row_idx)
+    if all(pd.isna(v) for v in values):
+        logger.warning("%s: OH値が全てNaNです (row=%s)", file_path, row_idx)
 
     return rooms_oh, pax_oh, revenue_oh
-
-
-def _detect_layout(df: pd.DataFrame, file_path: Path) -> Literal["shifted", "inline"]:
-    """A列の日付行インデックス間隔から 'shifted' / 'inline' を判定する。"""
-
-    col = df.iloc[:, 0]
-    dates = pd.to_datetime(col, errors="coerce")
-    date_idxs = dates[dates.notna()].index.to_numpy()
-
-    if len(date_idxs) < 3:
-        logger.error("%s: 日付行が少なすぎるためレイアウトを自動判定できません", file_path)
-        raise ValueError("日付行が少なすぎるためレイアウトを自動判定できません")
-
-    diffs = date_idxs[1:] - date_idxs[:-1]
-    inline_votes = (diffs == 1).sum()
-    shifted_votes = (diffs >= 2).sum()
-    total_votes = inline_votes + shifted_votes
-
-    if total_votes == 0:
-        logger.error("%s: 日付行の間隔からレイアウトを判定できません", file_path)
-        raise ValueError("日付行の間隔からレイアウトを判定できません")
-
-    inline_ratio = inline_votes / total_votes
-    if inline_ratio >= 0.8:
-        layout = "inline"
-    elif inline_ratio <= 0.2:
-        layout = "shifted"
-    else:
-        logger.error(
-            "%s: レイアウトを自動判定できません (inline_ratio=%.2f)",
-            file_path,
-            inline_ratio,
-        )
-        raise ValueError(f"レイアウトを自動判定できません (inline_ratio={inline_ratio:.2f})")
-
-    logger.info("%s: layout を自動判定しました -> %s", file_path, layout)
-    return layout
 
 
 def parse_nface_file(
@@ -139,6 +530,7 @@ def parse_nface_file(
     layout: LayoutType = "auto",
     output_dir: Optional[Path] = None,
     save: bool = True,
+    filename_asof_ymd: str | None = None,
 ) -> pd.DataFrame:
     """Parse a N@FACE Excel file into standard daily snapshots format.
 
@@ -149,7 +541,7 @@ def parse_nface_file(
             OH 行の配置を指定する。
             "shifted" は宿泊日行の1行下、
             "inline" は宿泊日行と同じ行、
-            "auto" はA列の日付間隔から自動判定。
+            "auto" はシート構造から自動判定。
         output_dir: 標準CSVを保存する出力ディレクトリ。
         save: True の場合は標準CSVに追記する。
 
@@ -157,40 +549,55 @@ def parse_nface_file(
         Normalized dataframe of daily snapshots extracted from the file.
     """
     path = Path(file_path)
+    filename_stay_ym, parsed_filename_asof = parse_nface_filename(path)
+    if filename_asof_ymd is None:
+        filename_asof_ymd = parsed_filename_asof
     df_raw = pd.read_excel(path, header=None)
 
-    if layout == "auto":
-        resolved_layout = _detect_layout(df_raw, path)
-    elif layout in ("shifted", "inline"):
-        resolved_layout = layout
-    else:
+    if layout not in ("auto", "shifted", "inline"):
         raise ValueError(f"Unknown layout: {layout!r}")
 
     target_month = _parse_target_month(df_raw, path)
     if target_month is None:
-        logger.error("%s: target_month が取得できないためスキップします", path)
-        return normalize_daily_snapshots_df(pd.DataFrame(), hotel_id=hotel_id)
+        raise ValueError("target_month が取得できません")
 
-    as_of_date = _parse_asof_date(df_raw, path)
+    if filename_stay_ym is not None:
+        stay_ts = pd.to_datetime(f"{filename_stay_ym}01", format="%Y%m%d", errors="coerce")
+        if not pd.isna(stay_ts):
+            stay_ts = pd.Timestamp(stay_ts).normalize()
+            if stay_ts.month != target_month.month or stay_ts.year != target_month.year:
+                logger.warning(
+                    "%s: ファイル名の宿泊月(%s)とシートの宿泊月(%s)が一致しません",
+                    path,
+                    stay_ts.strftime("%Y-%m"),
+                    target_month.strftime("%Y-%m"),
+                )
+
+    as_of_date = _parse_asof_date(df_raw, path, filename_asof_ymd)
     if as_of_date is None:
-        logger.error("%s: ASOF不明のためこのファイルはスキップします", path)
-        return normalize_daily_snapshots_df(pd.DataFrame(), hotel_id=hotel_id)
+        raise ValueError("ASOF 日付を取得できませんでした")
 
-    stay_rows = _iter_stay_rows(df_raw)
+    date_rows = _extract_date_rows_from_column_a(df_raw, path)
+    if layout == "inline":
+        actual_rows = _resolve_oh_rows(date_rows, "inline", df_raw, path)
+    elif layout == "shifted":
+        actual_rows = _resolve_oh_rows(date_rows, "shifted", df_raw, path)
+    else:
+        auto_layout = _resolve_layout_auto(date_rows, df_raw, path)
+        actual_rows = _resolve_oh_rows(date_rows, auto_layout, df_raw, path)
+
+    _validate_target_month_dates([stay_date for _, stay_date in actual_rows], target_month, path)
+
     records: list[dict] = []
     n_total = 0
     n_kept = 0
-    skipped_count = 0
 
-    for row_idx, stay_date in stay_rows:
+    for row_idx, stay_date in actual_rows:
         n_total += 1
         if stay_date.year != target_month.year or stay_date.month != target_month.month:
-            skipped_count += 1
             continue
 
-        rooms_oh, pax_oh, revenue_oh = _extract_oh_values_for_row(
-            df_raw, row_idx, resolved_layout, path
-        )
+        rooms_oh, pax_oh, revenue_oh = _extract_oh_values(df_raw, row_idx, path)
         records.append(
             {
                 "hotel_id": hotel_id,
@@ -203,26 +610,18 @@ def parse_nface_file(
         )
         n_kept += 1
 
-    if n_total > 0 and n_kept / n_total < 0.5:
-        logger.warning(
-            "%s: target_month に属さない行が多数あります (kept=%s / total=%s)",
-            path,
-            n_kept,
-            n_total,
-        )
-
-    if skipped_count > 0:
-        logger.warning("%s: target_month 外の行を %s 件スキップしました", path, skipped_count)
+    if n_total > 0 and (n_total - n_kept) / n_total >= 0.8:
+        logger.warning("%s: target_month 外の行が多数あります (kept=%s / total=%s)", path, n_kept, n_total)
 
     if not records:
-        logger.warning("%s: 宿泊日行が見つからないか、target_month に一致する行がありません", path)
-        return normalize_daily_snapshots_df(pd.DataFrame(), hotel_id=hotel_id)
+        raise ValueError("宿泊日行が見つからないか、target_month に一致する行がありません")
 
     df = pd.DataFrame(records)
     df_norm = normalize_daily_snapshots_df(df, hotel_id=hotel_id, as_of_date=as_of_date)
 
     if save:
-        output_path = append_daily_snapshots(df_norm, hotel_id=hotel_id, output_dir=output_dir)
+        base_dir = Path(output_dir) if output_dir is not None else OUTPUT_DIR
+        output_path = append_daily_snapshots_by_hotel(df_norm, hotel_id, output_dir=base_dir)
         logger.info("%s: 標準CSVに追記しました -> %s", path, output_path)
 
     return df_norm
@@ -240,27 +639,487 @@ def build_daily_snapshots_from_folder(
     デフォルトでは layout="auto" としてファイルごとにレイアウトを自動判定する。必要に応じて
     "shifted" / "inline" を明示指定することもできる。
     """
+    build_daily_snapshots_full_all(
+        input_dir=input_dir,
+        hotel_id=hotel_id,
+        layout=layout,
+        output_dir=output_dir,
+        glob=glob,
+    )
+
+
+def build_daily_snapshots_for_pairs(
+    input_dir: str | Path,
+    hotel_id: str,
+    pairs: list[tuple[str, str]],
+    *,
+    layout: LayoutType = "auto",
+    output_dir: Optional[Path] = None,
+    glob: str = "**/*.xls*",
+) -> dict[str, object]:
+    """Build daily snapshots only for specified (target_month, asof_date) pairs.
+
+    Each pair is processed independently and upserted with tightly scoped
+    asof/stay ranges to avoid unintended overwrites.
+    """
+
+    input_path = Path(input_dir)
+    if not input_path.exists() or not input_path.is_dir():
+        raise FileNotFoundError(f"{input_path} が存在しないかディレクトリではありません")
+
+    target_keys = {(t, a) for t, a in pairs}
+    if not target_keys:
+        return {
+            "processed_pairs": 0,
+            "skipped_missing_raw_pairs": 0,
+            "skipped_parse_fail_files": 0,
+            "updated_pairs": [],
+        }
+
+    raw_map: dict[tuple[str, str], Path] = {}
+    skipped_parse_fail_files = 0
+
+    for path in input_path.glob(glob):
+        if not path.is_file() or not path.suffix.lower().startswith(".xls") or path.name.startswith("~$"):
+            continue
+        target_month, asof_date = parse_nface_filename(path)
+        if target_month is None or asof_date is None:
+            skipped_parse_fail_files += 1
+            continue
+        key = (target_month, asof_date)
+        if key not in target_keys:
+            continue
+        if key in raw_map:
+            existing = raw_map[key]
+            raise ValueError(f"Duplicate raw files for {key}: {existing} / {path}")
+        raw_map[key] = path
+
+    processed_pairs = 0
+    skipped_missing_raw_pairs = 0
+    updated_pairs: list[dict[str, object]] = []
+    base_dir = Path(output_dir) if output_dir is not None else OUTPUT_DIR
+
+    for target_month, asof_date in sorted(target_keys):
+        raw_path = raw_map.get((target_month, asof_date))
+        if raw_path is None:
+            skipped_missing_raw_pairs += 1
+            continue
+
+        processed_pairs += 1
+        asof_ts = pd.to_datetime(asof_date, format="%Y%m%d", errors="coerce")
+        if pd.isna(asof_ts):
+            raise ValueError(f"Invalid asof_date format: {asof_date}")
+        asof_ts = pd.Timestamp(asof_ts).normalize()
+
+        stay_start = pd.to_datetime(f"{target_month}01", format="%Y%m%d", errors="coerce")
+        if pd.isna(stay_start):
+            raise ValueError(f"Invalid target_month format: {target_month}")
+        stay_start = pd.Timestamp(stay_start).normalize()
+        stay_end = stay_start + pd.offsets.MonthEnd(0)
+
+        df = parse_nface_file(
+            raw_path,
+            hotel_id=hotel_id,
+            layout=layout,
+            output_dir=output_dir,
+            save=False,
+            filename_asof_ymd=asof_date,
+        )
+        if df.empty:
+            continue
+
+        output_path = upsert_daily_snapshots_range_by_hotel(
+            df,
+            hotel_id,
+            asof_min=asof_ts,
+            asof_max=asof_ts,
+            stay_min=stay_start,
+            stay_max=stay_end,
+            output_dir=base_dir,
+        )
+        updated_pairs.append(
+            {
+                "target_month": target_month,
+                "asof_date": asof_date,
+                "path": str(raw_path),
+                "output_path": str(output_path),
+            }
+        )
+
+    return {
+        "processed_pairs": processed_pairs,
+        "skipped_missing_raw_pairs": skipped_missing_raw_pairs,
+        "skipped_parse_fail_files": skipped_parse_fail_files,
+        "updated_pairs": updated_pairs,
+    }
+
+
+def build_daily_snapshots_fast(
+    input_dir: str | Path,
+    hotel_id: str,
+    target_months: list[str],
+    asof_min: pd.Timestamp | None,
+    asof_max: pd.Timestamp | None,
+    layout: LayoutType = "auto",
+    output_dir: Optional[Path] = None,
+    glob: str = "*.xls*",
+    recursive: bool = False,
+) -> None:
+    """Build snapshots quickly by filename filtering and single append.
+
+    Supports optional recursive discovery of raw Excel files.
+    """
+
     input_path = Path(input_dir)
     if not input_path.exists() or not input_path.is_dir():
         logger.error("%s が存在しないかディレクトリではありません", input_path)
+        _write_raw_parse_failures([], hotel_id=hotel_id, output_dir=output_dir)
         return
 
-    candidates = list(input_path.glob(glob))
-    files = sorted(p for p in candidates if p.is_file() and p.suffix.lower() in {".xls", ".xlsx"})
+    asof_min_ts = _normalize_boundary_timestamp(asof_min, "asof_min") if asof_min is not None else None
+    asof_max_ts = _normalize_boundary_timestamp(asof_max, "asof_max") if asof_max is not None else None
 
-    if not files:
-        logger.warning("%s 配下に対象ファイルが見つかりません", input_path)
-        return
+    files = _discover_excel_files(input_path, glob, recursive=recursive)
+    _validate_no_duplicate_keys(files)
 
+    filtered: list[tuple[Path, str, str]] = []
     for file in files:
+        stay_ym, asof_ymd = parse_nface_filename(file)
+        if stay_ym is None or asof_ymd is None:
+            continue
+        if stay_ym not in target_months:
+            continue
+        asof_ts = pd.to_datetime(asof_ymd, format="%Y%m%d", errors="coerce")
+        if pd.isna(asof_ts):
+            logger.warning("%s: ASOF を日付に変換できないためスキップします", file)
+            continue
+        asof_ts = pd.Timestamp(asof_ts).normalize()
+        if asof_min_ts is not None and asof_ts < asof_min_ts:
+            continue
+        if asof_max_ts is not None and asof_ts > asof_max_ts:
+            continue
+        filtered.append((file, stay_ym, asof_ymd))
+
+    if not filtered:
+        logger.info("%s: 対象ファイルがありません (FAST)", input_path)
+        _write_raw_parse_failures([], hotel_id=hotel_id, output_dir=output_dir)
+        return
+
+    df_list: list[pd.DataFrame] = []
+    failures: list[dict[str, object]] = []
+    for file, stay_ym, asof_ymd in filtered:
         try:
-            parse_nface_file(
-                file, hotel_id=hotel_id, layout=layout, output_dir=output_dir, save=True
+            df = parse_nface_file(
+                file,
+                hotel_id=hotel_id,
+                layout=layout,
+                output_dir=output_dir,
+                save=False,
+                filename_asof_ymd=asof_ymd,
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("%s の処理中にエラーが発生しました: %s", file, exc)
+            failures.append(
+                _build_parse_failure_record(
+                    hotel_id=hotel_id,
+                    asof_ymd=asof_ymd,
+                    target_month=stay_ym,
+                    file_path=file,
+                    exc=exc,
+                ),
+            )
+            continue
+        if not df.empty:
+            df_list.append(df)
 
-    logger.info("%s 配下の処理が完了しました", input_path)
+    if not df_list:
+        logger.info("%s: Excel解析結果が空のためスキップします (FAST)", input_path)
+        _write_raw_parse_failures(failures, hotel_id=hotel_id, output_dir=output_dir)
+        return
+
+    df_new = pd.concat(df_list, ignore_index=True)
+    base_dir = Path(output_dir) if output_dir is not None else OUTPUT_DIR
+    output_path = append_daily_snapshots_by_hotel(df_new, hotel_id, output_dir=base_dir)
+    logger.info("%s: FASTモードで %s 件のファイルを処理しました -> %s", input_path, len(df_list), output_path)
+    _write_raw_parse_failures(failures, hotel_id=hotel_id, output_dir=output_dir)
 
 
-__all__ = ["parse_nface_file", "build_daily_snapshots_from_folder"]
+def build_daily_snapshots_full_months(
+    input_dir: str | Path,
+    hotel_id: str,
+    target_months: list[str],
+    layout: LayoutType = "auto",
+    output_dir: Optional[Path] = None,
+    glob: str = "*.xls*",
+    recursive: bool = False,
+) -> None:
+    """Append snapshots for specified months using single append.
+
+    Supports optional recursive discovery of raw Excel files.
+    """
+
+    input_path = Path(input_dir)
+    if not input_path.exists() or not input_path.is_dir():
+        logger.error("%s が存在しないかディレクトリではありません", input_path)
+        _write_raw_parse_failures([], hotel_id=hotel_id, output_dir=output_dir)
+        return
+
+    files = _discover_excel_files(input_path, glob, recursive=recursive)
+    _validate_no_duplicate_keys(files)
+
+    filtered: list[tuple[Path, str, str]] = []
+    for file in files:
+        stay_ym, asof_ymd = parse_nface_filename(file)
+        if stay_ym is None or asof_ymd is None:
+            continue
+        if stay_ym not in target_months:
+            continue
+        filtered.append((file, stay_ym, asof_ymd))
+
+    if not filtered:
+        logger.info("%s: 対象ファイルがありません (FULL_MONTHS)", input_path)
+        _write_raw_parse_failures([], hotel_id=hotel_id, output_dir=output_dir)
+        return
+
+    df_list: list[pd.DataFrame] = []
+    failures: list[dict[str, object]] = []
+    for file, stay_ym, asof_ymd in filtered:
+        try:
+            df = parse_nface_file(
+                file,
+                hotel_id=hotel_id,
+                layout=layout,
+                output_dir=output_dir,
+                save=False,
+                filename_asof_ymd=asof_ymd,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("%s の処理中にエラーが発生しました: %s", file, exc)
+            failures.append(
+                _build_parse_failure_record(
+                    hotel_id=hotel_id,
+                    asof_ymd=asof_ymd,
+                    target_month=stay_ym,
+                    file_path=file,
+                    exc=exc,
+                ),
+            )
+            continue
+        if not df.empty:
+            df_list.append(df)
+
+    if not df_list:
+        logger.info("%s: Excel解析結果が空のためスキップします (FULL_MONTHS)", input_path)
+        _write_raw_parse_failures(failures, hotel_id=hotel_id, output_dir=output_dir)
+        return
+
+    df_new = pd.concat(df_list, ignore_index=True)
+    base_dir = Path(output_dir) if output_dir is not None else OUTPUT_DIR
+    output_path = append_daily_snapshots_by_hotel(df_new, hotel_id, output_dir=base_dir)
+    logger.info("%s: FULL_MONTHSモードで %s 件のファイルを処理しました -> %s", input_path, len(df_list), output_path)
+    _write_raw_parse_failures(failures, hotel_id=hotel_id, output_dir=output_dir)
+
+
+def build_daily_snapshots_full_all(
+    input_dir: str | Path,
+    hotel_id: str,
+    layout: LayoutType = "auto",
+    output_dir: Optional[Path] = None,
+    glob: str = "*.xls*",
+    recursive: bool = False,
+) -> None:
+    """Append snapshots for all Excel files with a single append.
+
+    Supports optional recursive discovery of raw Excel files.
+    """
+
+    input_path = Path(input_dir)
+    if not input_path.exists() or not input_path.is_dir():
+        logger.error("%s が存在しないかディレクトリではありません", input_path)
+        _write_raw_parse_failures([], hotel_id=hotel_id, output_dir=output_dir)
+        return
+
+    files = _discover_excel_files(input_path, glob, recursive=recursive)
+    _validate_no_duplicate_keys(files)
+
+    if not files:
+        logger.warning("%s 配下に対象ファイルが見つかりません", input_path)
+        _write_raw_parse_failures([], hotel_id=hotel_id, output_dir=output_dir)
+        return
+
+    df_list: list[pd.DataFrame] = []
+    failures: list[dict[str, object]] = []
+    for file in files:
+        stay_ym, asof_ymd = parse_nface_filename(file)
+        if stay_ym is None or asof_ymd is None:
+            continue
+        try:
+            df = parse_nface_file(
+                file,
+                hotel_id=hotel_id,
+                layout=layout,
+                output_dir=output_dir,
+                save=False,
+                filename_asof_ymd=asof_ymd,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("%s の処理中にエラーが発生しました: %s", file, exc)
+            failures.append(
+                _build_parse_failure_record(
+                    hotel_id=hotel_id,
+                    asof_ymd=asof_ymd,
+                    target_month=stay_ym,
+                    file_path=file,
+                    exc=exc,
+                ),
+            )
+            continue
+        if not df.empty:
+            df_list.append(df)
+
+    if not df_list:
+        logger.info("%s: Excel解析結果が空のためスキップします (FULL_ALL)", input_path)
+        _write_raw_parse_failures(failures, hotel_id=hotel_id, output_dir=output_dir)
+        return
+
+    df_new = pd.concat(df_list, ignore_index=True)
+    base_dir = Path(output_dir) if output_dir is not None else OUTPUT_DIR
+    output_path = append_daily_snapshots_by_hotel(df_new, hotel_id, output_dir=base_dir)
+    logger.info("%s: FULL_ALLモードで %s 件のファイルを処理しました -> %s", input_path, len(df_list), output_path)
+    _write_raw_parse_failures(failures, hotel_id=hotel_id, output_dir=output_dir)
+
+
+def build_daily_snapshots_from_folder_partial(
+    input_dir: str | Path,
+    hotel_id: str,
+    target_months: list[str] | None,
+    asof_min: pd.Timestamp | str | None,
+    asof_max: pd.Timestamp | str | None,
+    stay_min: pd.Timestamp | str | None,
+    stay_max: pd.Timestamp | str | None,
+    layout: LayoutType = "auto",
+    output_dir: Optional[Path] = None,
+    glob: str = "*.xls*",
+    recursive: bool = False,
+) -> None:
+    """部分更新用にファイル名フィルタを優先するパーシャルビルド。"""
+
+    input_path = Path(input_dir)
+    if not input_path.exists() or not input_path.is_dir():
+        logger.error("%s が存在しないかディレクトリではありません", input_path)
+        _write_raw_parse_failures([], hotel_id=hotel_id, output_dir=output_dir)
+        return
+
+    asof_min_ts = _normalize_boundary_timestamp(asof_min, "asof_min") if asof_min is not None else None
+    asof_max_ts = _normalize_boundary_timestamp(asof_max, "asof_max") if asof_max is not None else None
+    stay_min_ts = _normalize_boundary_timestamp(stay_min, "stay_min") if stay_min is not None else None
+    stay_max_ts = _normalize_boundary_timestamp(stay_max, "stay_max") if stay_max is not None else None
+
+    files = _discover_excel_files(input_path, glob, recursive=recursive)
+    _validate_no_duplicate_keys(files)
+
+    logger.info(
+        "%s: partial build filters -> target_months=%s, asof_min=%s, asof_max=%s",
+        input_path,
+        target_months,
+        asof_min,
+        asof_max,
+    )
+
+    filtered_files: list[tuple[Path, str, str]] = []
+    for file in files:
+        target_month_ym, asof_ymd = parse_nface_filename(file)
+        if target_month_ym is None or asof_ymd is None:
+            continue
+
+        if target_months is not None and target_month_ym not in target_months:
+            continue
+
+        asof_ts = pd.to_datetime(asof_ymd, format="%Y%m%d", errors="coerce")
+        if pd.isna(asof_ts):
+            logger.warning("%s: ASOF を日付に変換できないためスキップします", file)
+            continue
+
+        if asof_min_ts is not None and asof_ts < asof_min_ts:
+            continue
+        if asof_max_ts is not None and asof_ts > asof_max_ts:
+            continue
+
+        filtered_files.append((file, target_month_ym, asof_ymd))
+
+    logger.info("%s: partial build 対象ファイル数=%s", input_path, len(filtered_files))
+
+    if not filtered_files:
+        logger.info("%s: 対象ファイルがありません", input_path)
+        _write_raw_parse_failures([], hotel_id=hotel_id, output_dir=output_dir)
+        return
+
+    df_list: list[pd.DataFrame] = []
+    failures: list[dict[str, object]] = []
+    for file, target_month_ym, asof_ymd in filtered_files:
+        try:
+            df = parse_nface_file(
+                file,
+                hotel_id=hotel_id,
+                layout=layout,
+                output_dir=output_dir,
+                save=False,
+                filename_asof_ymd=asof_ymd,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("%s の処理中にエラーが発生しました: %s", file, exc)
+            failures.append(
+                _build_parse_failure_record(
+                    hotel_id=hotel_id,
+                    asof_ymd=asof_ymd,
+                    target_month=target_month_ym,
+                    file_path=file,
+                    exc=exc,
+                ),
+            )
+            continue
+
+        if df.empty:
+            continue
+
+        if stay_min_ts is not None or stay_max_ts is not None:
+            stay_mask = pd.Series(True, index=df.index)
+            if stay_min_ts is not None:
+                stay_mask &= df["stay_date"] >= stay_min_ts
+            if stay_max_ts is not None:
+                stay_mask &= df["stay_date"] <= stay_max_ts
+            df = df.loc[stay_mask]
+
+        if not df.empty:
+            df_list.append(df)
+
+    if not df_list:
+        logger.info("%s: 対象ファイルがありません (Excel 解析結果が空)", input_path)
+        _write_raw_parse_failures(failures, hotel_id=hotel_id, output_dir=output_dir)
+        return
+
+    df_new = pd.concat(df_list, ignore_index=True)
+
+    output_path = upsert_daily_snapshots_range_by_hotel(
+        df_new,
+        hotel_id,
+        asof_min=asof_min_ts,
+        asof_max=asof_max_ts,
+        stay_min=stay_min_ts,
+        stay_max=stay_max_ts,
+        output_dir=Path(output_dir) if output_dir is not None else OUTPUT_DIR,
+    )
+    logger.info("%s: %s 件のファイルから部分更新を実施しました -> %s", input_path, len(df_list), output_path)
+    _write_raw_parse_failures(failures, hotel_id=hotel_id, output_dir=output_dir)
+
+
+__all__ = [
+    "parse_nface_file",
+    "parse_nface_filename",
+    "build_daily_snapshots_fast",
+    "build_daily_snapshots_from_folder",
+    "build_daily_snapshots_full_all",
+    "build_daily_snapshots_full_months",
+    "build_daily_snapshots_from_folder_partial",
+    "build_daily_snapshots_for_pairs",
+]

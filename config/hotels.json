@@ -2,8 +2,8 @@
   "setup_me": {
     "hotel_id": "setup_me",
     "display_name": "【要設定】ここを自ホテルに書き換えてください",
-    "capacity": 0,
-    "forecast_cap": 0,
+    "capacity": 100,
+    "forecast_cap": 100,
     "data_subdir": "",
     "timeseries_file": "",
     "adapter_type": "nface",

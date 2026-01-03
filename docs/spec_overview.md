@@ -218,12 +218,12 @@ PMS 生データを正規化し、ホテル共通で扱える形として定義�
   - `daily_snapshots` をソースにする場合、LT生成時に snapshots 更新を任意で実行できる。
   - `timeseries` 選択時は snapshots 更新オプションを無効化（不要な処理時間を発生させない）。
 
-#### v0.6.7（`feature/daily-snapshots-partial-build` 開発中）
+#### v0.6.7（`feature/daily-snapshots-partial-build` リリース）
 
 - daily snapshots の部分生成（RANGE_REBUILD 等）の運用安定化。
 - RAW（N@FACE）現場加工パターン差への対応強化（誤取り込み防止、STOP条件の明確化）。
 - 欠損検査（ops）/ 欠損監査（audit）による運用警告の整理（マスタ設定タブ）。
-- 欠損検査（ops）のACK（確認済み除外）＋GUI欠損一覧（opsのみ）を同ブランチで完走する方針。
+- 欠損検査（ops）のACK（確認済み除外）＋GUI欠損一覧（opsのみ）を同ブランチで完走（実装済）。
   - 同一性キー：`kind + target_month + asof_date + path`
   - 対象：`severity in (ERROR, WARN)`
   - audit は全体像のためACK除外しない

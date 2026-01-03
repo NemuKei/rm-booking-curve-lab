@@ -25,4 +25,5 @@ build/
 Thumbs.db
 
 data/
-output/packages/
+output/
+packages/

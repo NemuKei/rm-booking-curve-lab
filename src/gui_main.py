@@ -45,6 +45,7 @@ from build_daily_snapshots_from_folder import (
 try:
     from booking_curve.config import (
         CONFIG_DIR,
+        LOCAL_OVERRIDES_DIR,
         STARTUP_INIT_LOG_PATH,
         clear_local_override_raw_root_dir,
         get_local_overrides_path,
@@ -121,7 +122,8 @@ except Exception as exc:
 
 # デフォルトホテル (現状は大国町のみ想定)
 DEFAULT_HOTEL = next(iter(HOTEL_CONFIG.keys()), "daikokucho")
-SETTINGS_FILE = OUTPUT_DIR / "gui_settings.json"
+SETTINGS_FILE = LOCAL_OVERRIDES_DIR / "gui_settings.json"
+LEGACY_SETTINGS_FILE = OUTPUT_DIR / "gui_settings.json"
 
 
 def open_file(path: str | Path) -> None:
@@ -207,15 +209,27 @@ class BookingCurveApp(tk.Tk):
                         return data
         except Exception:
             pass
-        return {}
-
-    def _save_settings(self) -> None:
         try:
-            OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-            with SETTINGS_FILE.open("w", encoding="utf-8") as f:
-                json.dump(self._settings, f, ensure_ascii=False, indent=2)
+            if LEGACY_SETTINGS_FILE.exists():
+                with LEGACY_SETTINGS_FILE.open("r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        self._save_settings_data(data)
+                        return data
         except Exception:
             pass
+        return {}
+
+    def _save_settings_data(self, data: dict) -> None:
+        try:
+            LOCAL_OVERRIDES_DIR.mkdir(parents=True, exist_ok=True)
+            with SETTINGS_FILE.open("w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def _save_settings(self) -> None:
+        self._save_settings_data(self._settings)
 
     def _on_open_output_dir(self) -> None:
         open_file(OUTPUT_DIR)

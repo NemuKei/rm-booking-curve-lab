@@ -7,6 +7,12 @@
 2. `LT_DATA`（宿泊日×LT テーブル＋月次カーブ）
 3. 評価用データ（モデル精度評価・日別誤差・セグメント別要約）
 
+> 補足：パスの基準（重要）
+>
+> 本仕様中の `output/...` / `config/...` は **論理パス** を表す。
+> 実体の保存先は **APP_BASE_DIR** 配下（Windows 既定：`%LOCALAPPDATA%/BookingCurveLab/`）であり、
+> EXE配下（配置フォルダ）には出力しない。
+
 ---
 
 ## 1. daily snapshots（標準日別スナップショット）
@@ -483,6 +489,10 @@ GUI上で安全に検知できる必要がある。
 - `output/missing_report_<hotel_id>_ops.csv`
 - `output/missing_report_<hotel_id>_audit.csv`
 - `output/raw_parse_failures_<hotel_id>.csv`（欠損レポートに取り込まれる）
+- ops（運用）のみ ACK（確認済み）を持つ：
+  - 保存先：`acks/missing_ack_<hotel_id>_ops.csv`（端末ローカル）
+  - ops の集計（ERROR/WARN件数）は ACK 済みを除外する（運用ノイズ除去のため）
+  - audit（監査）は全体像の保持を優先し、ACK除外しない
 
 ### 4-2. CSV列仕様（共通）
 

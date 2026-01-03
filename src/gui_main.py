@@ -25,6 +25,7 @@ try:
 except ImportError:  # tkcalendar が無い環境向けフォールバック
     DateEntry = None
 
+
 def _show_fatal_startup_error(message: str) -> None:
     root = tk.Tk()
     root.withdraw()
@@ -35,22 +36,8 @@ def _show_fatal_startup_error(message: str) -> None:
 def _get_fallback_startup_log_path() -> Path:
     local_app_data = os.environ.get("LOCALAPPDATA")
     if local_app_data:
-        return (
-            Path(local_app_data)
-            / "BookingCurveLab"
-            / "output"
-            / "logs"
-            / "startup_init.log"
-        )
-    return (
-        Path.home()
-        / ".local"
-        / "share"
-        / "BookingCurveLab"
-        / "output"
-        / "logs"
-        / "startup_init.log"
-    )
+        return Path(local_app_data) / "BookingCurveLab" / "output" / "logs" / "startup_init.log"
+    return Path.home() / ".local" / "share" / "BookingCurveLab" / "output" / "logs" / "startup_init.log"
 
 
 # プロジェクト内モジュール
@@ -67,10 +54,7 @@ try:
 except Exception as exc:
     logging.exception("Failed to import booking_curve.config")
     log_hint = _get_fallback_startup_log_path()
-    _show_fatal_startup_error(
-        "booking_curve.config の読み込みに失敗しました。\n"
-        f"{exc}\n\nログ: {log_hint}"
-    )
+    _show_fatal_startup_error(f"booking_curve.config の読み込みに失敗しました。\n{exc}\n\nログ: {log_hint}")
     sys.exit(1)
 
 try:
@@ -103,10 +87,7 @@ try:
     )
 except Exception as exc:
     logging.exception("Failed to import booking_curve.gui_backend")
-    _show_fatal_startup_error(
-        "booking_curve.gui_backend の読み込みに失敗しました。\n"
-        f"{exc}\n\nログ: {STARTUP_INIT_LOG_PATH}"
-    )
+    _show_fatal_startup_error(f"booking_curve.gui_backend の読み込みに失敗しました。\n{exc}\n\nログ: {STARTUP_INIT_LOG_PATH}")
     sys.exit(1)
 from booking_curve.missing_ack import (
     build_ack_key_from_row,

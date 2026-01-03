@@ -104,6 +104,13 @@ PMS 生データを正規化し、ホテル共通で扱える形として定義�
 - 一般ユーザー向け配布形態：
   - `BookingCurveLab.exe`（pyinstaller でビルド）として Windows 10 / 11 上で動作
   - EXE 利用者には Python は不要
+- 実行時の保存先（重要）：
+  - アプリの設定・生成物・ログは **APP_BASE_DIR** 配下に集約する（EXE配下へは出力しない）。
+  - Windows の既定：`%LOCALAPPDATA%/BookingCurveLab/`
+    - `config/hotels.json`（端末ごとの設定）
+    - `output/`（CSV・ログ）
+    - `acks/`（欠損検査 ops の確認済み）
+    - `local_overrides/`（RAW取込元の端末ローカル上書き）
 - 管理者・開発者：
   - Python 実行環境＋必要ライブラリを整備し、CLI スクリプトやモジュールを直接実行・編集できる前提
 
@@ -220,6 +227,11 @@ PMS 生データを正規化し、ホテル共通で扱える形として定義�
   - 同一性キー：`kind + target_month + asof_date + path`
   - 対象：`severity in (ERROR, WARN)`
   - audit は全体像のためACK除外しない
+- EXE配布を前提に、APP_BASE_DIR（%LOCALAPPDATA%）へ寄せ切り：
+  - EXEの置き場所に依存せず運用できる（EXE移動で壊れない）
+  - 端末ごと独立運用（設定・ACK・出力は共有しない）
+- マスタ設定タブに「設定フォルダを開く」「設定を再読み込み」を追加（迷子防止）。
+- 初回テンプレ展開（hotels.json 等）が失敗した場合は、showerror＋ログで通知して握りつぶさない。
 
 
 #### 今後の予定（概要）

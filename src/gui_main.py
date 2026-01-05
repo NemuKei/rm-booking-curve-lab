@@ -3902,11 +3902,20 @@ class BookingCurveApp(tk.Tk):
         self.mc_show_prev_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(form, text="前年同月を重ねる", variable=self.mc_show_prev_var).grid(row=0, column=4, padx=8, pady=2, sticky="w")
 
+        self.mc_fill_missing_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(form, text="欠損補完（NOCB）", variable=self.mc_fill_missing_var).grid(
+            row=0,
+            column=5,
+            padx=8,
+            pady=2,
+            sticky="w",
+        )
+
         save_btn = ttk.Button(form, text="PNG保存", command=self._on_save_monthly_curve_png)
-        save_btn.grid(row=0, column=5, padx=4, pady=2)
+        save_btn.grid(row=0, column=6, padx=4, pady=2)
 
         draw_btn = ttk.Button(form, text="描画", command=self._on_draw_monthly_curve)
-        draw_btn.grid(row=0, column=6, padx=4, pady=2)
+        draw_btn.grid(row=0, column=7, padx=4, pady=2)
 
         nav_frame = ttk.Frame(form)
         nav_frame.grid(row=1, column=2, columnspan=5, sticky="w", pady=(4, 0))
@@ -4020,6 +4029,7 @@ class BookingCurveApp(tk.Tk):
                 hotel_tag=hotel_tag,
                 target_month=month_str,
                 as_of_date=latest_asof,  # バックエンド側でASOFトリミングを実施
+                fill_missing=bool(self.mc_fill_missing_var.get()),
             )
 
             # インデックスを int LT に統一して昇順ソート

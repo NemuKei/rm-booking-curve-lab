@@ -4116,10 +4116,10 @@ class BookingCurveApp(tk.Tk):
             messagebox.showerror("Error", f"月次カーブの描画対象データがありません。{detail}")
             return
 
-        if skipped_months or skipped_prev_months:
-            warn_parts: list[str] = []
-            if skipped_months:
-                warn_parts.append("取得できなかった月次カーブ: " + ", ".join(sorted(skipped_months)))
+        if skipped_months:
+            warn_parts: list[str] = [
+                "取得できなかった月次カーブ: " + ", ".join(sorted(skipped_months))
+            ]
             if skipped_prev_months:
                 warn_parts.append("取得できなかった前年同月: " + ", ".join(sorted(skipped_prev_months)))
             warn_parts.append("必要なら daily snapshots を更新してください。")

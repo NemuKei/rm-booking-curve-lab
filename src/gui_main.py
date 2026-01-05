@@ -3903,7 +3903,7 @@ class BookingCurveApp(tk.Tk):
         ttk.Checkbutton(form, text="前年同月を重ねる", variable=self.mc_show_prev_var).grid(row=0, column=4, padx=8, pady=2, sticky="w")
 
         self.mc_fill_missing_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(form, text="欠損補完（NOCB）", variable=self.mc_fill_missing_var).grid(
+        ttk.Checkbutton(form, text="欠損補完（線形）", variable=self.mc_fill_missing_var).grid(
             row=0,
             column=5,
             padx=8,

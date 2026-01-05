@@ -406,7 +406,14 @@ def get_booking_curve_data(
 ) -> dict:
     """曜日別ブッキングカーブ画面向けのデータセットを返す。"""
 
-    lt_df = _load_lt_data(hotel_tag=hotel_tag, target_month=target_month)
+    lt_cache: dict[str, pd.DataFrame] = {}
+
+    def _get_lt_cached(month_str: str) -> pd.DataFrame:
+        if month_str not in lt_cache:
+            lt_cache[month_str] = _load_lt_data(hotel_tag=hotel_tag, target_month=month_str)
+        return lt_cache[month_str]
+
+    lt_df = _get_lt_cached(target_month)
 
     # 曜日でフィルタ（0=Mon..6=Sun）
     df_week = lt_df[lt_df.index.weekday == weekday].copy()
@@ -432,7 +439,7 @@ def get_booking_curve_data(
     history_dfs: list[pd.DataFrame] = []
     for ym in history_months:
         try:
-            df_m = _load_lt_data(hotel_tag=hotel_tag, target_month=ym)
+            df_m = _get_lt_cached(ym)
         except FileNotFoundError:
             continue
         df_m_wd = df_m[df_m.index.weekday == weekday].copy()
@@ -472,7 +479,7 @@ def get_booking_curve_data(
         past_period = target_period - offset
         past_month_str = f"{past_period.year}{past_period.month:02d}"
         try:
-            past_lt = _load_lt_data(hotel_tag=hotel_tag, target_month=past_month_str)
+            past_lt = _get_lt_cached(past_month_str)
         except FileNotFoundError:
             continue
 
@@ -526,7 +533,7 @@ def get_booking_curve_data(
             history_dfs_wd: list[pd.DataFrame] = []
             for ym in history_months:
                 try:
-                    df_m = _load_lt_data(hotel_tag=hotel_tag, target_month=ym)
+                    df_m = _get_lt_cached(ym)
                 except FileNotFoundError:
                     continue
                 df_m_wd = df_m[df_m.index.weekday == wd].copy()
@@ -612,6 +619,8 @@ def get_monthly_curve_data(
     hotel_tag: str,
     target_month: str,
     as_of_date: Optional[str] = None,
+    *,
+    fill_missing: bool = True,
 ) -> pd.DataFrame:
     """月次ブッキングカーブ画面向けに、月次カーブ用の DataFrame を返す。
 
@@ -636,7 +645,7 @@ def get_monthly_curve_data(
         )
         _save_monthly_curve_csv(df_source, csv_path, hotel_tag, target_month)
 
-    return _prepare_monthly_curve_df(df_source, csv_path)
+    return _prepare_monthly_curve_df(df_source, csv_path, fill_missing=fill_missing)
 
 
 def _build_monthly_curve_from_daily_snapshots(
@@ -741,7 +750,7 @@ def _load_monthly_curve_csv(csv_path: Path) -> pd.DataFrame:
     return df
 
 
-def _prepare_monthly_curve_df(df: pd.DataFrame, csv_path: Path) -> pd.DataFrame:
+def _prepare_monthly_curve_df(df: pd.DataFrame, csv_path: Path, *, fill_missing: bool) -> pd.DataFrame:
     if df is None or df.empty:
         raise FileNotFoundError(f"monthly_curve が存在せず、daily_snapshots からも生成できませんでした: {csv_path}")
 
@@ -768,12 +777,17 @@ def _prepare_monthly_curve_df(df: pd.DataFrame, csv_path: Path) -> pd.DataFrame:
 
     act_row = df.loc[[-1]] if -1 in df.index else None
     df_no_act = df.loc[df.index != -1]
-    if not df_no_act.empty:
+    if fill_missing and not df_no_act.empty:
+        max_lt = df_no_act.index.max()
+        if pd.isna(max_lt) or max_lt < 0:
+            df_no_act = df_no_act.copy()
+        else:
+            df_no_act = df_no_act.reindex(index=range(0, int(max_lt) + 1))
         df_no_act = apply_nocb_along_lt(df_no_act, axis="index", max_gap=None)
     parts = [df_no_act]
     if act_row is not None:
         parts.append(act_row)
-    return pd.concat(parts).sort_index()
+    return pd.concat(parts)
 
 
 def run_forecast_for_gui(

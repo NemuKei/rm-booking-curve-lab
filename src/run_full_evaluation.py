@@ -294,8 +294,11 @@ def build_monthly_forecast(
         if model_name == "pace14_market" and baseline_curves_by_weekday:
             market_pace_7d, _ = compute_market_pace_7d(
                 lt_df=lt_df,
-                baseline_curves=baseline_curves_by_weekday,
                 as_of_ts=as_of_ts,
+                history_by_weekday=history_all_by_weekday,
+                lt_min=LT_MIN,
+                lt_max=LT_MAX,
+                min_count=RECENT90_MIN_COUNT_WEEKDAY,
             )
 
     # 4) build weekday-wise forecasts

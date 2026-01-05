@@ -401,6 +401,8 @@ def get_booking_curve_data(
     weekday: int,
     model: str,
     as_of_date: str,
+    *,
+    fill_missing: bool = True,
 ) -> dict:
     """曜日別ブッキングカーブ画面向けのデータセットを返す。"""
 
@@ -410,17 +412,14 @@ def get_booking_curve_data(
     df_week = lt_df[lt_df.index.weekday == weekday].copy()
     df_week.sort_index(inplace=True)
 
-    if not df_week.empty:
-        df_week_filled = apply_nocb_along_lt(df_week, axis="columns", max_gap=None)
-    else:
-        df_week_filled = df_week.copy()
+    df_week_plot = df_week.copy()
+    if fill_missing and not df_week_plot.empty:
+        df_week_plot = apply_nocb_along_lt(df_week_plot, axis="columns", max_gap=None)
 
-    lt_ticks = sorted(df_week_filled.columns) if not df_week_filled.empty else sorted(lt_df.columns)
+    lt_ticks = sorted(df_week_plot.columns) if not df_week_plot.empty else sorted(lt_df.columns)
     lt_min, lt_max = (lt_ticks[0], lt_ticks[-1]) if lt_ticks else (-1, 90)
 
     # NOCB 適用済みのカーブをベースに、ASOF 境界で未来側をトリミングする
-    df_week_plot = df_week_filled.copy()
-
     asof_ts = pd.to_datetime(as_of_date)
 
     # ASOF を中心に前後4ヶ月の LT_DATA を読み込み、同曜日だけを連結
@@ -482,29 +481,33 @@ def get_booking_curve_data(
             history_dfs.append(past_week)
 
     if history_dfs:
-        avg_curve = moving_average_3months(
+        avg_curve_3m = moving_average_3months(
             lt_df_list=history_dfs,
             lt_min=lt_min,
             lt_max=lt_max,
         )
     else:
-        if not df_week_filled.empty:
-            avg_curve = df_week_filled.reindex(columns=lt_ticks).mean(axis=0, skipna=True)
+        if not df_week_plot.empty:
+            avg_curve_3m = df_week_plot.reindex(columns=lt_ticks).mean(axis=0, skipna=True)
         else:
-            avg_curve = None
+            avg_curve_3m = None
+
+    baseline_curve_recent90 = None
+    if history_all is not None and not history_all.empty:
+        baseline_curve_recent90 = moving_average_recent_90days(
+            lt_df=history_all,
+            as_of_date=asof_ts,
+            lt_min=lt_min,
+            lt_max=lt_max,
+        )
 
     forecast_curve = None
     forecast_curves = None
     pace14_detail = None
 
     if model == "recent90":
-        if not history_all.empty:
-            forecast_curve = moving_average_recent_90days(
-                lt_df=history_all,
-                as_of_date=asof_ts,
-                lt_min=lt_min,
-                lt_max=lt_max,
-            )
+        if baseline_curve_recent90 is not None:
+            forecast_curve = baseline_curve_recent90
     elif model == "recent90w":
         if not history_all.empty:
             forecast_curve = moving_average_recent_90days_weighted(
@@ -514,7 +517,7 @@ def get_booking_curve_data(
                 lt_max=lt_max,
             )
     elif model == "avg":
-        forecast_curve = avg_curve
+        forecast_curve = avg_curve_3m
     elif model in {"pace14", "pace14_market"}:
         baseline_curves: dict[int, pd.Series] = {}
         history_by_weekday: dict[int, pd.DataFrame] = {}
@@ -551,8 +554,10 @@ def get_booking_curve_data(
             if model == "pace14_market":
                 market_pace_7d, mp_detail = compute_market_pace_7d(
                     lt_df=lt_df,
-                    baseline_curves=baseline_curves,
                     as_of_ts=asof_ts,
+                    history_by_weekday=history_by_weekday,
+                    lt_min=lt_min,
+                    lt_max=lt_max,
                 )
                 final_series, detail_df = forecast_final_from_pace14_market(
                     lt_df=df_week,
@@ -594,7 +599,7 @@ def get_booking_curve_data(
 
     return {
         "curves": curves,
-        "avg_curve": avg_curve,
+        "avg_curve": baseline_curve_recent90,
         "forecast_curve": forecast_curve,
         "forecast_curves": forecast_curves,
         "pace14_detail": pace14_detail,

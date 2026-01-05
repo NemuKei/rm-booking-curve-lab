@@ -625,8 +625,10 @@ def run_pace14_market_forecast(
 
     market_pace_7d, mp_df = compute_market_pace_7d(
         lt_df=df_target,
-        baseline_curves=baseline_curves,
         as_of_ts=as_of_ts,
+        history_by_weekday=history_by_weekday,
+        lt_min=LT_MIN,
+        lt_max=LT_MAX,
     )
 
     for weekday in range(7):

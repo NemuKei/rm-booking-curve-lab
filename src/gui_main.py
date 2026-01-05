@@ -1811,11 +1811,8 @@ class BookingCurveApp(tk.Tk):
             width=14,
         )
         model_combo["values"] = [
-            "avg",
             "recent90",
-            "recent90_adj",
             "recent90w",
-            "recent90w_adj",
             "pace14",
             "pace14_market",
         ]
@@ -3073,8 +3070,16 @@ class BookingCurveApp(tk.Tk):
         ttk.Label(form, text="モデル:").grid(row=1, column=5, sticky="w", pady=(4, 2))
         self.bc_model_var = tk.StringVar(value="recent90w")
         model_combo = ttk.Combobox(form, textvariable=self.bc_model_var, state="readonly", width=12)
-        model_combo["values"] = ["avg", "recent90", "recent90w", "pace14", "pace14_market"]
+        model_combo["values"] = ["recent90", "recent90w", "pace14", "pace14_market"]
         model_combo.grid(row=1, column=6, padx=4, pady=(4, 2))
+
+        self.bc_fill_missing_var = tk.BooleanVar(value=True)
+        self.bc_fill_missing_chk = ttk.Checkbutton(
+            form,
+            text="欠損補完(NOCB)",
+            variable=self.bc_fill_missing_var,
+        )
+        self.bc_fill_missing_chk.grid(row=1, column=8, padx=4, pady=(4, 2), sticky="w")
 
         # 現在選択されているホテルのキャパを取得
         current_hotel = self.hotel_var.get().strip() or DEFAULT_HOTEL
@@ -3545,17 +3550,18 @@ class BookingCurveApp(tk.Tk):
                 weekday=weekday_int,
                 model=model,
                 as_of_date=as_of_date,
+                fill_missing=self.bc_fill_missing_var.get(),
             )
         except Exception as e:
             messagebox.showerror("Error", f"ブッキングカーブ取得に失敗しました: {e}")
             return
 
         curves = data.get("curves", {})
-        avg_curve = data.get("avg_curve")
+        baseline_curve = data.get("avg_curve")
         forecast_curve = data.get("forecast_curve")
         forecast_curves = data.get("forecast_curves")
 
-        if not curves and avg_curve is None:
+        if not curves and baseline_curve is None:
             messagebox.showerror("Error", "データが不足しています")
             return
 
@@ -3564,8 +3570,8 @@ class BookingCurveApp(tk.Tk):
             df_week.columns = [int(c) for c in df_week.columns]
             df_week = df_week.reindex(columns=LEAD_TIME_PITCHES)
 
-        if avg_curve is not None:
-            avg_series = pd.Series(avg_curve)
+        if baseline_curve is not None:
+            avg_series = pd.Series(baseline_curve)
         else:
             avg_series = df_week.mean(axis=0, skipna=True) if not df_week.empty else pd.Series(dtype=float)
 
@@ -3691,7 +3697,7 @@ class BookingCurveApp(tk.Tk):
             color="#1F3F75",
             linewidth=4.5,
             alpha=0.2,
-            label="model avg",
+            label="baseline (recent90)",
         )
 
         self.bc_ax.set_xticks(x_positions)

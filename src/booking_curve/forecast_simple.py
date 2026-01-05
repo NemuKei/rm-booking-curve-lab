@@ -340,9 +340,13 @@ def _market_pace_raw(
 
 def compute_market_pace_7d(
     lt_df: pd.DataFrame,
-    baseline_curves: dict[int, pd.Series],
     as_of_ts: pd.Timestamp,
     *,
+    history_by_weekday: dict[int, pd.DataFrame] | None = None,
+    baseline_curves: dict[int, pd.Series] | None = None,
+    lt_min: int = -1,
+    lt_max: int = 90,
+    min_count: int = 1,
     days: int = 7,
 ) -> tuple[float, pd.DataFrame]:
     """Compute 7-day market pace average and daily diagnostics."""
@@ -350,7 +354,22 @@ def compute_market_pace_7d(
     records = []
     for offset in range(days):
         target_date = as_of_ts - pd.Timedelta(days=offset)
-        mp_raw = _market_pace_raw(lt_df, baseline_curves, target_date)
+        if history_by_weekday:
+            baseline_curves_for_date = {}
+            for weekday, history_df in history_by_weekday.items():
+                if history_df.empty:
+                    continue
+                baseline_curves_for_date[weekday] = moving_average_recent_90days(
+                    lt_df=history_df,
+                    as_of_date=target_date,
+                    lt_min=lt_min,
+                    lt_max=lt_max,
+                    min_count=min_count,
+                )
+        else:
+            baseline_curves_for_date = baseline_curves or {}
+
+        mp_raw = _market_pace_raw(lt_df, baseline_curves_for_date, target_date)
         records.append({"as_of_date": target_date.normalize(), "mp_raw": mp_raw})
 
     df = pd.DataFrame(records).sort_values("as_of_date")

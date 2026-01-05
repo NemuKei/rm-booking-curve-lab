@@ -1816,6 +1816,8 @@ class BookingCurveApp(tk.Tk):
             "recent90_adj",
             "recent90w",
             "recent90w_adj",
+            "pace14",
+            "pace14_market",
         ]
         model_combo.grid(row=1, column=1, padx=4, pady=(4, 2))
 
@@ -3071,7 +3073,7 @@ class BookingCurveApp(tk.Tk):
         ttk.Label(form, text="モデル:").grid(row=1, column=5, sticky="w", pady=(4, 2))
         self.bc_model_var = tk.StringVar(value="recent90w")
         model_combo = ttk.Combobox(form, textvariable=self.bc_model_var, state="readonly", width=12)
-        model_combo["values"] = ["avg", "recent90", "recent90w"]
+        model_combo["values"] = ["avg", "recent90", "recent90w", "pace14", "pace14_market"]
         model_combo.grid(row=1, column=6, padx=4, pady=(4, 2))
 
         # 現在選択されているホテルのキャパを取得
@@ -3551,6 +3553,7 @@ class BookingCurveApp(tk.Tk):
         curves = data.get("curves", {})
         avg_curve = data.get("avg_curve")
         forecast_curve = data.get("forecast_curve")
+        forecast_curves = data.get("forecast_curves")
 
         if not curves and avg_curve is None:
             messagebox.showerror("Error", "データが不足しています")
@@ -3607,7 +3610,14 @@ class BookingCurveApp(tk.Tk):
             )
 
             # ------- ここから破線 (モデルベースの延長) -------
-            if forecast_series is None or forecast_series.empty:
+            series_for_model = forecast_series
+            if forecast_curves and stay_date in forecast_curves:
+                series_for_model = pd.Series(forecast_curves[stay_date])
+                if not series_for_model.empty:
+                    series_for_model.index = [int(i) for i in series_for_model.index]
+                    series_for_model = series_for_model.reindex(LEAD_TIME_PITCHES)
+
+            if series_for_model is None or series_for_model.empty:
                 continue
 
             y_array = np.array(y_values, dtype=float)
@@ -3625,7 +3635,7 @@ class BookingCurveApp(tk.Tk):
 
             base_lt = LEAD_TIME_PITCHES[last_idx]
             base_actual = y_array[last_idx]
-            base_model = forecast_series.get(base_lt, np.nan)
+            base_model = series_for_model.get(base_lt, np.nan)
 
             if np.isnan(base_actual) or np.isnan(base_model):
                 continue
@@ -3640,7 +3650,7 @@ class BookingCurveApp(tk.Tk):
                     # 基準LTでは実績点と同じ位置から破線をスタートさせる
                     y_dash[j] = float(base_actual)
                 else:
-                    model_val = forecast_series.get(lt, np.nan)
+                    model_val = series_for_model.get(lt, np.nan)
                     if np.isnan(model_val):
                         # モデル値が欠損している場合は直前のモデル値を使ってフラットに延長
                         model_val = last_model_val

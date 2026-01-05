@@ -20,6 +20,10 @@ from booking_curve.daily_snapshots import (
     rebuild_asof_dates_from_daily_snapshots,
 )
 from booking_curve.forecast_simple import (
+    build_curve_from_final,
+    compute_market_pace_7d,
+    forecast_final_from_pace14,
+    forecast_final_from_pace14_market,
     moving_average_3months,
     moving_average_recent_90days,
     moving_average_recent_90days_weighted,
@@ -490,6 +494,8 @@ def get_booking_curve_data(
             avg_curve = None
 
     forecast_curve = None
+    forecast_curves = None
+    pace14_detail = None
 
     if model == "recent90":
         if not history_all.empty:
@@ -509,6 +515,80 @@ def get_booking_curve_data(
             )
     elif model == "avg":
         forecast_curve = avg_curve
+    elif model in {"pace14", "pace14_market"}:
+        baseline_curves: dict[int, pd.Series] = {}
+        history_by_weekday: dict[int, pd.DataFrame] = {}
+
+        for wd in range(7):
+            history_dfs_wd: list[pd.DataFrame] = []
+            for ym in history_months:
+                try:
+                    df_m = _load_lt_data(hotel_tag=hotel_tag, target_month=ym)
+                except FileNotFoundError:
+                    continue
+                df_m_wd = df_m[df_m.index.weekday == wd].copy()
+                if not df_m_wd.empty:
+                    history_dfs_wd.append(df_m_wd)
+
+            if not history_dfs_wd:
+                continue
+
+            history_all_wd = pd.concat(history_dfs_wd, axis=0)
+            history_all_wd.sort_index(inplace=True)
+            history_all_wd.index = pd.to_datetime(history_all_wd.index)
+            baseline_curve = moving_average_recent_90days(
+                lt_df=history_all_wd,
+                as_of_date=asof_ts,
+                lt_min=lt_min,
+                lt_max=lt_max,
+            )
+            baseline_curves[wd] = baseline_curve
+            history_by_weekday[wd] = history_all_wd
+
+        baseline_curve = baseline_curves.get(weekday)
+        history_all = history_by_weekday.get(weekday)
+        if baseline_curve is not None and history_all is not None and not df_week.empty:
+            if model == "pace14_market":
+                market_pace_7d, mp_detail = compute_market_pace_7d(
+                    lt_df=lt_df,
+                    baseline_curves=baseline_curves,
+                    as_of_ts=asof_ts,
+                )
+                final_series, detail_df = forecast_final_from_pace14_market(
+                    lt_df=df_week,
+                    baseline_curve=baseline_curve,
+                    history_df=history_all,
+                    as_of_date=asof_ts,
+                    capacity=_get_capacity(hotel_tag, None),
+                    market_pace_7d=market_pace_7d,
+                    lt_min=0,
+                    lt_max=lt_max,
+                )
+                if not detail_df.empty:
+                    detail_df = detail_df.copy()
+                    detail_df["market_pace_7d"] = market_pace_7d
+                    pace14_detail = detail_df
+                    pace14_detail.attrs["market_pace_detail"] = mp_detail
+            else:
+                final_series, detail_df = forecast_final_from_pace14(
+                    lt_df=df_week,
+                    baseline_curve=baseline_curve,
+                    history_df=history_all,
+                    as_of_date=asof_ts,
+                    capacity=_get_capacity(hotel_tag, None),
+                    lt_min=0,
+                    lt_max=lt_max,
+                )
+                pace14_detail = detail_df if not detail_df.empty else None
+
+            forecast_curve = baseline_curve
+            forecast_curves = {}
+            for stay_date, final_value in final_series.items():
+                if pd.isna(final_value):
+                    continue
+                curve = build_curve_from_final(baseline_curve, float(final_value))
+                if not curve.empty:
+                    forecast_curves[stay_date] = curve
 
     dates: List[pd.Timestamp] = list(df_week.index)
 
@@ -516,6 +596,8 @@ def get_booking_curve_data(
         "curves": curves,
         "avg_curve": avg_curve,
         "forecast_curve": forecast_curve,
+        "forecast_curves": forecast_curves,
+        "pace14_detail": pace14_detail,
         "lt_ticks": lt_ticks,
         "dates": dates,
     }
@@ -705,7 +787,7 @@ def run_forecast_for_gui(
     - as_of_date: "YYYY-MM-DD" 形式。run_forecast_batch 側では
       pd.to_datetime で解釈される前提。
     - gui_model: GUI のコンボボックス値
-      ("avg", "recent90", "recent90_adj", "recent90w", "recent90w_adj")
+      ("avg", "recent90", "recent90_adj", "recent90w", "recent90w_adj", "pace14", "pace14_market")
     - capacity: 予測キャップ (None の場合は run_forecast_batch 側のデフォルトを使用)
     """
     # GUI からは "YYYY-MM-DD" が渡されるので、
@@ -739,6 +821,20 @@ def run_forecast_for_gui(
                 capacity=capacity,
                 hotel_tag=hotel_tag,
             )
+        elif base_model == "pace14":
+            run_forecast_batch.run_pace14_forecast(
+                target_month=ym,
+                as_of_date=asof_tag,
+                capacity=capacity,
+                hotel_tag=hotel_tag,
+            )
+        elif base_model == "pace14_market":
+            run_forecast_batch.run_pace14_market_forecast(
+                target_month=ym,
+                as_of_date=asof_tag,
+                capacity=capacity,
+                hotel_tag=hotel_tag,
+            )
         else:
             raise ValueError(f"Unsupported gui_model: {gui_model}")
 
@@ -762,7 +858,7 @@ def get_daily_forecast_table(
         予測基準日 "YYYY-MM-DD"
     gui_model : str
         GUI上で選択されたモデル名
-        ("avg", "recent90", "recent90_adj", "recent90w", "recent90w_adj")
+        ("avg", "recent90", "recent90_adj", "recent90w", "recent90w_adj", "pace14", "pace14_market")
     capacity : float, optional
         None の場合は HOTEL_CONFIG の設定を使用
 
@@ -779,6 +875,8 @@ def get_daily_forecast_table(
         "recent90w": ("forecast_recent90w", "projected_rooms"),
         "recent90_adj": ("forecast_recent90", "adjusted_projected_rooms"),
         "recent90w_adj": ("forecast_recent90w", "adjusted_projected_rooms"),
+        "pace14": ("forecast_pace14", "projected_rooms"),
+        "pace14_market": ("forecast_pace14_market", "projected_rooms"),
     }
     if gui_model not in model_map:
         raise ValueError(f"Unsupported gui_model: {gui_model}")

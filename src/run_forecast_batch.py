@@ -7,6 +7,9 @@ import pandas as pd
 
 from booking_curve.config import OUTPUT_DIR
 from booking_curve.forecast_simple import (
+    compute_market_pace_7d,
+    forecast_final_from_pace14,
+    forecast_final_from_pace14_market,
     forecast_final_from_avg,
     forecast_month_from_recent90,
     moving_average_3months,
@@ -175,6 +178,34 @@ def _prepare_output(
             projected.append(out_df.loc[dt, "forecast_rooms_int"])
 
     out_df["projected_rooms"] = projected
+    return out_df
+
+
+def _merge_pace14_details(
+    out_df: pd.DataFrame, detail_df: pd.DataFrame, *, prefix: str
+) -> pd.DataFrame:
+    if detail_df is None or detail_df.empty:
+        return out_df
+    detail_df = detail_df.copy()
+    detail_df.index = pd.to_datetime(detail_df.index)
+    detail_df = detail_df.reindex(out_df.index)
+    rename_map = {
+        "lt_now": f"{prefix}_lt_now",
+        "lower_lt": f"{prefix}_lower_lt",
+        "upper_lt": f"{prefix}_upper_lt",
+        "delta_actual": f"{prefix}_delta_actual",
+        "delta_base": f"{prefix}_delta_base",
+        "pf_raw": f"{prefix}_pf_raw",
+        "pf_shrunk": f"{prefix}_pf_shrunk",
+        "pf_clipped": f"{prefix}_pf",
+        "is_spike": f"{prefix}_spike",
+        "market_pace_7d": "market_pace_7d",
+        "market_beta": "market_beta",
+        "market_factor": "market_factor",
+    }
+    for col, renamed in rename_map.items():
+        if col in detail_df.columns:
+            out_df[renamed] = detail_df[col]
     return out_df
 
 
@@ -440,6 +471,210 @@ def run_recent90_weighted_forecast(
     print(f"[recent90_weighted][OK] {out_path}")
 
 
+def run_pace14_forecast(
+    target_month: str,
+    as_of_date: str,
+    capacity: float | None = None,
+    hotel_tag: str = HOTEL_TAG,
+) -> None:
+    """pace14モデルで target_month を as_of_date 時点で予測し、CSVを出力する。"""
+    cap = _resolve_capacity(capacity)
+
+    as_of_ts = pd.to_datetime(as_of_date)
+    history_months = get_history_months_around_asof(
+        as_of_ts=as_of_ts,
+        months_back=4,
+        months_forward=4,
+    )
+
+    history_raw: dict[str, pd.DataFrame] = {}
+    for ym in history_months:
+        try:
+            df_m = load_lt_csv(ym, hotel_tag=hotel_tag)
+        except FileNotFoundError:
+            continue
+        if df_m.empty:
+            continue
+        history_raw[ym] = df_m
+
+    if not history_raw:
+        print(f"[pace14] No history LT_DATA for as_of={as_of_date}")
+        return
+
+    df_target = load_lt_csv(target_month, hotel_tag=hotel_tag)
+
+    all_forecasts: dict[pd.Timestamp, float] = {}
+    detail_frames: list[pd.DataFrame] = []
+
+    for weekday in range(7):
+        history_dfs = []
+        for df_m in history_raw.values():
+            df_m_wd = filter_by_weekday(df_m, weekday=weekday)
+            if not df_m_wd.empty:
+                history_dfs.append(df_m_wd)
+
+        if not history_dfs:
+            continue
+
+        history_all = pd.concat(history_dfs, axis=0)
+        history_all.index = pd.to_datetime(history_all.index)
+
+        avg_curve = moving_average_recent_90days(
+            lt_df=history_all,
+            as_of_date=as_of_ts,
+            lt_min=LT_MIN,
+            lt_max=LT_MAX,
+        )
+
+        df_target_wd = filter_by_weekday(df_target, weekday=weekday)
+        if df_target_wd.empty:
+            continue
+
+        fc_series, detail_df = forecast_final_from_pace14(
+            lt_df=df_target_wd,
+            baseline_curve=avg_curve,
+            history_df=history_all,
+            as_of_date=as_of_ts,
+            capacity=cap,
+            lt_min=0,
+            lt_max=LT_MAX,
+        )
+
+        if not detail_df.empty:
+            detail_frames.append(detail_df)
+
+        for stay_date, value in fc_series.items():
+            all_forecasts[stay_date] = value
+
+    if not all_forecasts:
+        print("No forecasts were generated. Check settings or data.")
+        return
+
+    out_df = _prepare_output(df_target, all_forecasts, as_of_ts)
+    if detail_frames:
+        detail_all = pd.concat(detail_frames, axis=0)
+        out_df = _merge_pace14_details(out_df, detail_all, prefix="pace14")
+
+    asof_tag = as_of_date.replace("-", "")
+    out_name = f"forecast_pace14_{target_month}_{hotel_tag}_asof_{asof_tag}.csv"
+    out_path = Path(OUTPUT_DIR) / out_name
+
+    out_df.to_csv(out_path, index=True)
+    print(f"[OK] Forecast exported to {out_path}")
+
+
+def run_pace14_market_forecast(
+    target_month: str,
+    as_of_date: str,
+    capacity: float | None = None,
+    hotel_tag: str = HOTEL_TAG,
+) -> None:
+    """pace14_marketモデルで target_month を as_of_date 時点で予測し、CSVを出力する。"""
+    cap = _resolve_capacity(capacity)
+
+    as_of_ts = pd.to_datetime(as_of_date)
+    history_months = get_history_months_around_asof(
+        as_of_ts=as_of_ts,
+        months_back=4,
+        months_forward=4,
+    )
+
+    history_raw: dict[str, pd.DataFrame] = {}
+    for ym in history_months:
+        try:
+            df_m = load_lt_csv(ym, hotel_tag=hotel_tag)
+        except FileNotFoundError:
+            continue
+        if df_m.empty:
+            continue
+        history_raw[ym] = df_m
+
+    if not history_raw:
+        print(f"[pace14_market] No history LT_DATA for as_of={as_of_date}")
+        return
+
+    df_target = load_lt_csv(target_month, hotel_tag=hotel_tag)
+
+    all_forecasts: dict[pd.Timestamp, float] = {}
+    detail_frames: list[pd.DataFrame] = []
+    baseline_curves: dict[int, pd.Series] = {}
+    history_by_weekday: dict[int, pd.DataFrame] = {}
+
+    for weekday in range(7):
+        history_dfs = []
+        for df_m in history_raw.values():
+            df_m_wd = filter_by_weekday(df_m, weekday=weekday)
+            if not df_m_wd.empty:
+                history_dfs.append(df_m_wd)
+
+        if not history_dfs:
+            continue
+
+        history_all = pd.concat(history_dfs, axis=0)
+        history_all.index = pd.to_datetime(history_all.index)
+
+        avg_curve = moving_average_recent_90days(
+            lt_df=history_all,
+            as_of_date=as_of_ts,
+            lt_min=LT_MIN,
+            lt_max=LT_MAX,
+        )
+
+        baseline_curves[weekday] = avg_curve
+        history_by_weekday[weekday] = history_all
+
+    market_pace_7d, mp_df = compute_market_pace_7d(
+        lt_df=df_target,
+        baseline_curves=baseline_curves,
+        as_of_ts=as_of_ts,
+    )
+
+    for weekday in range(7):
+        history_all = history_by_weekday.get(weekday)
+        avg_curve = baseline_curves.get(weekday)
+        if history_all is None or avg_curve is None:
+            continue
+
+        df_target_wd = filter_by_weekday(df_target, weekday=weekday)
+        if df_target_wd.empty:
+            continue
+
+        fc_series, detail_df = forecast_final_from_pace14_market(
+            lt_df=df_target_wd,
+            baseline_curve=avg_curve,
+            history_df=history_all,
+            as_of_date=as_of_ts,
+            capacity=cap,
+            market_pace_7d=market_pace_7d,
+            lt_min=0,
+            lt_max=LT_MAX,
+        )
+
+        if not detail_df.empty:
+            detail_frames.append(detail_df)
+
+        for stay_date, value in fc_series.items():
+            all_forecasts[stay_date] = value
+
+    if not all_forecasts:
+        print("No forecasts were generated. Check settings or data.")
+        return
+
+    out_df = _prepare_output(df_target, all_forecasts, as_of_ts)
+    if detail_frames:
+        detail_all = pd.concat(detail_frames, axis=0)
+        out_df = _merge_pace14_details(out_df, detail_all, prefix="pace14")
+        if not mp_df.empty:
+            out_df.attrs["market_pace_7d"] = market_pace_7d
+
+    asof_tag = as_of_date.replace("-", "")
+    out_name = f"forecast_pace14_market_{target_month}_{hotel_tag}_asof_{asof_tag}.csv"
+    out_path = Path(OUTPUT_DIR) / out_name
+
+    out_df.to_csv(out_path, index=True)
+    print(f"[OK] Forecast exported to {out_path}")
+
+
 def main() -> None:
     for target_month in TARGET_MONTHS:
         asof_list = get_asof_dates_for_month(target_month)
@@ -452,6 +687,12 @@ def main() -> None:
 
             print(f"[recent90w] target={target_month} as_of={as_of}")
             run_recent90_weighted_forecast(target_month, as_of)
+
+            print(f"[pace14]   target={target_month} as_of={as_of}")
+            run_pace14_forecast(target_month, as_of)
+
+            print(f"[pace14m]  target={target_month} as_of={as_of}")
+            run_pace14_market_forecast(target_month, as_of)
 
     print("=== batch forecast finished ===")
 

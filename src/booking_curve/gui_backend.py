@@ -783,7 +783,9 @@ def _prepare_monthly_curve_df(df: pd.DataFrame, csv_path: Path, *, fill_missing:
             df_no_act = df_no_act.copy()
         else:
             df_no_act = df_no_act.reindex(index=range(0, int(max_lt) + 1))
-        df_no_act = apply_nocb_along_lt(df_no_act, axis="index", max_gap=None)
+        rooms_series = df_no_act["rooms_total"].astype(float)
+        rooms_series = rooms_series.interpolate(method="linear", limit_direction="both")
+        df_no_act["rooms_total"] = rooms_series
     parts = [df_no_act]
     if act_row is not None:
         parts.append(act_row)

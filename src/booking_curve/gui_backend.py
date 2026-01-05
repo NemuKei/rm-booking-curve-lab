@@ -645,6 +645,21 @@ def get_monthly_curve_data(
         )
         _save_monthly_curve_csv(df_source, csv_path, hotel_tag, target_month)
 
+    if cutoff_ts is not None:
+        year = int(target_month[:4])
+        month = int(target_month[4:])
+        last_day = monthrange(year, month)[1]
+        month_end = datetime(year, month, last_day)
+        act_asof = pd.Timestamp(month_end + timedelta(days=1)).normalize()
+        lt_cutoff = (act_asof - cutoff_ts).days - 1
+        if "lt" in df_source.columns:
+            df_source = df_source[df_source["lt"] >= lt_cutoff]
+        else:
+            df_trim = df_source.reset_index()
+            if "lt" not in df_trim.columns:
+                df_trim = df_trim.rename(columns={"index": "lt"})
+            df_source = df_trim[df_trim["lt"] >= lt_cutoff]
+
     return _prepare_monthly_curve_df(df_source, csv_path, fill_missing=fill_missing)
 
 
@@ -784,7 +799,7 @@ def _prepare_monthly_curve_df(df: pd.DataFrame, csv_path: Path, *, fill_missing:
         else:
             df_no_act = df_no_act.reindex(index=range(0, int(max_lt) + 1))
         rooms_series = df_no_act["rooms_total"].astype(float)
-        rooms_series = rooms_series.interpolate(method="linear", limit_direction="both")
+        rooms_series = rooms_series.interpolate(method="linear", limit_area="inside")
         df_no_act["rooms_total"] = rooms_series
     parts = [df_no_act]
     if act_row is not None:

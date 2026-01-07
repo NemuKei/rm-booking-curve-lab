@@ -1827,6 +1827,15 @@ class BookingCurveApp(tk.Tk):
         ]
         model_combo.grid(row=1, column=1, padx=4, pady=(4, 2))
 
+        self.df_monthly_rounding_var = tk.BooleanVar(value=True)
+        df_rounding_checkbox = ttk.Checkbutton(
+            form,
+            text="月次丸め（TOTAL行）",
+            variable=self.df_monthly_rounding_var,
+            command=self._reload_daily_forecast_table,
+        )
+        df_rounding_checkbox.grid(row=1, column=8, padx=4, pady=(4, 2), sticky="w")
+
         # 予測キャップ / 稼働率キャパ
         # 現在選択されているホテルのキャパを取得
         current_hotel = self.hotel_var.get().strip() or DEFAULT_HOTEL
@@ -2213,6 +2222,95 @@ class BookingCurveApp(tk.Tk):
         if latest and latest not in ("なし", "(未取得)"):
             self.bc_asof_var.set(latest)
 
+    def _reload_daily_forecast_table(self) -> None:
+        hotel = self.df_hotel_var.get()
+        month = self.df_month_var.get()
+        asof = self.df_asof_var.get()
+        model = self.df_model_var.get()
+        occ_cap_str = self.df_occ_cap_var.get().strip()
+
+        if not month:
+            messagebox.showerror("エラー", "対象月(YYYYMM)を入力してください。")
+            return
+
+        if not occ_cap_str:
+            messagebox.showerror("エラー", "稼働率キャパを入力してください。")
+            return
+
+        try:
+            occ_capacity = float(occ_cap_str)
+        except Exception:
+            messagebox.showerror("エラー", "稼働率キャパには数値を入力してください。")
+            return
+
+        try:
+            df = get_daily_forecast_table(
+                hotel_tag=hotel,
+                target_month=month,
+                as_of_date=asof,
+                gui_model=model,
+                capacity=occ_capacity,
+                apply_monthly_rounding=self.df_monthly_rounding_var.get(),
+            )
+        except Exception as e:
+            self.df_daily_forecast_df = None
+            messagebox.showerror("エラー", f"日別フォーキャスト読み込みに失敗しました:\n{e}")
+            return
+
+        self._reset_df_selection_state()
+
+        # 既存行クリア
+        for row_id in self.df_tree.get_children():
+            self.df_tree.delete(row_id)
+
+        # DataFrame を Treeview に流し込む
+        for idx, (_, row) in enumerate(df.iterrows()):
+            # TOTAL 行は stay_date が NaT なので、表示用に "TOTAL" とする
+            stay_date = row["stay_date"]
+            if pd.isna(stay_date):
+                stay_str = "TOTAL"
+            else:
+                stay_str = pd.to_datetime(stay_date).strftime("%Y-%m-%d")
+
+            weekday = row["weekday"]
+            if isinstance(weekday, (int, float)) and not pd.isna(weekday) and 0 <= int(weekday) <= 6:
+                weekday_idx = int(weekday)
+                weekday_str = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][weekday_idx]
+            else:
+                weekday_str = str(weekday)
+
+            values = [
+                stay_str,
+                weekday_str,
+                _fmt_num(row.get("actual_rooms_display")),
+                _fmt_num(row.get("asof_oh_rooms_display")),
+                _fmt_num(row.get("forecast_rooms_display")),
+                _fmt_num(row.get("actual_pax_display")),
+                _fmt_num(row.get("forecast_pax_display")),
+                _fmt_num(row.get("forecast_revenue_display")),
+                _fmt_num(row.get("revenue_oh_now")),
+                _fmt_num(row.get("adr_oh_now")),
+                _fmt_num(row.get("adr_pickup_est")),
+                _fmt_num(row.get("diff_rooms_vs_actual")),
+                _fmt_pct(row.get("diff_pct_vs_actual")),
+                _fmt_num(row.get("pickup_expected_from_asof")),
+                _fmt_num(row.get("diff_rooms")),
+                _fmt_pct(row.get("diff_pct")),
+                _fmt_pct(row.get("occ_actual_pct")),
+                _fmt_pct(row.get("occ_asof_pct")),
+                _fmt_pct(row.get("occ_forecast_pct")),
+            ]
+            tags: tuple[str, ...] = ()
+            if idx % 2 == 1:
+                tags = ("oddrow",)
+
+            self.df_tree.insert("", tk.END, values=values, tags=tags)
+
+        self.df_daily_forecast_df = df
+        self.df_table_df = df
+
+        self._update_df_best_model_label()
+
     def _on_run_daily_forecast(self) -> None:
         """現在の設定で Forecast を実行し、テーブルを再読み込みする。"""
 
@@ -2288,74 +2386,8 @@ class BookingCurveApp(tk.Tk):
             messagebox.showerror("エラー", f"Forecast実行に失敗しました:\n{e}")
             return
 
-        try:
-            df = get_daily_forecast_table(
-                hotel_tag=hotel,
-                target_month=month,
-                as_of_date=asof,
-                gui_model=model,
-                capacity=occ_capacity,
-            )
-
-            self._set_daily_caps_for_hotel(hotel, forecast_cap, occ_capacity)
-        except Exception as e:
-            self.df_daily_forecast_df = None
-            messagebox.showerror("エラー", f"日別フォーキャスト読み込みに失敗しました:\n{e}")
-            return
-
-        self._reset_df_selection_state()
-
-        # 既存行クリア
-        for row_id in self.df_tree.get_children():
-            self.df_tree.delete(row_id)
-
-        # DataFrame を Treeview に流し込む
-        for idx, (_, row) in enumerate(df.iterrows()):
-            # TOTAL 行は stay_date が NaT なので、表示用に "TOTAL" とする
-            stay_date = row["stay_date"]
-            if pd.isna(stay_date):
-                stay_str = "TOTAL"
-            else:
-                stay_str = pd.to_datetime(stay_date).strftime("%Y-%m-%d")
-
-            weekday = row["weekday"]
-            if isinstance(weekday, (int, float)) and not pd.isna(weekday) and 0 <= int(weekday) <= 6:
-                weekday_idx = int(weekday)
-                weekday_str = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][weekday_idx]
-            else:
-                weekday_str = str(weekday)
-
-            values = [
-                stay_str,
-                weekday_str,
-                _fmt_num(row.get("actual_rooms_display")),
-                _fmt_num(row.get("asof_oh_rooms_display")),
-                _fmt_num(row.get("forecast_rooms_display")),
-                _fmt_num(row.get("actual_pax_display")),
-                _fmt_num(row.get("forecast_pax_display")),
-                _fmt_num(row.get("forecast_revenue_display")),
-                _fmt_num(row.get("revenue_oh_now")),
-                _fmt_num(row.get("adr_oh_now")),
-                _fmt_num(row.get("adr_pickup_est")),
-                _fmt_num(row.get("diff_rooms_vs_actual")),
-                _fmt_pct(row.get("diff_pct_vs_actual")),
-                _fmt_num(row.get("pickup_expected_from_asof")),
-                _fmt_num(row.get("diff_rooms")),
-                _fmt_pct(row.get("diff_pct")),
-                _fmt_pct(row.get("occ_actual_pct")),
-                _fmt_pct(row.get("occ_asof_pct")),
-                _fmt_pct(row.get("occ_forecast_pct")),
-            ]
-            tags: tuple[str, ...] = ()
-            if idx % 2 == 1:
-                tags = ("oddrow",)
-
-            self.df_tree.insert("", tk.END, values=values, tags=tags)
-
-        self.df_daily_forecast_df = df
-        self.df_table_df = df
-
-        self._update_df_best_model_label()
+        self._set_daily_caps_for_hotel(hotel, forecast_cap, occ_capacity)
+        self._reload_daily_forecast_table()
 
     def _df_get_row_col_index(self, row_id: str, col_id: str) -> tuple[int, int]:
         """row_id と '#n' 形式の col_id から (row_index, col_index) を返す。"""

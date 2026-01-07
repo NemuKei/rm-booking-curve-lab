@@ -890,6 +890,7 @@ def get_daily_forecast_table(
     as_of_date: str,
     gui_model: str,
     capacity: Optional[float] = None,
+    apply_monthly_rounding: bool = True,
 ) -> pd.DataFrame:
     """日別フォーキャスト一覧画面向けのテーブルを構築する。
 
@@ -906,6 +907,8 @@ def get_daily_forecast_table(
         ("avg", "recent90", "recent90_adj", "recent90w", "recent90w_adj", "pace14", "pace14_market")
     capacity : float, optional
         None の場合は HOTEL_CONFIG の設定を使用
+    apply_monthly_rounding : bool, optional
+        True の場合、TOTAL 行の *_display を資料向けに丸める
 
     Returns
     -------
@@ -1089,7 +1092,7 @@ def get_daily_forecast_table(
     out["forecast_revenue_display"] = out["forecast_revenue"].copy()
 
     total_mask = out["stay_date"].isna()
-    if total_mask.any():
+    if total_mask.any() and apply_monthly_rounding:
         out.loc[total_mask, "actual_rooms_display"] = _round_display(
             out.loc[total_mask, "actual_rooms"],
             100.0,

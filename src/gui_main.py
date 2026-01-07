@@ -1811,11 +1811,10 @@ class BookingCurveApp(tk.Tk):
             width=14,
         )
         model_combo["values"] = [
-            "avg",
             "recent90",
-            "recent90_adj",
             "recent90w",
-            "recent90w_adj",
+            "pace14",
+            "pace14_market",
         ]
         model_combo.grid(row=1, column=1, padx=4, pady=(4, 2))
 
@@ -3071,8 +3070,16 @@ class BookingCurveApp(tk.Tk):
         ttk.Label(form, text="モデル:").grid(row=1, column=5, sticky="w", pady=(4, 2))
         self.bc_model_var = tk.StringVar(value="recent90w")
         model_combo = ttk.Combobox(form, textvariable=self.bc_model_var, state="readonly", width=12)
-        model_combo["values"] = ["avg", "recent90", "recent90w"]
+        model_combo["values"] = ["recent90", "recent90w", "pace14", "pace14_market"]
         model_combo.grid(row=1, column=6, padx=4, pady=(4, 2))
+
+        self.bc_fill_missing_var = tk.BooleanVar(value=True)
+        self.bc_fill_missing_chk = ttk.Checkbutton(
+            form,
+            text="欠損補完(NOCB)",
+            variable=self.bc_fill_missing_var,
+        )
+        self.bc_fill_missing_chk.grid(row=1, column=8, padx=4, pady=(4, 2), sticky="w")
 
         # 現在選択されているホテルのキャパを取得
         current_hotel = self.hotel_var.get().strip() or DEFAULT_HOTEL
@@ -3543,16 +3550,18 @@ class BookingCurveApp(tk.Tk):
                 weekday=weekday_int,
                 model=model,
                 as_of_date=as_of_date,
+                fill_missing=self.bc_fill_missing_var.get(),
             )
         except Exception as e:
             messagebox.showerror("Error", f"ブッキングカーブ取得に失敗しました: {e}")
             return
 
         curves = data.get("curves", {})
-        avg_curve = data.get("avg_curve")
+        baseline_curve = data.get("avg_curve")
         forecast_curve = data.get("forecast_curve")
+        forecast_curves = data.get("forecast_curves")
 
-        if not curves and avg_curve is None:
+        if not curves and baseline_curve is None:
             messagebox.showerror("Error", "データが不足しています")
             return
 
@@ -3561,8 +3570,8 @@ class BookingCurveApp(tk.Tk):
             df_week.columns = [int(c) for c in df_week.columns]
             df_week = df_week.reindex(columns=LEAD_TIME_PITCHES)
 
-        if avg_curve is not None:
-            avg_series = pd.Series(avg_curve)
+        if baseline_curve is not None:
+            avg_series = pd.Series(baseline_curve)
         else:
             avg_series = df_week.mean(axis=0, skipna=True) if not df_week.empty else pd.Series(dtype=float)
 
@@ -3607,7 +3616,14 @@ class BookingCurveApp(tk.Tk):
             )
 
             # ------- ここから破線 (モデルベースの延長) -------
-            if forecast_series is None or forecast_series.empty:
+            series_for_model = forecast_series
+            if forecast_curves and stay_date in forecast_curves:
+                series_for_model = pd.Series(forecast_curves[stay_date])
+                if not series_for_model.empty:
+                    series_for_model.index = [int(i) for i in series_for_model.index]
+                    series_for_model = series_for_model.reindex(LEAD_TIME_PITCHES)
+
+            if series_for_model is None or series_for_model.empty:
                 continue
 
             y_array = np.array(y_values, dtype=float)
@@ -3625,7 +3641,7 @@ class BookingCurveApp(tk.Tk):
 
             base_lt = LEAD_TIME_PITCHES[last_idx]
             base_actual = y_array[last_idx]
-            base_model = forecast_series.get(base_lt, np.nan)
+            base_model = series_for_model.get(base_lt, np.nan)
 
             if np.isnan(base_actual) or np.isnan(base_model):
                 continue
@@ -3640,7 +3656,7 @@ class BookingCurveApp(tk.Tk):
                     # 基準LTでは実績点と同じ位置から破線をスタートさせる
                     y_dash[j] = float(base_actual)
                 else:
-                    model_val = forecast_series.get(lt, np.nan)
+                    model_val = series_for_model.get(lt, np.nan)
                     if np.isnan(model_val):
                         # モデル値が欠損している場合は直前のモデル値を使ってフラットに延長
                         model_val = last_model_val
@@ -3681,7 +3697,7 @@ class BookingCurveApp(tk.Tk):
             color="#1F3F75",
             linewidth=4.5,
             alpha=0.2,
-            label="model avg",
+            label="baseline (recent90)",
         )
 
         self.bc_ax.set_xticks(x_positions)
@@ -3886,11 +3902,20 @@ class BookingCurveApp(tk.Tk):
         self.mc_show_prev_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(form, text="前年同月を重ねる", variable=self.mc_show_prev_var).grid(row=0, column=4, padx=8, pady=2, sticky="w")
 
+        self.mc_fill_missing_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(form, text="欠損補完（線形）", variable=self.mc_fill_missing_var).grid(
+            row=0,
+            column=5,
+            padx=8,
+            pady=2,
+            sticky="w",
+        )
+
         save_btn = ttk.Button(form, text="PNG保存", command=self._on_save_monthly_curve_png)
-        save_btn.grid(row=0, column=5, padx=4, pady=2)
+        save_btn.grid(row=0, column=6, padx=4, pady=2)
 
         draw_btn = ttk.Button(form, text="描画", command=self._on_draw_monthly_curve)
-        draw_btn.grid(row=0, column=6, padx=4, pady=2)
+        draw_btn.grid(row=0, column=7, padx=4, pady=2)
 
         nav_frame = ttk.Frame(form)
         nav_frame.grid(row=1, column=2, columnspan=5, sticky="w", pady=(4, 0))
@@ -4004,6 +4029,7 @@ class BookingCurveApp(tk.Tk):
                 hotel_tag=hotel_tag,
                 target_month=month_str,
                 as_of_date=latest_asof,  # バックエンド側でASOFトリミングを実施
+                fill_missing=bool(self.mc_fill_missing_var.get()),
             )
 
             # インデックスを int LT に統一して昇順ソート
@@ -4090,10 +4116,10 @@ class BookingCurveApp(tk.Tk):
             messagebox.showerror("Error", f"月次カーブの描画対象データがありません。{detail}")
             return
 
-        if skipped_months or skipped_prev_months:
-            warn_parts: list[str] = []
-            if skipped_months:
-                warn_parts.append("取得できなかった月次カーブ: " + ", ".join(sorted(skipped_months)))
+        if skipped_months:
+            warn_parts: list[str] = [
+                "取得できなかった月次カーブ: " + ", ".join(sorted(skipped_months))
+            ]
             if skipped_prev_months:
                 warn_parts.append("取得できなかった前年同月: " + ", ".join(sorted(skipped_prev_months)))
             warn_parts.append("必要なら daily snapshots を更新してください。")

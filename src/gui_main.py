@@ -2513,9 +2513,19 @@ class BookingCurveApp(tk.Tk):
             messagebox.showerror("エラー", "先にForecast実行をしてください。")
             return
 
-        columns = list(self.df_tree["columns"])
-        tree_rows = [self.df_tree.item(row_id, "values") for row_id in self.df_tree.get_children("")]
-        df_export = pd.DataFrame(tree_rows, columns=columns)
+        df_export = df.copy()
+        display_cols = [col for col in df_export.columns if col.endswith("_display")]
+        if display_cols:
+            df_export = df_export.drop(columns=display_cols, errors="ignore")
+
+        def _needs_int_rounding(col: str) -> bool:
+            if "revenue" in col or "adr" in col or col.startswith("occ_"):
+                return False
+            return "rooms" in col or "pax" in col
+
+        for col in df_export.columns:
+            if _needs_int_rounding(col):
+                df_export[col] = pd.to_numeric(df_export[col], errors="coerce").round().astype("Int64")
 
         hotel = self.df_hotel_var.get().strip()
         month = self.df_month_var.get().strip()

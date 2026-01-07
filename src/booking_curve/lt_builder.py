@@ -133,7 +133,11 @@ def build_lt_data(df: pd.DataFrame, max_lt: int = 120) -> pd.DataFrame:
     return lt_final
 
 
-def build_lt_table_from_daily_snapshots(df: pd.DataFrame, max_lt: int = 120) -> pd.DataFrame:
+def build_lt_table_from_daily_snapshots(
+    df: pd.DataFrame,
+    value_col: str = "rooms_oh",
+    max_lt: int = 120,
+) -> pd.DataFrame:
     """日別スナップショットから LT テーブルを生成する（非補完版）。"""
 
     df = df.copy()
@@ -142,8 +146,10 @@ def build_lt_table_from_daily_snapshots(df: pd.DataFrame, max_lt: int = 120) -> 
     df["stay_date"] = pd.to_datetime(df["stay_date"])
     df["as_of_date"] = pd.to_datetime(df["as_of_date"])
 
-    # rooms_oh が NaN の行は落とす（0 は残す）
-    df = df[~df["rooms_oh"].isna()].copy()
+    # value_col が NaN の行は落とす（0 は残す）
+    if value_col not in df.columns:
+        raise ValueError(f"daily_snapshots missing required column: {value_col}")
+    df = df[~df[value_col].isna()].copy()
 
     # LT を計算（ここは「元 df」に対してやる）
     df["lt"] = (df["stay_date"] - df["as_of_date"]).dt.days
@@ -159,7 +165,7 @@ def build_lt_table_from_daily_snapshots(df: pd.DataFrame, max_lt: int = 120) -> 
     df_lt = df_lt.sort_values(["stay_date", "as_of_date"])
     df_last = df_lt.groupby(["stay_date", "lt"]).tail(1)
 
-    lt_table = df_last.pivot(index="stay_date", columns="lt", values="rooms_oh")
+    lt_table = df_last.pivot(index="stay_date", columns="lt", values=value_col)
     lt_table = lt_table.reindex(columns=range(0, max_lt + 1))
 
     # index/columns を整える
@@ -175,8 +181,11 @@ def build_lt_table_from_daily_snapshots(df: pd.DataFrame, max_lt: int = 120) -> 
 def build_lt_data_from_daily_snapshots_for_month(
     hotel_id: str,
     target_month: str,
+    value_col: str = "rooms_oh",
     max_lt: int = 120,
     output_dir: str | Path | None = None,
+    output_name: str | None = None,
+    write_csv: bool = True,
 ) -> pd.DataFrame:
     """日別スナップショットCSVから、指定月の宿泊日×LTのテーブルを構築する。
 
@@ -196,7 +205,11 @@ def build_lt_data_from_daily_snapshots_for_month(
     if "hotel_id" in df_month.columns:
         df_month = df_month[df_month["hotel_id"] == hotel_id]
 
-    lt_table = build_lt_table_from_daily_snapshots(df_month, max_lt=max_lt)
+    lt_table = build_lt_table_from_daily_snapshots(
+        df_month,
+        value_col=value_col,
+        max_lt=max_lt,
+    )
 
     # --- ACT(-1) を daily_snapshots から再計算して上書き ---
     if df_month is not None and not df_month.empty:
@@ -209,7 +222,7 @@ def build_lt_data_from_daily_snapshots_for_month(
         ).dt.normalize()
 
         # stay_date, as_of_date, rooms_oh が揃っている行だけを対象にする
-        df_act_src = df_act_src.dropna(subset=["stay_date", "as_of_date", "rooms_oh"])
+        df_act_src = df_act_src.dropna(subset=["stay_date", "as_of_date", value_col])
 
         if not df_act_src.empty:
             # D+ スナップショットだけに絞る（as_of_date > stay_date）
@@ -220,7 +233,7 @@ def build_lt_data_from_daily_snapshots_for_month(
                 # 各 stay_date について「一番新しい as_of_date」の行を1つだけ採用
                 df_act_src = df_act_src.sort_values(["stay_date", "as_of_date"])
                 df_act_last = df_act_src.groupby("stay_date").tail(1)
-                s_act = df_act_last.set_index("stay_date")["rooms_oh"]
+                s_act = df_act_last.set_index("stay_date")[value_col]
 
                 # -1 列を用意して、いったん NaN にリセット
                 if -1 not in lt_table.columns:
@@ -243,11 +256,13 @@ def build_lt_data_from_daily_snapshots_for_month(
     else:
         output_path = Path(output_dir)
 
-    output_path.mkdir(parents=True, exist_ok=True)
-    csv_path = output_path / f"lt_data_{target_month}_{hotel_id}.csv"
-    lt_table.to_csv(csv_path, index_label="stay_date")
-
-    print(f"[lt_builder] LT table saved to {csv_path}")
+    if write_csv:
+        output_path.mkdir(parents=True, exist_ok=True)
+        if output_name is None:
+            output_name = f"lt_data_{target_month}_{hotel_id}.csv"
+        csv_path = output_path / output_name
+        lt_table.to_csv(csv_path, index_label="stay_date")
+        print(f"[lt_builder] LT table saved to {csv_path}")
 
     return lt_table
 

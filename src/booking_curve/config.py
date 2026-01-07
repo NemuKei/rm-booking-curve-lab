@@ -93,6 +93,7 @@ REQUIRED_HOTEL_KEYS = (
 )
 
 LOCAL_OVERRIDES_VERSION = 1
+PHASE_OVERRIDES_VERSION = 1
 
 LOGGER = logging.getLogger(__name__)
 RUNTIME_INIT_ERRORS: list[str] = []
@@ -161,6 +162,11 @@ def get_local_overrides_path() -> Path:
     return _get_local_overrides_dir() / "local_overrides.json"
 
 
+def get_phase_overrides_path() -> Path:
+    """端末ローカルのフェーズ上書き設定ファイルパスを返す。"""
+    return _get_local_overrides_dir() / "phase_overrides.json"
+
+
 def _load_local_overrides() -> dict[str, dict[str, Any]]:
     overrides_path = get_local_overrides_path()
     if not overrides_path.exists():
@@ -208,6 +214,66 @@ def _write_local_overrides(hotels: dict[str, dict[str, Any]]) -> None:
     overrides_path = get_local_overrides_path()
     overrides_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"version": LOCAL_OVERRIDES_VERSION, "hotels": hotels}
+    with overrides_path.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+
+def load_phase_overrides() -> dict[str, dict[str, dict[str, str]]]:
+    overrides_path = get_phase_overrides_path()
+    if not overrides_path.exists():
+        return {}
+
+    try:
+        with overrides_path.open("r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except json.JSONDecodeError as exc:
+        LOGGER.warning("Failed to parse phase overrides JSON at %s: %s", overrides_path, exc)
+        return {}
+    except OSError as exc:  # pragma: no cover - I/O error boundary
+        LOGGER.warning("Failed to read phase overrides at %s: %s", overrides_path, exc)
+        return {}
+
+    if not isinstance(raw, dict):
+        LOGGER.warning("Phase overrides JSON must be an object: %s", overrides_path)
+        return {}
+
+    version = raw.get("version")
+    if version not in (None, PHASE_OVERRIDES_VERSION):
+        LOGGER.warning(
+            "Unsupported phase overrides version at %s: %s", overrides_path, version
+        )
+
+    hotels = raw.get("hotels", {})
+    if hotels is None:
+        return {}
+    if not isinstance(hotels, dict):
+        LOGGER.warning("Phase overrides 'hotels' must be an object: %s", overrides_path)
+        return {}
+
+    normalized: dict[str, dict[str, dict[str, str]]] = {}
+    for hotel_id, overrides in hotels.items():
+        if not isinstance(overrides, dict):
+            LOGGER.warning(
+                "Phase overrides for hotel_id=%s must be an object: %s", hotel_id, overrides_path
+            )
+            continue
+        month_map: dict[str, dict[str, str]] = {}
+        for month, payload in overrides.items():
+            if not isinstance(payload, dict):
+                continue
+            phase = payload.get("phase")
+            strength = payload.get("strength")
+            if not isinstance(phase, str) or not isinstance(strength, str):
+                continue
+            month_map[str(month)] = {"phase": phase, "strength": strength}
+        normalized[hotel_id] = month_map
+    return normalized
+
+
+def write_phase_overrides(overrides: dict[str, dict[str, dict[str, str]]]) -> None:
+    overrides_path = get_phase_overrides_path()
+    overrides_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"version": PHASE_OVERRIDES_VERSION, "hotels": overrides}
     with overrides_path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
 

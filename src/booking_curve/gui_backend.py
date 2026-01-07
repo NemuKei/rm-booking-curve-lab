@@ -813,6 +813,7 @@ def run_forecast_for_gui(
     as_of_date: str,
     gui_model: str,
     capacity: float | None = None,
+    phase_factors: dict[str, float] | None = None,
 ) -> None:
     """
     日別フォーキャストタブから Forecast を実行するための薄いラッパー。
@@ -836,12 +837,16 @@ def run_forecast_for_gui(
     base_model = gui_model.replace("_adj", "")
 
     for ym in target_months:
+        phase_factor = None
+        if phase_factors:
+            phase_factor = phase_factors.get(ym)
         if base_model == "avg":
             run_forecast_batch.run_avg_forecast(
                 target_month=ym,
                 as_of_date=asof_tag,
                 capacity=capacity,
                 hotel_tag=hotel_tag,
+                phase_factor=phase_factor,
             )
         elif base_model == "recent90":
             run_forecast_batch.run_recent90_forecast(
@@ -849,6 +854,7 @@ def run_forecast_for_gui(
                 as_of_date=asof_tag,
                 capacity=capacity,
                 hotel_tag=hotel_tag,
+                phase_factor=phase_factor,
             )
         elif base_model == "recent90w":
             run_forecast_batch.run_recent90_weighted_forecast(
@@ -856,6 +862,7 @@ def run_forecast_for_gui(
                 as_of=asof_tag,
                 capacity=capacity,
                 hotel_tag=hotel_tag,
+                phase_factor=phase_factor,
             )
         elif base_model == "pace14":
             run_forecast_batch.run_pace14_forecast(
@@ -863,6 +870,7 @@ def run_forecast_for_gui(
                 as_of_date=asof_tag,
                 capacity=capacity,
                 hotel_tag=hotel_tag,
+                phase_factor=phase_factor,
             )
         elif base_model == "pace14_market":
             run_forecast_batch.run_pace14_market_forecast(
@@ -870,6 +878,7 @@ def run_forecast_for_gui(
                 as_of_date=asof_tag,
                 capacity=capacity,
                 hotel_tag=hotel_tag,
+                phase_factor=phase_factor,
             )
         else:
             raise ValueError(f"Unsupported gui_model: {gui_model}")
@@ -942,6 +951,34 @@ def get_daily_forecast_table(
     out["weekday"] = out["stay_date"].dt.weekday
     out["actual_rooms"] = df["actual_rooms"].astype(float)
     out["forecast_rooms"] = df[col_name].astype(float)
+    if "actual_pax" in df.columns:
+        out["actual_pax"] = pd.to_numeric(df["actual_pax"], errors="coerce").astype(float)
+    else:
+        out["actual_pax"] = pd.NA
+    if "forecast_pax" in df.columns:
+        out["forecast_pax"] = pd.to_numeric(df["forecast_pax"], errors="coerce").astype(float)
+    else:
+        out["forecast_pax"] = pd.NA
+    if "projected_pax" in df.columns:
+        out["projected_pax"] = pd.to_numeric(df["projected_pax"], errors="coerce").astype(float)
+    else:
+        out["projected_pax"] = pd.NA
+    if "revenue_oh_now" in df.columns:
+        out["revenue_oh_now"] = pd.to_numeric(df["revenue_oh_now"], errors="coerce").astype(float)
+    else:
+        out["revenue_oh_now"] = pd.NA
+    if "adr_oh_now" in df.columns:
+        out["adr_oh_now"] = pd.to_numeric(df["adr_oh_now"], errors="coerce").astype(float)
+    else:
+        out["adr_oh_now"] = pd.NA
+    if "adr_pickup_est" in df.columns:
+        out["adr_pickup_est"] = pd.to_numeric(df["adr_pickup_est"], errors="coerce").astype(float)
+    else:
+        out["adr_pickup_est"] = pd.NA
+    if "forecast_revenue" in df.columns:
+        out["forecast_revenue"] = pd.to_numeric(df["forecast_revenue"], errors="coerce").astype(float)
+    else:
+        out["forecast_revenue"] = pd.NA
 
     snap_all = read_daily_snapshots_for_month(hotel_id=hotel_tag, target_month=target_month)
     required_cols = {"stay_date", "as_of_date", "rooms_oh"}
@@ -989,6 +1026,10 @@ def get_daily_forecast_table(
     actual_total = out["actual_rooms"].fillna(0).sum()
     asof_total = out["asof_oh_rooms"].fillna(0).sum()
     forecast_total = out["forecast_rooms"].fillna(0).sum()
+    actual_pax_total = out["actual_pax"].fillna(0).sum()
+    forecast_pax_total = out["forecast_pax"].fillna(0).sum()
+    revenue_oh_total = out["revenue_oh_now"].fillna(0).sum()
+    forecast_revenue_total = out["forecast_revenue"].fillna(0).sum()
 
     diff_total_vs_actual = forecast_total - actual_total
     if actual_total > 0:
@@ -1013,6 +1054,13 @@ def get_daily_forecast_table(
         "actual_rooms": actual_total,
         "asof_oh_rooms": asof_total,
         "forecast_rooms": forecast_total,
+        "actual_pax": actual_pax_total,
+        "forecast_pax": forecast_pax_total,
+        "projected_pax": pd.NA,
+        "revenue_oh_now": revenue_oh_total,
+        "adr_oh_now": pd.NA,
+        "adr_pickup_est": pd.NA,
+        "forecast_revenue": forecast_revenue_total,
         "diff_rooms_vs_actual": diff_total_vs_actual,
         "diff_pct_vs_actual": diff_total_pct_vs_actual,
         "pickup_expected_from_asof": pickup_total_from_asof,
@@ -1026,12 +1074,36 @@ def get_daily_forecast_table(
     out = out.reset_index(drop=True)
     out = pd.concat([out, pd.DataFrame([total_row])], ignore_index=True)
 
+    def _round_display(series: pd.Series, unit: float) -> pd.Series:
+        values = pd.to_numeric(series, errors="coerce")
+        return (values / unit).round() * unit
+
+    out["actual_rooms_display"] = _round_display(out["actual_rooms"], 100.0)
+    out["asof_oh_rooms_display"] = _round_display(out["asof_oh_rooms"], 100.0)
+    out["forecast_rooms_display"] = _round_display(out["forecast_rooms"], 100.0)
+    out["actual_pax_display"] = _round_display(out["actual_pax"], 100.0)
+    out["forecast_pax_display"] = _round_display(out["forecast_pax"], 100.0)
+    out["forecast_revenue_display"] = _round_display(out["forecast_revenue"], 100000.0)
+
     column_order = [
         "stay_date",
         "weekday",
         "actual_rooms",
         "asof_oh_rooms",
         "forecast_rooms",
+        "actual_pax",
+        "forecast_pax",
+        "projected_pax",
+        "revenue_oh_now",
+        "adr_oh_now",
+        "adr_pickup_est",
+        "forecast_revenue",
+        "actual_rooms_display",
+        "asof_oh_rooms_display",
+        "forecast_rooms_display",
+        "actual_pax_display",
+        "forecast_pax_display",
+        "forecast_revenue_display",
         "diff_rooms_vs_actual",
         "diff_pct_vs_actual",
         "pickup_expected_from_asof",

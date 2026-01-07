@@ -219,6 +219,10 @@ def _extract_asof_oh_series(lt_df: pd.DataFrame, as_of_ts: pd.Timestamp) -> pd.S
     return pd.Series(result, dtype=float)
 
 
+def _round_int_series(series: pd.Series) -> pd.Series:
+    return pd.to_numeric(series, errors="coerce").round().astype("Int64")
+
+
 def _prepare_output(
     df_target: pd.DataFrame, forecast: dict[pd.Timestamp, float], as_of_ts: pd.Timestamp
 ) -> pd.DataFrame:
@@ -243,21 +247,20 @@ def _prepare_output(
     if act_col is not None:
         actual_series = df_target[act_col]
         actual_series.index = all_dates
-        out_df["actual_rooms"] = actual_series
+        out_df["actual_rooms"] = _round_int_series(actual_series)
     else:
-        out_df["actual_rooms"] = pd.NA
+        out_df["actual_rooms"] = pd.Series(pd.NA, index=all_dates, dtype="Int64")
 
-    out_df["forecast_rooms"] = result.reindex(all_dates)
-    out_df["forecast_rooms_int"] = out_df["forecast_rooms"].round().astype("Int64")
+    out_df["forecast_rooms"] = _round_int_series(result.reindex(all_dates))
 
     projected = []
     for dt in out_df.index:
         if dt < as_of_ts:
             projected.append(out_df.loc[dt, "actual_rooms"])
         else:
-            projected.append(out_df.loc[dt, "forecast_rooms_int"])
+            projected.append(out_df.loc[dt, "forecast_rooms"])
 
-    out_df["projected_rooms"] = projected
+    out_df["projected_rooms"] = _round_int_series(pd.Series(projected, index=out_df.index))
     return out_df
 
 
@@ -287,21 +290,20 @@ def _prepare_output_for_pax(
     if act_col is not None:
         actual_series = df_target[act_col]
         actual_series.index = all_dates
-        out_df["actual_pax"] = actual_series
+        out_df["actual_pax"] = _round_int_series(actual_series)
     else:
-        out_df["actual_pax"] = pd.NA
+        out_df["actual_pax"] = pd.Series(pd.NA, index=all_dates, dtype="Int64")
 
-    out_df["forecast_pax"] = result.reindex(all_dates)
-    out_df["forecast_pax_int"] = out_df["forecast_pax"].round().astype("Int64")
+    out_df["forecast_pax"] = _round_int_series(result.reindex(all_dates))
 
     projected = []
     for dt in out_df.index:
         if dt < as_of_ts:
             projected.append(out_df.loc[dt, "actual_pax"])
         else:
-            projected.append(out_df.loc[dt, "forecast_pax_int"])
+            projected.append(out_df.loc[dt, "forecast_pax"])
 
-    out_df["projected_pax"] = projected
+    out_df["projected_pax"] = _round_int_series(pd.Series(projected, index=out_df.index))
     return out_df
 
 
@@ -338,7 +340,7 @@ def _append_revenue_columns(
     rooms_oh_now = rooms_oh_series.reindex(out_df.index)
     revenue_oh_now = revenue_oh_series.reindex(out_df.index)
 
-    rooms_oh_now = pd.to_numeric(rooms_oh_now, errors="coerce").astype(float)
+    rooms_oh_now = pd.to_numeric(rooms_oh_now, errors="coerce").round().astype(float)
     revenue_oh_now = pd.to_numeric(revenue_oh_now, errors="coerce").astype(float)
 
     rooms_for_div = rooms_oh_now.clip(lower=ADR_EPS)

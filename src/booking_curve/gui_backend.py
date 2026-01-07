@@ -914,6 +914,9 @@ def get_daily_forecast_table(
     """
     cap = _get_capacity(hotel_tag, capacity)
 
+    def _round_int_series(series: pd.Series) -> pd.Series:
+        return pd.to_numeric(series, errors="coerce").round().astype("Int64")
+
     model_map = {
         "avg": ("forecast", "projected_rooms"),
         "recent90": ("forecast_recent90", "projected_rooms"),
@@ -949,20 +952,20 @@ def get_daily_forecast_table(
     out = pd.DataFrame(index=df.index.copy())
     out["stay_date"] = out.index
     out["weekday"] = out["stay_date"].dt.weekday
-    out["actual_rooms"] = df["actual_rooms"].astype(float)
-    out["forecast_rooms"] = df[col_name].astype(float)
+    out["actual_rooms"] = _round_int_series(df["actual_rooms"])
+    out["forecast_rooms"] = _round_int_series(df[col_name])
     if "actual_pax" in df.columns:
-        out["actual_pax"] = pd.to_numeric(df["actual_pax"], errors="coerce").astype(float)
+        out["actual_pax"] = _round_int_series(df["actual_pax"])
     else:
-        out["actual_pax"] = pd.NA
+        out["actual_pax"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
     if "forecast_pax" in df.columns:
-        out["forecast_pax"] = pd.to_numeric(df["forecast_pax"], errors="coerce").astype(float)
+        out["forecast_pax"] = _round_int_series(df["forecast_pax"])
     else:
-        out["forecast_pax"] = pd.NA
+        out["forecast_pax"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
     if "projected_pax" in df.columns:
-        out["projected_pax"] = pd.to_numeric(df["projected_pax"], errors="coerce").astype(float)
+        out["projected_pax"] = _round_int_series(df["projected_pax"])
     else:
-        out["projected_pax"] = pd.NA
+        out["projected_pax"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
     if "revenue_oh_now" in df.columns:
         out["revenue_oh_now"] = pd.to_numeric(df["revenue_oh_now"], errors="coerce").astype(float)
     else:
@@ -984,7 +987,7 @@ def get_daily_forecast_table(
     required_cols = {"stay_date", "as_of_date", "rooms_oh"}
 
     if snap_all is None or snap_all.empty or not required_cols.issubset(snap_all.columns):
-        out["asof_oh_rooms"] = out["actual_rooms"].astype(float)
+        out["asof_oh_rooms"] = _round_int_series(out["actual_rooms"])
     else:
         snap = snap_all.copy()
         snap["stay_date"] = pd.to_datetime(snap["stay_date"], errors="coerce").dt.normalize()
@@ -994,7 +997,7 @@ def get_daily_forecast_table(
         snap_asof = snap[snap["as_of_date"] <= asof_ts]
         if snap_asof.empty:
             asof_oh_series = pd.Series(0.0, index=out.index)
-            out["asof_oh_rooms"] = asof_oh_series.astype(float)
+            out["asof_oh_rooms"] = _round_int_series(asof_oh_series)
         else:
             snap_asof = snap_asof.sort_values(["stay_date", "as_of_date"])
             last_snap = snap_asof.groupby("stay_date").tail(1)
@@ -1007,7 +1010,7 @@ def get_daily_forecast_table(
             mask_fallback = asof_oh_series.isna() & mask_past & out["actual_rooms"].notna()
             asof_oh_series.loc[mask_fallback] = out.loc[mask_fallback, "actual_rooms"].to_numpy()
             asof_oh_series = asof_oh_series.fillna(0.0)
-            out["asof_oh_rooms"] = asof_oh_series.astype(float)
+            out["asof_oh_rooms"] = _round_int_series(asof_oh_series)
 
     out["diff_rooms_vs_actual"] = out["forecast_rooms"] - out["actual_rooms"]
     denom_actual = out["actual_rooms"].replace(0, pd.NA)
@@ -1078,12 +1081,39 @@ def get_daily_forecast_table(
         values = pd.to_numeric(series, errors="coerce")
         return (values / unit).round() * unit
 
-    out["actual_rooms_display"] = _round_display(out["actual_rooms"], 100.0)
-    out["asof_oh_rooms_display"] = _round_display(out["asof_oh_rooms"], 100.0)
-    out["forecast_rooms_display"] = _round_display(out["forecast_rooms"], 100.0)
-    out["actual_pax_display"] = _round_display(out["actual_pax"], 100.0)
-    out["forecast_pax_display"] = _round_display(out["forecast_pax"], 100.0)
-    out["forecast_revenue_display"] = _round_display(out["forecast_revenue"], 100000.0)
+    out["actual_rooms_display"] = out["actual_rooms"].copy()
+    out["asof_oh_rooms_display"] = out["asof_oh_rooms"].copy()
+    out["forecast_rooms_display"] = out["forecast_rooms"].copy()
+    out["actual_pax_display"] = out["actual_pax"].copy()
+    out["forecast_pax_display"] = out["forecast_pax"].copy()
+    out["forecast_revenue_display"] = out["forecast_revenue"].copy()
+
+    total_mask = out["stay_date"].isna()
+    if total_mask.any():
+        out.loc[total_mask, "actual_rooms_display"] = _round_display(
+            out.loc[total_mask, "actual_rooms"],
+            100.0,
+        )
+        out.loc[total_mask, "asof_oh_rooms_display"] = _round_display(
+            out.loc[total_mask, "asof_oh_rooms"],
+            100.0,
+        )
+        out.loc[total_mask, "forecast_rooms_display"] = _round_display(
+            out.loc[total_mask, "forecast_rooms"],
+            100.0,
+        )
+        out.loc[total_mask, "actual_pax_display"] = _round_display(
+            out.loc[total_mask, "actual_pax"],
+            100.0,
+        )
+        out.loc[total_mask, "forecast_pax_display"] = _round_display(
+            out.loc[total_mask, "forecast_pax"],
+            100.0,
+        )
+        out.loc[total_mask, "forecast_revenue_display"] = _round_display(
+            out.loc[total_mask, "forecast_revenue"],
+            100000.0,
+        )
 
     column_order = [
         "stay_date",

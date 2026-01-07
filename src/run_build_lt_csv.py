@@ -229,15 +229,34 @@ def run_build_lt_for_gui(
             all_asof_dates.extend(pd.Timestamp(d).normalize() for d in month_asofs)
         elif source == "daily_snapshots":
             print(f"[daily_snapshots] building LT_DATA for {hotel_tag} {ym}")
-            lt_df = build_lt_data_from_daily_snapshots_for_month(
+            lt_rooms = build_lt_data_from_daily_snapshots_for_month(
                 hotel_id=hotel_tag,
                 target_month=ym,
+                value_col="rooms_oh",
                 max_lt=MAX_LT,
                 output_dir=OUTPUT_DIR,
+                output_name=f"lt_data_rooms_{ym}_{hotel_tag}.csv",
             )
-            out_path = OUTPUT_DIR / f"lt_data_{ym}_{hotel_tag}.csv"
-            lt_df.to_csv(out_path, index_label="stay_date", encoding="utf-8-sig")
-            print(f"[OK] 出力: {out_path}")
+            legacy_out_path = OUTPUT_DIR / f"lt_data_{ym}_{hotel_tag}.csv"
+            lt_rooms.to_csv(legacy_out_path, index_label="stay_date", encoding="utf-8-sig")
+            print(f"[OK] 出力: {legacy_out_path}")
+
+            build_lt_data_from_daily_snapshots_for_month(
+                hotel_id=hotel_tag,
+                target_month=ym,
+                value_col="pax_oh",
+                max_lt=MAX_LT,
+                output_dir=OUTPUT_DIR,
+                output_name=f"lt_data_pax_{ym}_{hotel_tag}.csv",
+            )
+            build_lt_data_from_daily_snapshots_for_month(
+                hotel_id=hotel_tag,
+                target_month=ym,
+                value_col="revenue_oh",
+                max_lt=MAX_LT,
+                output_dir=OUTPUT_DIR,
+                output_name=f"lt_data_revenue_{ym}_{hotel_tag}.csv",
+            )
 
             monthly_df = build_monthly_curve_from_daily_snapshots(
                 hotel_id=hotel_tag,

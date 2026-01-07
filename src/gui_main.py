@@ -49,9 +49,11 @@ try:
         STARTUP_INIT_LOG_PATH,
         clear_local_override_raw_root_dir,
         get_local_overrides_path,
+        load_phase_overrides,
         pop_runtime_init_errors,
         reload_hotel_config_inplace,
         set_local_override_raw_root_dir,
+        write_phase_overrides,
     )
 except Exception as exc:
     logging.exception("Failed to import booking_curve.config")
@@ -124,6 +126,9 @@ except Exception as exc:
 DEFAULT_HOTEL = next(iter(HOTEL_CONFIG.keys()), "daikokucho")
 SETTINGS_FILE = LOCAL_OVERRIDES_DIR / "gui_settings.json"
 LEGACY_SETTINGS_FILE = OUTPUT_DIR / "gui_settings.json"
+PHASE_OPTIONS = ["悪化", "中立", "回復"]
+PHASE_STRENGTH_OPTIONS = ["弱", "中", "強"]
+PHASE_STRENGTH_FACTORS = {"弱": 0.02, "中": 0.035, "強": 0.05}
 
 
 def open_file(path: str | Path) -> None:
@@ -172,6 +177,8 @@ class BookingCurveApp(tk.Tk):
         self.notebook.add(self.tab_master_settings, text="マスタ設定")
 
         self._settings = self._load_settings()
+        self._phase_overrides = load_phase_overrides()
+        self._phase_override_loading = False
 
         general = self._settings.get("general") or {}
         initial_hotel = general.get("last_hotel")
@@ -759,6 +766,7 @@ class BookingCurveApp(tk.Tk):
     def _on_df_shift_month(self, delta_months: int) -> None:
         self._shift_month_var(self.df_month_var, delta_months)
         self._update_df_latest_asof_label(False)
+        self._refresh_phase_overrides_ui()
 
     def _on_bc_shift_month(self, delta_months: int) -> None:
         self._shift_month_var(self.bc_month_var, delta_months)
@@ -1772,6 +1780,7 @@ class BookingCurveApp(tk.Tk):
         current_month = date.today().strftime("%Y%m")
         self.df_month_var = tk.StringVar(value=current_month)
         ttk.Entry(form, textvariable=self.df_month_var, width=8).grid(row=0, column=3, padx=4, pady=2)
+        self.df_month_var.trace_add("write", lambda *_: self._refresh_phase_overrides_ui())
 
         # as_of
         ttk.Label(form, text="AS OF (YYYY-MM-DD):").grid(row=0, column=4, sticky="w")
@@ -1852,6 +1861,51 @@ class BookingCurveApp(tk.Tk):
             command=lambda: self._on_df_shift_month(+12),
         ).pack(side=tk.LEFT, padx=2)
 
+        phase_frame = ttk.LabelFrame(form, text="フェーズ補正（売上）")
+        phase_frame.grid(row=2, column=0, columnspan=2, sticky="w", padx=4, pady=(4, 0))
+
+        self.df_phase_entries = []
+        self.df_phase_month_labels = []
+
+        for idx in range(3):
+            row_frame = ttk.Frame(phase_frame)
+            row_frame.pack(side=tk.TOP, fill=tk.X, padx=4, pady=2)
+
+            month_label = ttk.Label(row_frame, text="YYYYMM", width=8)
+            month_label.pack(side=tk.LEFT, padx=(0, 4))
+
+            phase_var = tk.StringVar(value="中立")
+            phase_combo = ttk.Combobox(
+                row_frame,
+                textvariable=phase_var,
+                values=PHASE_OPTIONS,
+                state="readonly",
+                width=6,
+            )
+            phase_combo.pack(side=tk.LEFT, padx=(0, 4))
+
+            strength_var = tk.StringVar(value="中")
+            strength_combo = ttk.Combobox(
+                row_frame,
+                textvariable=strength_var,
+                values=PHASE_STRENGTH_OPTIONS,
+                state="readonly",
+                width=4,
+            )
+            strength_combo.pack(side=tk.LEFT, padx=(0, 4))
+
+            phase_combo.bind("<<ComboboxSelected>>", self._on_phase_override_changed)
+            strength_combo.bind("<<ComboboxSelected>>", self._on_phase_override_changed)
+
+            self.df_phase_entries.append(
+                {
+                    "month": "",
+                    "phase_var": phase_var,
+                    "strength_var": strength_var,
+                }
+            )
+            self.df_phase_month_labels.append(month_label)
+
         # 実行ボタン
         forecast_btn = ttk.Button(
             form,
@@ -1872,9 +1926,15 @@ class BookingCurveApp(tk.Tk):
         columns = [
             "stay_date",
             "weekday",
-            "actual_rooms",
-            "asof_oh_rooms",
-            "forecast_rooms",
+            "actual_rooms_display",
+            "asof_oh_rooms_display",
+            "forecast_rooms_display",
+            "actual_pax_display",
+            "forecast_pax_display",
+            "forecast_revenue_display",
+            "revenue_oh_now",
+            "adr_oh_now",
+            "adr_pickup_est",
             "diff_rooms_vs_actual",
             "diff_pct_vs_actual",
             "pickup_expected_from_asof",
@@ -1895,13 +1955,20 @@ class BookingCurveApp(tk.Tk):
                 width = 70
                 anchor = "center"
             elif col in (
-                "actual_rooms",
-                "asof_oh_rooms",
-                "forecast_rooms",
+                "actual_rooms_display",
+                "asof_oh_rooms_display",
+                "forecast_rooms_display",
+                "actual_pax_display",
+                "forecast_pax_display",
+                "forecast_revenue_display",
+                "revenue_oh_now",
                 "diff_rooms_vs_actual",
                 "pickup_expected_from_asof",
                 "diff_rooms",
             ):
+                width = 90
+                anchor = "e"
+            elif col in ("adr_oh_now", "adr_pickup_est"):
                 width = 90
                 anchor = "e"
             elif col in (
@@ -1962,6 +2029,7 @@ class BookingCurveApp(tk.Tk):
         self.df_tree.bind("<Control-c>", self._on_df_tree_copy, add="+")
 
         self._update_df_latest_asof_label(update_asof_if_empty=True)
+        self._refresh_phase_overrides_ui()
 
     def _apply_latest_asof_freshness(self, label: tk.Label, latest_asof_str: str) -> None:
         default_bg, default_fg = self._latest_asof_label_defaults.get(
@@ -2008,6 +2076,67 @@ class BookingCurveApp(tk.Tk):
 
         self._apply_latest_asof_freshness(self.df_latest_asof_label, self.df_latest_asof_var.get())
         self._update_df_best_model_label()
+
+    def _get_phase_months(self, base_month: str) -> list[str]:
+        try:
+            period = pd.Period(base_month, freq="M")
+        except Exception:
+            period = pd.Period(date.today().strftime("%Y-%m"), freq="M")
+        months = [period + offset for offset in range(3)]
+        return [m.strftime("%Y%m") for m in months]
+
+    def _phase_override_to_factor(self, phase: str, strength: str) -> float:
+        if phase == "中立":
+            return 1.0
+        bias = PHASE_STRENGTH_FACTORS.get(strength, PHASE_STRENGTH_FACTORS["中"])
+        if phase == "悪化":
+            return 1.0 - bias
+        if phase == "回復":
+            return 1.0 + bias
+        return 1.0
+
+    def _refresh_phase_overrides_ui(self) -> None:
+        if not hasattr(self, "df_phase_entries"):
+            return
+        hotel = (self.df_hotel_var.get() or "").strip() or DEFAULT_HOTEL
+        base_month = (self.df_month_var.get() or "").strip()
+        months = self._get_phase_months(base_month)
+
+        self._phase_override_loading = True
+        try:
+            hotel_overrides = self._phase_overrides.get(hotel, {})
+            for idx, month in enumerate(months):
+                if idx >= len(self.df_phase_entries):
+                    break
+                entry = self.df_phase_entries[idx]
+                label = self.df_phase_month_labels[idx]
+                label.config(text=month)
+                entry["month"] = month
+
+                payload = hotel_overrides.get(month, {})
+                phase = payload.get("phase", "中立")
+                strength = payload.get("strength", "中")
+
+                entry["phase_var"].set(phase)
+                entry["strength_var"].set(strength)
+        finally:
+            self._phase_override_loading = False
+
+    def _on_phase_override_changed(self, event=None) -> None:
+        if self._phase_override_loading:
+            return
+        hotel = (self.df_hotel_var.get() or "").strip() or DEFAULT_HOTEL
+        hotel_overrides = self._phase_overrides.setdefault(hotel, {})
+
+        for entry in getattr(self, "df_phase_entries", []):
+            month = entry.get("month")
+            if not month:
+                continue
+            phase = entry["phase_var"].get()
+            strength = entry["strength_var"].get()
+            hotel_overrides[month] = {"phase": phase, "strength": strength}
+
+        write_phase_overrides(self._phase_overrides)
 
     def _update_df_best_model_label(self) -> None:
         hotel = (self.df_hotel_var.get() or "").strip() or DEFAULT_HOTEL
@@ -2133,6 +2262,15 @@ class BookingCurveApp(tk.Tk):
         # 現時点では「1ヶ月のみ」実行。将来的に複数月対応する場合は
         # ここで month 周辺のリストを組み立てて渡す。
         target_months = [month]
+        phase_factor = None
+        hotel_overrides = self._phase_overrides.get(hotel, {})
+        override = hotel_overrides.get(month)
+        if override:
+            phase_factor = self._phase_override_to_factor(
+                override.get("phase", "中立"),
+                override.get("strength", "中"),
+            )
+        phase_factors = {month: phase_factor} if phase_factor is not None else None
 
         try:
             run_forecast_for_gui(
@@ -2141,6 +2279,7 @@ class BookingCurveApp(tk.Tk):
                 as_of_date=asof,
                 gui_model=model,
                 capacity=forecast_cap,
+                phase_factors=phase_factors,
             )
         except FileNotFoundError as e:
             messagebox.showerror("エラー", f"Forecast実行に必要な LT_DATA が見つかりません:\n{e}")
@@ -2189,9 +2328,15 @@ class BookingCurveApp(tk.Tk):
             values = [
                 stay_str,
                 weekday_str,
-                _fmt_num(row.get("actual_rooms")),
-                _fmt_num(row.get("asof_oh_rooms")),
-                _fmt_num(row.get("forecast_rooms")),
+                _fmt_num(row.get("actual_rooms_display")),
+                _fmt_num(row.get("asof_oh_rooms_display")),
+                _fmt_num(row.get("forecast_rooms_display")),
+                _fmt_num(row.get("actual_pax_display")),
+                _fmt_num(row.get("forecast_pax_display")),
+                _fmt_num(row.get("forecast_revenue_display")),
+                _fmt_num(row.get("revenue_oh_now")),
+                _fmt_num(row.get("adr_oh_now")),
+                _fmt_num(row.get("adr_pickup_est")),
                 _fmt_num(row.get("diff_rooms_vs_actual")),
                 _fmt_pct(row.get("diff_pct_vs_actual")),
                 _fmt_num(row.get("pickup_expected_from_asof")),
@@ -2360,6 +2505,7 @@ class BookingCurveApp(tk.Tk):
         self.df_occ_cap_var.set(str(occ_cap))
 
         self._update_df_latest_asof_label(False)
+        self._refresh_phase_overrides_ui()
 
     def _on_export_daily_forecast_csv(self) -> None:
         df = getattr(self, "df_daily_forecast_df", None)

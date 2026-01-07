@@ -454,6 +454,34 @@ class BookingCurveApp(tk.Tk):
             general["last_hotel"] = hotel_tag
             self._save_settings()
 
+    def _on_df_model_changed(self, model_values: list[str]) -> None:
+        try:
+            selected_model = self.df_model_var.get().strip()
+        except Exception:
+            return
+
+        if selected_model not in model_values:
+            return
+
+        general = self._settings.setdefault("general", {})
+        if general.get("last_df_model") != selected_model:
+            general["last_df_model"] = selected_model
+            self._save_settings()
+
+    def _on_bc_model_changed(self, model_values: list[str]) -> None:
+        try:
+            selected_model = self.bc_model_var.get().strip()
+        except Exception:
+            return
+
+        if selected_model not in model_values:
+            return
+
+        general = self._settings.setdefault("general", {})
+        if general.get("last_bc_model") != selected_model:
+            general["last_bc_model"] = selected_model
+            self._save_settings()
+
     def _get_daily_caps_for_hotel(self, hotel_tag: str) -> tuple[float, float]:
         """
         Returns (forecast_cap, occ_capacity).
@@ -1812,20 +1840,26 @@ class BookingCurveApp(tk.Tk):
 
         # モデル
         ttk.Label(form, text="モデル:").grid(row=1, column=0, sticky="w", pady=(4, 2))
-        self.df_model_var = tk.StringVar(value="recent90w")
+        model_values = [
+            "recent90",
+            "recent90w",
+            "pace14",
+            "pace14_market",
+        ]
+        general_settings = self._settings.get("general") or {}
+        default_model = "recent90w"
+        saved_model = general_settings.get("last_df_model")
+        initial_model = saved_model if saved_model in model_values else default_model
+        self.df_model_var = tk.StringVar(value=initial_model)
         model_combo = ttk.Combobox(
             form,
             textvariable=self.df_model_var,
             state="readonly",
             width=14,
         )
-        model_combo["values"] = [
-            "recent90",
-            "recent90w",
-            "pace14",
-            "pace14_market",
-        ]
+        model_combo["values"] = model_values
         model_combo.grid(row=1, column=1, padx=4, pady=(4, 2))
+        self.df_model_var.trace_add("write", lambda *_: self._on_df_model_changed(model_values))
 
         self.df_monthly_rounding_var = tk.BooleanVar(value=True)
         df_rounding_checkbox = ttk.Checkbutton(
@@ -3256,10 +3290,16 @@ class BookingCurveApp(tk.Tk):
         ttk.Button(form, text="最新に反映", command=self._on_bc_set_asof_to_latest).grid(row=1, column=4, padx=4, pady=(4, 2), sticky="w")
 
         ttk.Label(form, text="モデル:").grid(row=1, column=5, sticky="w", pady=(4, 2))
-        self.bc_model_var = tk.StringVar(value="recent90w")
+        model_values = ["recent90", "recent90w", "pace14", "pace14_market"]
+        general_settings = self._settings.get("general") or {}
+        default_model = "recent90w"
+        saved_model = general_settings.get("last_bc_model")
+        initial_model = saved_model if saved_model in model_values else default_model
+        self.bc_model_var = tk.StringVar(value=initial_model)
         model_combo = ttk.Combobox(form, textvariable=self.bc_model_var, state="readonly", width=12)
-        model_combo["values"] = ["recent90", "recent90w", "pace14", "pace14_market"]
+        model_combo["values"] = model_values
         model_combo.grid(row=1, column=6, padx=4, pady=(4, 2))
+        self.bc_model_var.trace_add("write", lambda *_: self._on_bc_model_changed(model_values))
 
         self.bc_fill_missing_var = tk.BooleanVar(value=True)
         self.bc_fill_missing_chk = ttk.Checkbutton(
@@ -4406,7 +4446,7 @@ def _fmt_num(v) -> str:
     if pd.isna(v):
         return ""
     try:
-        return f"{float(v):.0f}"
+        return f"{round(float(v)):,}"
     except Exception:
         return str(v)
 

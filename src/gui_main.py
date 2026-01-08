@@ -795,6 +795,11 @@ class BookingCurveApp(tk.Tk):
             except Exception:
                 return None
 
+        def _safe_ratio(num: float | None, denom: float | None) -> float | None:
+            if num is None or denom is None or denom == 0:
+                return None
+            return num / denom
+
         rooms_oh = _safe_float(daily_rows.get("asof_oh_rooms_display", daily_rows.get("asof_oh_rooms")).sum())
         pax_oh = _safe_float(daily_rows.get("asof_oh_pax_display", daily_rows.get("asof_oh_pax")).sum())
         rev_oh = _safe_float(daily_rows.get("revenue_oh_now").sum())
@@ -833,11 +838,6 @@ class BookingCurveApp(tk.Tk):
         adr_oh = _safe_float(total_row.get("adr_oh_now") if total_row is not None else None)
         if adr_oh is None:
             adr_oh = _safe_ratio(rev_oh, rooms_oh)
-
-        def _safe_ratio(num: float | None, denom: float | None) -> float | None:
-            if num is None or denom is None or denom == 0:
-                return None
-            return num / denom
 
         dor_oh = _safe_ratio(pax_oh, rooms_oh)
         dor_fc = _safe_ratio(pax_fc, rooms_fc)
@@ -2211,27 +2211,27 @@ class BookingCurveApp(tk.Tk):
         ).pack(side=tk.LEFT)
 
         summary_frame = ttk.LabelFrame(frame, text="サマリ")
-        summary_frame.pack(side=tk.TOP, fill=tk.X, padx=6, pady=(0, 4))
+        summary_frame.pack(side=tk.TOP, anchor="w", padx=6, pady=(0, 4))
         self.df_summary_frame = summary_frame
 
         metrics = ["Rooms", "Pax", "Rev", "OCC", "ADR", "DOR", "RevPAR"]
         for col in range(len(metrics) + 1):
-            summary_frame.grid_columnconfigure(col, weight=1)
+            summary_frame.grid_columnconfigure(col, weight=0)
 
         status_frame = ttk.Frame(summary_frame)
-        status_frame.grid(row=0, column=0, columnspan=len(metrics) + 1, sticky="w", padx=4, pady=2)
+        status_frame.grid(row=0, column=0, columnspan=len(metrics) + 1, sticky="w", padx=2, pady=1)
         ttk.Label(status_frame, text="ステータス:").pack(side=tk.LEFT)
         self.df_status_var = tk.StringVar(value="")
-        ttk.Label(status_frame, textvariable=self.df_status_var).pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Label(status_frame, textvariable=self.df_status_var).pack(side=tk.LEFT, padx=(2, 0))
 
-        ttk.Label(summary_frame, text="").grid(row=1, column=0, sticky="w", padx=4)
+        ttk.Label(summary_frame, text="").grid(row=1, column=0, sticky="w", padx=2)
         for col_idx, metric in enumerate(metrics, start=1):
-            ttk.Label(summary_frame, text=metric, width=8).grid(row=1, column=col_idx, sticky="e", padx=2)
+            ttk.Label(summary_frame, text=metric, width=8).grid(row=1, column=col_idx, sticky="e", padx=1)
 
         self.df_summary_vars = {"oh": {}, "forecast": {}, "ly": {}}
         row_labels = [("oh", "OH"), ("forecast", "Forecast"), ("ly", "LY ACT")]
         for row_idx, (row_key, label) in enumerate(row_labels, start=2):
-            ttk.Label(summary_frame, text=label, width=8).grid(row=row_idx, column=0, sticky="w", padx=4)
+            ttk.Label(summary_frame, text=label, width=8).grid(row=row_idx, column=0, sticky="w", padx=2)
             for col_idx, metric in enumerate(metrics, start=1):
                 var = tk.StringVar(value="")
                 self.df_summary_vars[row_key][metric] = var
@@ -2239,7 +2239,7 @@ class BookingCurveApp(tk.Tk):
                     row=row_idx,
                     column=col_idx,
                     sticky="e",
-                    padx=2,
+                    padx=1,
                 )
 
         # テーブル用コンテナ
@@ -2301,9 +2301,9 @@ class BookingCurveApp(tk.Tk):
         if self.df_summary_visible_var.get():
             before_widget = getattr(self, "df_table_container", None)
             if before_widget is not None:
-                frame.pack(side=tk.TOP, fill=tk.X, padx=6, pady=(0, 4), before=before_widget)
+                frame.pack(side=tk.TOP, anchor="w", padx=6, pady=(0, 4), before=before_widget)
             else:
-                frame.pack(side=tk.TOP, fill=tk.X, padx=6, pady=(0, 4))
+                frame.pack(side=tk.TOP, anchor="w", padx=6, pady=(0, 4))
         else:
             frame.pack_forget()
 

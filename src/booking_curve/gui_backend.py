@@ -987,10 +987,9 @@ def get_daily_forecast_table(
         out["forecast_revenue"] = pd.NA
 
     snap_all = read_daily_snapshots_for_month(hotel_id=hotel_tag, target_month=target_month)
-    required_cols = {"stay_date", "as_of_date", "rooms_oh"}
-
-    if snap_all is None or snap_all.empty or not required_cols.issubset(snap_all.columns):
+    if snap_all is None or snap_all.empty or not {"stay_date", "as_of_date", "rooms_oh"}.issubset(snap_all.columns):
         out["asof_oh_rooms"] = _round_int_series(out["actual_rooms"])
+        out["asof_oh_pax"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
     else:
         snap = snap_all.copy()
         snap["stay_date"] = pd.to_datetime(snap["stay_date"], errors="coerce").dt.normalize()
@@ -1015,6 +1014,27 @@ def get_daily_forecast_table(
             asof_oh_series = asof_oh_series.fillna(0.0)
             out["asof_oh_rooms"] = _round_int_series(asof_oh_series)
 
+        if "pax_oh" not in snap_all.columns:
+            logging.warning("daily_snapshots に pax_oh 列がありません。asof_oh_pax は NaN で継続します。")
+            out["asof_oh_pax"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
+        else:
+            snap_asof = snap[snap["as_of_date"] <= asof_ts]
+            if snap_asof.empty:
+                asof_oh_pax_series = pd.Series(pd.NA, index=out.index, dtype="float")
+            else:
+                snap_asof = snap_asof.sort_values(["stay_date", "as_of_date"])
+                last_snap = snap_asof.groupby("stay_date").tail(1)
+                pax_oh_map = pd.to_numeric(last_snap.set_index("stay_date")["pax_oh"], errors="coerce")
+
+                stay_dates_norm = out["stay_date"].dt.normalize()
+                asof_oh_pax_series = stay_dates_norm.map(pax_oh_map)
+
+                mask_past = stay_dates_norm < asof_ts
+                mask_fallback = asof_oh_pax_series.isna() & mask_past & out["actual_pax"].notna()
+                asof_oh_pax_series.loc[mask_fallback] = out.loc[mask_fallback, "actual_pax"].to_numpy()
+
+            out["asof_oh_pax"] = _round_int_series(asof_oh_pax_series)
+
     out["diff_rooms_vs_actual"] = out["forecast_rooms"] - out["actual_rooms"]
     denom_actual = out["actual_rooms"].replace(0, pd.NA)
     out["diff_pct_vs_actual"] = (out["diff_rooms_vs_actual"] / denom_actual * 100.0).astype(float)
@@ -1026,6 +1046,11 @@ def get_daily_forecast_table(
     out["occ_actual_pct"] = (out["actual_rooms"] / cap * 100.0).astype(float)
     out["occ_asof_pct"] = (out["asof_oh_rooms"] / cap * 100.0).astype(float)
     out["occ_forecast_pct"] = (out["forecast_rooms"] / cap * 100.0).astype(float)
+    denom_forecast_rooms = out["forecast_rooms"].replace(0, pd.NA)
+    out["forecast_adr"] = (out["forecast_revenue"] / denom_forecast_rooms).astype(float)
+    denom_cap = pd.Series(cap, index=out.index, dtype="float")
+    denom_cap = denom_cap.replace(0, pd.NA)
+    out["forecast_revpar"] = (out["forecast_revenue"] / denom_cap).astype(float)
 
     num_days = out["stay_date"].nunique()
 
@@ -1034,6 +1059,7 @@ def get_daily_forecast_table(
     forecast_total = out["forecast_rooms"].fillna(0).sum()
     actual_pax_total = out["actual_pax"].fillna(0).sum()
     forecast_pax_total = out["forecast_pax"].fillna(0).sum()
+    asof_pax_total = out["asof_oh_pax"].fillna(0).sum()
     revenue_oh_total = out["revenue_oh_now"].fillna(0).sum()
     forecast_revenue_total = out["forecast_revenue"].fillna(0).sum()
 
@@ -1054,6 +1080,13 @@ def get_daily_forecast_table(
         occ_asof_month = float("nan")
         occ_forecast_month = float("nan")
 
+    denom_asof_total = asof_total if asof_total > 0 else float("nan")
+    denom_forecast_total = forecast_total if forecast_total > 0 else float("nan")
+    denom_cap_total = cap * num_days if cap > 0 and num_days > 0 else float("nan")
+    adr_oh_total = revenue_oh_total / denom_asof_total
+    forecast_adr_total = forecast_revenue_total / denom_forecast_total
+    forecast_revpar_total = forecast_revenue_total / denom_cap_total
+
     total_row = {
         "stay_date": pd.NaT,
         "weekday": "",
@@ -1062,11 +1095,14 @@ def get_daily_forecast_table(
         "forecast_rooms": forecast_total,
         "actual_pax": actual_pax_total,
         "forecast_pax": forecast_pax_total,
+        "asof_oh_pax": asof_pax_total,
         "projected_pax": pd.NA,
         "revenue_oh_now": revenue_oh_total,
-        "adr_oh_now": pd.NA,
+        "adr_oh_now": adr_oh_total,
         "adr_pickup_est": pd.NA,
         "forecast_revenue": forecast_revenue_total,
+        "forecast_adr": forecast_adr_total,
+        "forecast_revpar": forecast_revpar_total,
         "diff_rooms_vs_actual": diff_total_vs_actual,
         "diff_pct_vs_actual": diff_total_pct_vs_actual,
         "pickup_expected_from_asof": pickup_total_from_asof,
@@ -1089,6 +1125,7 @@ def get_daily_forecast_table(
     out["forecast_rooms_display"] = out["forecast_rooms"].copy()
     out["actual_pax_display"] = out["actual_pax"].copy()
     out["forecast_pax_display"] = out["forecast_pax"].copy()
+    out["asof_oh_pax_display"] = out["asof_oh_pax"].copy()
     out["forecast_revenue_display"] = out["forecast_revenue"].copy()
 
     total_mask = out["stay_date"].isna()
@@ -1113,6 +1150,10 @@ def get_daily_forecast_table(
             out.loc[total_mask, "forecast_pax"],
             100.0,
         )
+        out.loc[total_mask, "asof_oh_pax_display"] = _round_display(
+            out.loc[total_mask, "asof_oh_pax"],
+            100.0,
+        )
         out.loc[total_mask, "forecast_revenue_display"] = _round_display(
             out.loc[total_mask, "forecast_revenue"],
             100000.0,
@@ -1126,16 +1167,20 @@ def get_daily_forecast_table(
         "forecast_rooms",
         "actual_pax",
         "forecast_pax",
+        "asof_oh_pax",
         "projected_pax",
         "revenue_oh_now",
         "adr_oh_now",
         "adr_pickup_est",
         "forecast_revenue",
+        "forecast_adr",
+        "forecast_revpar",
         "actual_rooms_display",
         "asof_oh_rooms_display",
         "forecast_rooms_display",
         "actual_pax_display",
         "forecast_pax_display",
+        "asof_oh_pax_display",
         "forecast_revenue_display",
         "diff_rooms_vs_actual",
         "diff_pct_vs_actual",

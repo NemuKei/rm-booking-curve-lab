@@ -128,7 +128,9 @@ SETTINGS_FILE = LOCAL_OVERRIDES_DIR / "gui_settings.json"
 LEGACY_SETTINGS_FILE = OUTPUT_DIR / "gui_settings.json"
 PHASE_OPTIONS = ["悪化", "中立", "回復"]
 PHASE_STRENGTH_OPTIONS = ["弱", "中", "強"]
-PHASE_STRENGTH_FACTORS = {"弱": 0.02, "中": 0.035, "強": 0.05}
+PHASE_STRENGTH_FACTORS = {"弱": 0.4, "中": 0.7, "強": 1.0}
+PHASE_CLIP_DEFAULT = 0.05
+PHASE_CLIP_OPTIONS = [0.05, 0.1, 0.15]
 
 
 def open_file(path: str | Path) -> None:
@@ -1907,6 +1909,20 @@ class BookingCurveApp(tk.Tk):
         phase_frame = ttk.LabelFrame(form, text="フェーズ補正（売上）")
         phase_frame.grid(row=2, column=0, columnspan=2, sticky="w", padx=4, pady=(4, 0))
 
+        clip_frame = ttk.Frame(phase_frame)
+        clip_frame.pack(side=tk.TOP, fill=tk.X, padx=4, pady=(2, 0))
+        ttk.Label(clip_frame, text="補正幅（最大±）:").pack(side=tk.LEFT)
+        self.df_phase_clip_var = tk.StringVar(value=self._format_phase_clip_pct(PHASE_CLIP_DEFAULT))
+        clip_combo = ttk.Combobox(
+            clip_frame,
+            textvariable=self.df_phase_clip_var,
+            values=[self._format_phase_clip_pct(value) for value in PHASE_CLIP_OPTIONS],
+            state="readonly",
+            width=7,
+        )
+        clip_combo.pack(side=tk.LEFT, padx=(4, 0))
+        clip_combo.bind("<<ComboboxSelected>>", self._on_phase_clip_changed)
+
         self.df_phase_entries = []
         self.df_phase_month_labels = []
 
@@ -1973,11 +1989,14 @@ class BookingCurveApp(tk.Tk):
             "asof_oh_rooms_display",
             "forecast_rooms_display",
             "actual_pax_display",
+            "asof_oh_pax_display",
             "forecast_pax_display",
             "forecast_revenue_display",
             "revenue_oh_now",
             "adr_oh_now",
+            "forecast_adr",
             "adr_pickup_est",
+            "forecast_revpar",
             "diff_rooms_vs_actual",
             "diff_pct_vs_actual",
             "pickup_expected_from_asof",
@@ -1989,19 +2008,44 @@ class BookingCurveApp(tk.Tk):
         ]
 
         self.df_tree = ttk.Treeview(table_container, columns=columns, show="headings", height=25)
+        header_map = {
+            "stay_date": "Date",
+            "weekday": "Wk",
+            "actual_rooms_display": "ActRm",
+            "asof_oh_rooms_display": "OH(Rm)",
+            "forecast_rooms_display": "FcRm",
+            "actual_pax_display": "ActPx",
+            "asof_oh_pax_display": "OH(Px)",
+            "forecast_pax_display": "FcPx",
+            "forecast_revenue_display": "FcRev",
+            "revenue_oh_now": "OHRev",
+            "adr_oh_now": "OH ADR",
+            "forecast_adr": "Fc ADR",
+            "adr_pickup_est": "ADR PU",
+            "forecast_revpar": "Fc RevPAR",
+            "diff_rooms_vs_actual": "ΔRm(Act)",
+            "diff_pct_vs_actual": "Δ%(Act)",
+            "pickup_expected_from_asof": "PU Exp",
+            "diff_rooms": "ΔRm",
+            "diff_pct": "Δ%",
+            "occ_actual_pct": "Occ Act",
+            "occ_asof_pct": "Occ OH",
+            "occ_forecast_pct": "Occ Fc",
+        }
         for col in columns:
-            header = col
+            header = header_map.get(col, col)
             if col == "stay_date":
                 width = 100
                 anchor = "center"
             elif col == "weekday":
-                width = 70
+                width = 55
                 anchor = "center"
             elif col in (
                 "actual_rooms_display",
                 "asof_oh_rooms_display",
                 "forecast_rooms_display",
                 "actual_pax_display",
+                "asof_oh_pax_display",
                 "forecast_pax_display",
                 "forecast_revenue_display",
                 "revenue_oh_now",
@@ -2009,10 +2053,10 @@ class BookingCurveApp(tk.Tk):
                 "pickup_expected_from_asof",
                 "diff_rooms",
             ):
-                width = 90
+                width = 80
                 anchor = "e"
-            elif col in ("adr_oh_now", "adr_pickup_est"):
-                width = 90
+            elif col in ("adr_oh_now", "forecast_adr", "adr_pickup_est", "forecast_revpar"):
+                width = 80
                 anchor = "e"
             elif col in (
                 "diff_pct_vs_actual",
@@ -2021,10 +2065,10 @@ class BookingCurveApp(tk.Tk):
                 "occ_asof_pct",
                 "occ_forecast_pct",
             ):
-                width = 90
+                width = 75
                 anchor = "e"
             else:
-                width = 90
+                width = 80
                 anchor = "e"
 
             self.df_tree.heading(col, text=header)
@@ -2128,10 +2172,53 @@ class BookingCurveApp(tk.Tk):
         months = [period + offset for offset in range(3)]
         return [m.strftime("%Y%m") for m in months]
 
-    def _phase_override_to_factor(self, phase: str, strength: str) -> float:
+    def _format_phase_clip_pct(self, value: float) -> str:
+        try:
+            return f"±{round(value * 100)}%"
+        except Exception:
+            return f"±{round(PHASE_CLIP_DEFAULT * 100)}%"
+
+    def _parse_phase_clip_pct(self, value: str) -> float | None:
+        if not value:
+            return None
+        match = re.search(r"([0-9]+(?:\.[0-9]+)?)", value)
+        if not match:
+            return None
+        try:
+            return float(match.group(1)) / 100.0
+        except Exception:
+            return None
+
+    def _get_phase_clip_pct_for_hotel(self, hotel: str) -> float:
+        phase_bias = self._settings.get("phase_bias") or {}
+        clip_map = phase_bias.get("clip_pct") or {}
+        if isinstance(clip_map, dict):
+            value = clip_map.get(hotel)
+            try:
+                if value is None:
+                    return PHASE_CLIP_DEFAULT
+                return float(value)
+            except (TypeError, ValueError):
+                return PHASE_CLIP_DEFAULT
+        return PHASE_CLIP_DEFAULT
+
+    def _set_phase_clip_pct_for_hotel(self, hotel: str, value: float) -> None:
+        phase_bias = self._settings.setdefault("phase_bias", {})
+        clip_map = phase_bias.setdefault("clip_pct", {})
+        if not isinstance(clip_map, dict):
+            phase_bias["clip_pct"] = {}
+            clip_map = phase_bias["clip_pct"]
+        try:
+            clip_map[hotel] = float(value)
+        except (TypeError, ValueError):
+            return
+        self._save_settings()
+
+    def _phase_override_to_factor(self, phase: str, strength: str, clip_pct: float) -> float:
         if phase == "中立":
             return 1.0
-        bias = PHASE_STRENGTH_FACTORS.get(strength, PHASE_STRENGTH_FACTORS["中"])
+        ratio = PHASE_STRENGTH_FACTORS.get(strength, PHASE_STRENGTH_FACTORS["中"])
+        bias = clip_pct * ratio
         if phase == "悪化":
             return 1.0 - bias
         if phase == "回復":
@@ -2148,6 +2235,9 @@ class BookingCurveApp(tk.Tk):
         self._phase_override_loading = True
         try:
             hotel_overrides = self._phase_overrides.get(hotel, {})
+            clip_pct = self._get_phase_clip_pct_for_hotel(hotel)
+            if hasattr(self, "df_phase_clip_var"):
+                self.df_phase_clip_var.set(self._format_phase_clip_pct(clip_pct))
             for idx, month in enumerate(months):
                 if idx >= len(self.df_phase_entries):
                     break
@@ -2164,6 +2254,18 @@ class BookingCurveApp(tk.Tk):
                 entry["strength_var"].set(strength)
         finally:
             self._phase_override_loading = False
+
+    def _on_phase_clip_changed(self, event=None) -> None:
+        if self._phase_override_loading:
+            return
+        hotel = (self.df_hotel_var.get() or "").strip() or DEFAULT_HOTEL
+        selected = self.df_phase_clip_var.get()
+        clip_pct = self._parse_phase_clip_pct(selected)
+        if clip_pct is None:
+            clip_pct = PHASE_CLIP_DEFAULT
+            if hasattr(self, "df_phase_clip_var"):
+                self.df_phase_clip_var.set(self._format_phase_clip_pct(clip_pct))
+        self._set_phase_clip_pct_for_hotel(hotel, clip_pct)
 
     def _on_phase_override_changed(self, event=None) -> None:
         if self._phase_override_loading:
@@ -2320,11 +2422,14 @@ class BookingCurveApp(tk.Tk):
                 _fmt_num(row.get("asof_oh_rooms_display")),
                 _fmt_num(row.get("forecast_rooms_display")),
                 _fmt_num(row.get("actual_pax_display")),
+                _fmt_num(row.get("asof_oh_pax_display")),
                 _fmt_num(row.get("forecast_pax_display")),
                 _fmt_num(row.get("forecast_revenue_display")),
                 _fmt_num(row.get("revenue_oh_now")),
                 _fmt_num(row.get("adr_oh_now")),
+                _fmt_num(row.get("forecast_adr")),
                 _fmt_num(row.get("adr_pickup_est")),
+                _fmt_num(row.get("forecast_revpar")),
                 _fmt_num(row.get("diff_rooms_vs_actual")),
                 _fmt_pct(row.get("diff_pct_vs_actual")),
                 _fmt_num(row.get("pickup_expected_from_asof")),
@@ -2397,10 +2502,12 @@ class BookingCurveApp(tk.Tk):
         phase_factor = None
         hotel_overrides = self._phase_overrides.get(hotel, {})
         override = hotel_overrides.get(month)
+        clip_pct = self._get_phase_clip_pct_for_hotel(hotel)
         if override:
             phase_factor = self._phase_override_to_factor(
                 override.get("phase", "中立"),
                 override.get("strength", "中"),
+                clip_pct,
             )
         phase_factors = {month: phase_factor} if phase_factor is not None else None
 
@@ -2412,6 +2519,7 @@ class BookingCurveApp(tk.Tk):
                 gui_model=model,
                 capacity=forecast_cap,
                 phase_factors=phase_factors,
+                phase_clip_pct=clip_pct,
             )
         except FileNotFoundError as e:
             messagebox.showerror("エラー", f"Forecast実行に必要な LT_DATA が見つかりません:\n{e}")

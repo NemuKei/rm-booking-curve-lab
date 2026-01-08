@@ -767,18 +767,25 @@ class BookingCurveApp(tk.Tk):
         hotel: str,
         target_month: str,
         occ_capacity: float,
+        asof_date: str,
     ) -> None:
         if df is None or df.empty or "stay_date" not in df.columns:
             self._clear_daily_forecast_summary("")
             return
 
-        total_rows = df[df["stay_date"].isna()]
-        if total_rows.empty:
+        daily_rows = df[df["stay_date"].notna()].copy()
+        if daily_rows.empty:
             self._clear_daily_forecast_summary("")
             return
 
-        total_row = total_rows.iloc[0]
-        num_days = int(df["stay_date"].notna().sum())
+        total_rows = df[df["stay_date"].isna()]
+        total_row = total_rows.iloc[0] if not total_rows.empty else None
+        num_days = int(daily_rows["stay_date"].notna().sum())
+
+        try:
+            asof_ts = pd.to_datetime(asof_date).normalize()
+        except Exception:
+            asof_ts = None
 
         def _safe_float(value) -> float | None:
             try:
@@ -788,14 +795,44 @@ class BookingCurveApp(tk.Tk):
             except Exception:
                 return None
 
-        rooms_oh = _safe_float(total_row.get("asof_oh_rooms"))
-        rooms_fc = _safe_float(total_row.get("forecast_rooms"))
-        pax_oh = _safe_float(total_row.get("asof_oh_pax"))
-        pax_fc = _safe_float(total_row.get("forecast_pax"))
-        rev_oh = _safe_float(total_row.get("revenue_oh_now"))
-        rev_fc = _safe_float(total_row.get("forecast_revenue"))
-        adr_oh = _safe_float(total_row.get("adr_oh_now"))
-        adr_fc = _safe_float(total_row.get("forecast_adr"))
+        rooms_oh = _safe_float(daily_rows.get("asof_oh_rooms_display", daily_rows.get("asof_oh_rooms")).sum())
+        pax_oh = _safe_float(daily_rows.get("asof_oh_pax_display", daily_rows.get("asof_oh_pax")).sum())
+        rev_oh = _safe_float(daily_rows.get("revenue_oh_now").sum())
+
+        rooms_forecast_display = daily_rows.get("forecast_rooms_display", daily_rows.get("forecast_rooms"))
+        pax_forecast_display = daily_rows.get("forecast_pax_display", daily_rows.get("forecast_pax"))
+        actual_rooms_display = daily_rows.get("actual_rooms_display", daily_rows.get("actual_rooms"))
+        actual_pax_display = daily_rows.get("actual_pax_display", daily_rows.get("actual_pax"))
+
+        stay_dates = pd.to_datetime(daily_rows["stay_date"], errors="coerce").dt.normalize()
+        if asof_ts is None:
+            asof_ts = stay_dates.min()
+
+        mask_past = stay_dates < asof_ts
+
+        rooms_past = actual_rooms_display.where(actual_rooms_display.notna(), daily_rows.get("asof_oh_rooms"))
+        rooms_past = rooms_past.where(rooms_past.notna(), daily_rows.get("forecast_rooms"))
+        pax_past = actual_pax_display.where(actual_pax_display.notna(), daily_rows.get("asof_oh_pax"))
+        pax_past = pax_past.where(pax_past.notna(), daily_rows.get("forecast_pax"))
+        rev_past = daily_rows.get("revenue_oh_now").where(daily_rows.get("revenue_oh_now").notna(), daily_rows.get("forecast_revenue"))
+
+        projected_rooms = pd.Series(index=daily_rows.index, dtype=float)
+        projected_pax = pd.Series(index=daily_rows.index, dtype=float)
+        projected_rev = pd.Series(index=daily_rows.index, dtype=float)
+        projected_rooms.loc[mask_past] = rooms_past.loc[mask_past]
+        projected_pax.loc[mask_past] = pax_past.loc[mask_past]
+        projected_rev.loc[mask_past] = rev_past.loc[mask_past]
+        projected_rooms.loc[~mask_past] = rooms_forecast_display.loc[~mask_past]
+        projected_pax.loc[~mask_past] = pax_forecast_display.loc[~mask_past]
+        projected_rev.loc[~mask_past] = daily_rows.get("forecast_revenue").loc[~mask_past]
+
+        rooms_fc = _safe_float(projected_rooms.fillna(0).sum())
+        pax_fc = _safe_float(projected_pax.fillna(0).sum())
+        rev_fc = _safe_float(projected_rev.fillna(0).sum())
+
+        adr_oh = _safe_float(total_row.get("adr_oh_now") if total_row is not None else None)
+        if adr_oh is None:
+            adr_oh = _safe_ratio(rev_oh, rooms_oh)
 
         def _safe_ratio(num: float | None, denom: float | None) -> float | None:
             if num is None or denom is None or denom == 0:
@@ -804,13 +841,29 @@ class BookingCurveApp(tk.Tk):
 
         dor_oh = _safe_ratio(pax_oh, rooms_oh)
         dor_fc = _safe_ratio(pax_fc, rooms_fc)
+        adr_fc = _safe_ratio(rev_fc, rooms_fc)
+
+        if rooms_oh is not None and occ_capacity > 0 and num_days > 0:
+            occ_oh = rooms_oh / (occ_capacity * num_days) * 100.0
+        else:
+            occ_oh = None
+
+        if rooms_fc is not None and occ_capacity > 0 and num_days > 0:
+            occ_fc = rooms_fc / (occ_capacity * num_days) * 100.0
+        else:
+            occ_fc = None
 
         revpar_oh = None
-        revpar_fc = _safe_float(total_row.get("forecast_revpar"))
+        revpar_fc = None
         if rev_oh is not None and occ_capacity > 0 and num_days > 0:
             revpar_oh = rev_oh / (occ_capacity * num_days)
+        if rev_fc is not None and occ_capacity > 0 and num_days > 0:
+            revpar_fc = rev_fc / (occ_capacity * num_days)
 
         ly = get_daily_forecast_ly_summary(hotel_tag=hotel, target_month=target_month, capacity=occ_capacity)
+        ly_occ = None
+        if ly.get("rooms") is not None and occ_capacity > 0 and num_days > 0:
+            ly_occ = float(ly["rooms"]) / (occ_capacity * num_days) * 100.0
 
         def _fmt_metric(metric: str, value: float | None, empty_label: str = "N/A") -> str:
             if value is None or pd.isna(value):
@@ -818,9 +871,11 @@ class BookingCurveApp(tk.Tk):
             if metric in ("Rooms", "Pax", "Rev"):
                 return _fmt_num(value)
             if metric in ("ADR", "RevPAR"):
-                return f"{float(value):.1f}"
+                return _fmt_num(value)
             if metric == "DOR":
                 return f"{float(value):.2f}"
+            if metric == "OCC":
+                return f"{float(value):.1f}%"
             return _fmt_num(value)
 
         self.df_summary_vars["oh"]["Rooms"].set(_fmt_metric("Rooms", rooms_oh))
@@ -834,6 +889,10 @@ class BookingCurveApp(tk.Tk):
         self.df_summary_vars["oh"]["Rev"].set(_fmt_metric("Rev", rev_oh))
         self.df_summary_vars["forecast"]["Rev"].set(_fmt_metric("Rev", rev_fc))
         self.df_summary_vars["ly"]["Rev"].set(_fmt_metric("Rev", ly.get("revenue"), empty_label="-"))
+
+        self.df_summary_vars["oh"]["OCC"].set(_fmt_metric("OCC", occ_oh))
+        self.df_summary_vars["forecast"]["OCC"].set(_fmt_metric("OCC", occ_fc))
+        self.df_summary_vars["ly"]["OCC"].set(_fmt_metric("OCC", ly_occ, empty_label="-"))
 
         self.df_summary_vars["oh"]["ADR"].set(_fmt_metric("ADR", adr_oh))
         self.df_summary_vars["forecast"]["ADR"].set(_fmt_metric("ADR", adr_fc))
@@ -1942,14 +2001,14 @@ class BookingCurveApp(tk.Tk):
         self.df_hotel_var = self.hotel_var
         hotel_combo = ttk.Combobox(left_header, textvariable=self.df_hotel_var, state="readonly")
         hotel_combo["values"] = sorted(HOTEL_CONFIG.keys())
-        hotel_combo.grid(row=0, column=1, padx=4, pady=2)
+        hotel_combo.grid(row=0, column=1, padx=4, pady=2, sticky="w")
         hotel_combo.bind("<<ComboboxSelected>>", self._on_df_hotel_changed)
 
         # 対象月
         ttk.Label(left_header, text="対象月 (YYYYMM):").grid(row=0, column=2, sticky="w")
         current_month = date.today().strftime("%Y%m")
         self.df_month_var = tk.StringVar(value=current_month)
-        ttk.Entry(left_header, textvariable=self.df_month_var, width=8).grid(row=0, column=3, padx=4, pady=2)
+        ttk.Entry(left_header, textvariable=self.df_month_var, width=8).grid(row=0, column=3, padx=4, pady=2, sticky="w")
         self.df_month_var.trace_add("write", lambda *_: self._refresh_phase_overrides_ui())
 
         # as_of
@@ -1968,7 +2027,7 @@ class BookingCurveApp(tk.Tk):
                 textvariable=self.df_asof_var,
                 width=12,
             )
-        self.df_asof_entry.grid(row=0, column=5, padx=4, pady=2)
+        self.df_asof_entry.grid(row=0, column=5, padx=4, pady=2, sticky="w")
 
         self.df_latest_asof_var = tk.StringVar(value="")
         ttk.Label(left_header, text="最新ASOF:").grid(row=0, column=6, sticky="w")
@@ -2006,8 +2065,18 @@ class BookingCurveApp(tk.Tk):
             width=14,
         )
         model_combo["values"] = model_values
-        model_combo.grid(row=1, column=1, padx=4, pady=(4, 2))
+        model_combo.grid(row=1, column=1, padx=4, pady=(4, 2), sticky="w")
         self.df_model_var.trace_add("write", lambda *_: self._on_df_model_changed(model_values))
+
+        # 実行ボタン
+        forecast_btn = ttk.Button(
+            left_header,
+            text="Forecast実行",
+            command=self._on_run_daily_forecast,
+        )
+        forecast_btn.grid(row=1, column=2, padx=4, pady=(4, 2), sticky="w")
+        export_btn = ttk.Button(left_header, text="CSV出力", command=self._on_export_daily_forecast_csv)
+        export_btn.grid(row=1, column=3, padx=4, pady=(4, 2), sticky="w")
 
         self.df_monthly_rounding_var = tk.BooleanVar(value=True)
         df_rounding_checkbox = ttk.Checkbutton(
@@ -2016,9 +2085,9 @@ class BookingCurveApp(tk.Tk):
             variable=self.df_monthly_rounding_var,
             command=self._reload_daily_forecast_table,
         )
-        df_rounding_checkbox.grid(row=1, column=10, padx=4, pady=(4, 2), sticky="w")
+        df_rounding_checkbox.grid(row=1, column=4, padx=4, pady=(4, 2), sticky="w")
 
-        ttk.Label(left_header, text="表示:").grid(row=1, column=11, sticky="w", padx=(8, 2))
+        ttk.Label(left_header, text="表示:").grid(row=1, column=5, sticky="w", padx=(8, 2))
         self.df_display_mode_var = tk.StringVar(value="Standard")
         df_display_combo = ttk.Combobox(
             left_header,
@@ -2027,7 +2096,7 @@ class BookingCurveApp(tk.Tk):
             state="readonly",
             width=9,
         )
-        df_display_combo.grid(row=1, column=12, padx=2, pady=(4, 2), sticky="w")
+        df_display_combo.grid(row=1, column=6, padx=2, pady=(4, 2), sticky="w")
         df_display_combo.bind("<<ComboboxSelected>>", self._on_df_display_mode_changed)
 
         # 予測キャップ / 稼働率キャパ
@@ -2035,16 +2104,20 @@ class BookingCurveApp(tk.Tk):
         current_hotel = self.hotel_var.get().strip() or DEFAULT_HOTEL
         fc_cap, pax_cap, occ_cap = self._get_daily_caps_for_hotel(current_hotel)
 
-        ttk.Label(left_header, text="予測キャップ(Rm):").grid(row=2, column=2, sticky="w")
+        ttk.Label(left_header, text="予測キャップ(Rm):").grid(row=2, column=0, sticky="w")
         self.df_forecast_cap_var = tk.StringVar(value=str(fc_cap))
-        ttk.Entry(left_header, textvariable=self.df_forecast_cap_var, width=6).grid(row=2, column=3, padx=4, pady=2)
+        ttk.Entry(left_header, textvariable=self.df_forecast_cap_var, width=6).grid(row=2, column=1, padx=4, pady=2, sticky="w")
 
-        ttk.Label(left_header, text="予測キャップ(Px):").grid(row=2, column=4, sticky="w")
+        ttk.Label(left_header, text="予測キャップ(Px):").grid(row=2, column=2, sticky="w")
         self.df_forecast_cap_pax_var = tk.StringVar(value="" if pax_cap is None else str(pax_cap))
-        ttk.Entry(left_header, textvariable=self.df_forecast_cap_pax_var, width=6).grid(row=2, column=5, padx=4, pady=2)
+        ttk.Entry(left_header, textvariable=self.df_forecast_cap_pax_var, width=6).grid(row=2, column=3, padx=4, pady=2, sticky="w")
+
+        ttk.Label(left_header, text="稼働率キャパ(Occ):").grid(row=2, column=4, sticky="w")
+        self.df_occ_cap_var = tk.StringVar(value=str(occ_cap))
+        ttk.Entry(left_header, textvariable=self.df_occ_cap_var, width=6).grid(row=2, column=5, padx=4, pady=2, sticky="w")
 
         nav_frame = ttk.Frame(left_header)
-        nav_frame.grid(row=3, column=2, columnspan=6, sticky="w", pady=(4, 0))
+        nav_frame.grid(row=3, column=0, columnspan=6, sticky="w", pady=(4, 0))
 
         ttk.Label(nav_frame, text="月移動:").pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(
@@ -2127,21 +2200,8 @@ class BookingCurveApp(tk.Tk):
             )
             self.df_phase_month_labels.append(month_label)
 
-        # 実行ボタン
-        forecast_btn = ttk.Button(
-            left_header,
-            text="Forecast実行",
-            command=self._on_run_daily_forecast,
-        )
-        forecast_btn.grid(row=1, column=8, padx=4, pady=2, sticky="e")
-        export_btn = ttk.Button(left_header, text="CSV出力", command=self._on_export_daily_forecast_csv)
-        export_btn.grid(row=1, column=9, padx=4, pady=2, sticky="e")
-        ttk.Label(left_header, text="稼働率キャパ(Occ):").grid(row=2, column=6, sticky="w")
-        self.df_occ_cap_var = tk.StringVar(value=str(occ_cap))
-        ttk.Entry(left_header, textvariable=self.df_occ_cap_var, width=6).grid(row=2, column=7, padx=4, pady=2)
-
         summary_controls = ttk.Frame(frame)
-        summary_controls.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 2))
+        summary_controls.pack(side=tk.TOP, fill=tk.X, padx=6, pady=(0, 2))
         self.df_summary_visible_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             summary_controls,
@@ -2151,31 +2211,36 @@ class BookingCurveApp(tk.Tk):
         ).pack(side=tk.LEFT)
 
         summary_frame = ttk.LabelFrame(frame, text="サマリ")
-        summary_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 6))
+        summary_frame.pack(side=tk.TOP, fill=tk.X, padx=6, pady=(0, 4))
         self.df_summary_frame = summary_frame
 
-        metrics = ["Rooms", "Pax", "Rev", "ADR", "DOR", "RevPAR"]
+        metrics = ["Rooms", "Pax", "Rev", "OCC", "ADR", "DOR", "RevPAR"]
         for col in range(len(metrics) + 1):
             summary_frame.grid_columnconfigure(col, weight=1)
 
         status_frame = ttk.Frame(summary_frame)
-        status_frame.grid(row=0, column=0, columnspan=len(metrics) + 1, sticky="w")
+        status_frame.grid(row=0, column=0, columnspan=len(metrics) + 1, sticky="w", padx=4, pady=2)
         ttk.Label(status_frame, text="ステータス:").pack(side=tk.LEFT)
         self.df_status_var = tk.StringVar(value="")
         ttk.Label(status_frame, textvariable=self.df_status_var).pack(side=tk.LEFT, padx=(4, 0))
 
-        ttk.Label(summary_frame, text="").grid(row=1, column=0, sticky="w")
+        ttk.Label(summary_frame, text="").grid(row=1, column=0, sticky="w", padx=4)
         for col_idx, metric in enumerate(metrics, start=1):
-            ttk.Label(summary_frame, text=metric).grid(row=1, column=col_idx, sticky="e")
+            ttk.Label(summary_frame, text=metric, width=8).grid(row=1, column=col_idx, sticky="e", padx=2)
 
         self.df_summary_vars = {"oh": {}, "forecast": {}, "ly": {}}
         row_labels = [("oh", "OH"), ("forecast", "Forecast"), ("ly", "LY ACT")]
         for row_idx, (row_key, label) in enumerate(row_labels, start=2):
-            ttk.Label(summary_frame, text=label).grid(row=row_idx, column=0, sticky="w")
+            ttk.Label(summary_frame, text=label, width=8).grid(row=row_idx, column=0, sticky="w", padx=4)
             for col_idx, metric in enumerate(metrics, start=1):
                 var = tk.StringVar(value="")
                 self.df_summary_vars[row_key][metric] = var
-                ttk.Label(summary_frame, textvariable=var, anchor="e").grid(row=row_idx, column=col_idx, sticky="e")
+                ttk.Label(summary_frame, textvariable=var, anchor="e", width=10).grid(
+                    row=row_idx,
+                    column=col_idx,
+                    sticky="e",
+                    padx=2,
+                )
 
         # テーブル用コンテナ
         table_container = ttk.Frame(frame)
@@ -2236,9 +2301,9 @@ class BookingCurveApp(tk.Tk):
         if self.df_summary_visible_var.get():
             before_widget = getattr(self, "df_table_container", None)
             if before_widget is not None:
-                frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 6), before=before_widget)
+                frame.pack(side=tk.TOP, fill=tk.X, padx=6, pady=(0, 4), before=before_widget)
             else:
-                frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 6))
+                frame.pack(side=tk.TOP, fill=tk.X, padx=6, pady=(0, 4))
         else:
             frame.pack_forget()
 
@@ -2297,12 +2362,13 @@ class BookingCurveApp(tk.Tk):
                 ("forecast_rooms_display", "FcRm", 80, "e"),
                 ("asof_oh_pax_display", "OH(Px)", 80, "e"),
                 ("forecast_pax_display", "FcPx", 80, "e"),
+                ("revenue_oh_now", "OHRev", 90, "e"),
                 ("forecast_revenue_display", "FcRev", 90, "e"),
+                ("occ_forecast_pct_display", "Occ Fc", 75, "e"),
                 ("adr_oh_now", "OH ADR", 80, "e"),
-                ("forecast_adr", "Fc ADR", 80, "e"),
-                ("forecast_revpar", "Fc RevPAR", 90, "e"),
-                ("pickup_expected_from_asof", "PU Exp", 80, "e"),
-                ("occ_forecast_pct", "Occ Fc", 75, "e"),
+                ("forecast_adr_display", "Fc ADR", 80, "e"),
+                ("forecast_revpar_display", "Fc RevPAR", 90, "e"),
+                ("pickup_expected_from_asof_display", "PU Exp", 80, "e"),
             ]
 
         return [
@@ -2316,18 +2382,18 @@ class BookingCurveApp(tk.Tk):
             ("forecast_pax_display", "FcPx", 80, "e"),
             ("forecast_revenue_display", "FcRev", 80, "e"),
             ("revenue_oh_now", "OHRev", 80, "e"),
+            ("occ_forecast_pct_display", "Occ Fc", 75, "e"),
             ("adr_oh_now", "OH ADR", 80, "e"),
-            ("forecast_adr", "Fc ADR", 80, "e"),
+            ("forecast_adr_display", "Fc ADR", 80, "e"),
             ("adr_pickup_est", "ADR PU", 80, "e"),
-            ("forecast_revpar", "Fc RevPAR", 80, "e"),
+            ("forecast_revpar_display", "Fc RevPAR", 80, "e"),
             ("diff_rooms_vs_actual", "ΔRm(Act)", 80, "e"),
             ("diff_pct_vs_actual", "Δ%(Act)", 75, "e"),
-            ("pickup_expected_from_asof", "PU Exp", 80, "e"),
+            ("pickup_expected_from_asof_display", "PU Exp", 80, "e"),
             ("diff_rooms", "ΔRm", 80, "e"),
             ("diff_pct", "Δ%", 75, "e"),
             ("occ_actual_pct", "Occ Act", 75, "e"),
             ("occ_asof_pct", "Occ OH", 75, "e"),
-            ("occ_forecast_pct", "Occ Fc", 75, "e"),
         ]
 
     def _setup_df_tree_columns(self, mode: str) -> None:
@@ -2358,6 +2424,7 @@ class BookingCurveApp(tk.Tk):
             "occ_actual_pct",
             "occ_asof_pct",
             "occ_forecast_pct",
+            "occ_forecast_pct_display",
         }
         if col in pct_cols:
             return _fmt_pct(row.get(col))
@@ -2635,7 +2702,7 @@ class BookingCurveApp(tk.Tk):
 
         self.df_daily_forecast_df = df
         self.df_table_df = df
-        self._update_daily_forecast_summary(df, hotel, month, occ_capacity)
+        self._update_daily_forecast_summary(df, hotel, month, occ_capacity, asof)
 
         self._update_df_best_model_label()
 

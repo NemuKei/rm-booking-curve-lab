@@ -17,6 +17,7 @@ from booking_curve.daily_snapshots import (
     get_daily_snapshots_path,
     get_latest_asof_date,
     list_stay_months_from_daily_snapshots,
+    read_daily_snapshots,
     read_daily_snapshots_for_month,
     rebuild_asof_dates_from_daily_snapshots,
 )
@@ -42,6 +43,7 @@ from booking_curve.utils import apply_nocb_along_lt
 from run_full_evaluation import resolve_asof_dates_for_month, run_full_evaluation_for_gui
 
 _EVALUATION_DETAIL_CACHE: dict[str, tuple[float, pd.DataFrame]] = {}
+_TOPDOWN_ACT_CACHE: dict[str, tuple[float, pd.DataFrame]] = {}
 
 
 def generate_month_range(start_yyyymm: str, end_yyyymm: str) -> list[str]:
@@ -176,6 +178,58 @@ def clear_evaluation_detail_cache(hotel_tag: str | None = None) -> None:
         return
 
     _EVALUATION_DETAIL_CACHE.pop(hotel_tag, None)
+
+
+def _get_topdown_actual_monthly_revenue(hotel_tag: str) -> pd.DataFrame:
+    daily_path = get_daily_snapshots_path(hotel_tag)
+    if not daily_path.exists():
+        return pd.DataFrame(columns=["stay_month", "revenue_total", "days_in_month"])
+
+    mtime = daily_path.stat().st_mtime
+    cached = _TOPDOWN_ACT_CACHE.get(hotel_tag)
+    if cached is not None:
+        cached_mtime, cached_df = cached
+        if cached_mtime == mtime:
+            return cached_df.copy()
+
+    df = read_daily_snapshots(hotel_tag)
+    if df.empty:
+        empty_df = pd.DataFrame(columns=["stay_month", "revenue_total", "days_in_month"])
+        _TOPDOWN_ACT_CACHE[hotel_tag] = (mtime, empty_df)
+        return empty_df.copy()
+
+    df = df.copy()
+    df["stay_date"] = pd.to_datetime(df["stay_date"], errors="coerce").dt.normalize()
+    df["as_of_date"] = pd.to_datetime(df["as_of_date"], errors="coerce").dt.normalize()
+    df = df.dropna(subset=["stay_date", "as_of_date"])
+    if df.empty:
+        empty_df = pd.DataFrame(columns=["stay_month", "revenue_total", "days_in_month"])
+        _TOPDOWN_ACT_CACHE[hotel_tag] = (mtime, empty_df)
+        return empty_df.copy()
+
+    df = df.sort_values(["stay_date", "as_of_date"])
+    latest = df.groupby("stay_date").tail(1).copy()
+    if "revenue_oh" not in latest.columns:
+        empty_df = pd.DataFrame(columns=["stay_month", "revenue_total", "days_in_month"])
+        _TOPDOWN_ACT_CACHE[hotel_tag] = (mtime, empty_df)
+        return empty_df.copy()
+
+    latest["revenue_oh"] = pd.to_numeric(latest["revenue_oh"], errors="coerce")
+    latest = latest.dropna(subset=["revenue_oh"])
+    if latest.empty:
+        empty_df = pd.DataFrame(columns=["stay_month", "revenue_total", "days_in_month"])
+        _TOPDOWN_ACT_CACHE[hotel_tag] = (mtime, empty_df)
+        return empty_df.copy()
+
+    latest["stay_month"] = latest["stay_date"].dt.to_period("M")
+    monthly = (
+        latest.groupby("stay_month", as_index=False)["revenue_oh"]
+        .sum()
+        .rename(columns={"revenue_oh": "revenue_total"})
+    )
+    monthly["days_in_month"] = monthly["stay_month"].dt.days_in_month
+    _TOPDOWN_ACT_CACHE[hotel_tag] = (mtime, monthly)
+    return monthly.copy()
 
 
 def _get_hotel_config(hotel_tag: str) -> dict:
@@ -895,6 +949,222 @@ def run_forecast_for_gui(
             )
         else:
             raise ValueError(f"Unsupported gui_model: {gui_model}")
+
+
+def _get_forecast_csv_prefix(gui_model: str) -> tuple[str, str]:
+    model_map = {
+        "avg": ("forecast", "projected_rooms"),
+        "recent90": ("forecast_recent90", "projected_rooms"),
+        "recent90w": ("forecast_recent90w", "projected_rooms"),
+        "recent90_adj": ("forecast_recent90", "adjusted_projected_rooms"),
+        "recent90w_adj": ("forecast_recent90w", "adjusted_projected_rooms"),
+        "pace14": ("forecast_pace14", "projected_rooms"),
+        "pace14_market": ("forecast_pace14_market", "projected_rooms"),
+    }
+    if gui_model not in model_map:
+        raise ValueError(f"Unsupported gui_model: {gui_model}")
+    return model_map[gui_model]
+
+
+def _get_projected_monthly_revpar(
+    hotel_tag: str,
+    target_month: str,
+    as_of_date: str,
+    gui_model: str,
+    rooms_cap: float,
+) -> float | None:
+    prefix, _ = _get_forecast_csv_prefix(gui_model)
+    asof_ts = pd.to_datetime(as_of_date)
+    asof_tag = asof_ts.strftime("%Y%m%d")
+    csv_name = f"{prefix}_{target_month}_{hotel_tag}_asof_{asof_tag}.csv"
+    csv_path = OUTPUT_DIR / csv_name
+    if not csv_path.exists():
+        raise FileNotFoundError(f"forecast csv not found: {csv_path}")
+
+    df = pd.read_csv(csv_path, index_col=0, parse_dates=True)
+    if "forecast_revenue" not in df.columns:
+        return None
+
+    revenue = pd.to_numeric(df["forecast_revenue"], errors="coerce")
+    revenue_total = revenue.sum(min_count=1)
+    if pd.isna(revenue_total):
+        return None
+
+    try:
+        year = int(target_month[:4])
+        month = int(target_month[4:])
+    except Exception:
+        return None
+    _, num_days = monthrange(year, month)
+    denom = rooms_cap * num_days
+    if denom <= 0:
+        return None
+    return float(revenue_total / denom)
+
+
+def build_topdown_revpar_panel(
+    *,
+    hotel_tag: str,
+    target_month: str,
+    as_of_date: str,
+    model_key: str,
+    rooms_cap: float,
+    phase_factors: dict[str, float] | None,
+    phase_clip_pct: float | None,
+    forecast_horizon_months: int = 3,
+    show_years: list[int] | None = None,
+    fiscal_year_start_month: int = 6,
+) -> dict[str, object]:
+    if forecast_horizon_months <= 0:
+        raise ValueError("forecast_horizon_months must be a positive integer")
+
+    try:
+        target_period = pd.Period(target_month, freq="M")
+    except Exception as exc:
+        raise ValueError(f"Invalid target_month: {target_month}") from exc
+
+    asof_ts = pd.to_datetime(as_of_date).normalize()
+
+    def _get_fiscal_year(year: int, month: int) -> int:
+        if month >= fiscal_year_start_month:
+            return year
+        return year - 1
+
+    current_fy = _get_fiscal_year(target_period.year, target_period.month)
+    if show_years is None:
+        show_years = list(range(current_fy - 5, current_fy + 1))
+
+    months_order = [(fiscal_year_start_month + offset - 1) % 12 + 1 for offset in range(12)]
+    fiscal_month_labels = [f"{month}月" for month in months_order]
+    target_month_idx = months_order.index(target_period.month)
+
+    monthly_actual = _get_topdown_actual_monthly_revenue(hotel_tag)
+    month_revpar_map: dict[tuple[int, int], float] = {}
+    if not monthly_actual.empty:
+        for _, row in monthly_actual.iterrows():
+            stay_month = row["stay_month"]
+            if pd.isna(stay_month):
+                continue
+            year = int(stay_month.year)
+            month = int(stay_month.month)
+            fy = _get_fiscal_year(year, month)
+            if month >= fiscal_year_start_month:
+                fiscal_index = month - fiscal_year_start_month
+            else:
+                fiscal_index = month + (12 - fiscal_year_start_month)
+            days = float(row.get("days_in_month") or 0)
+            if days <= 0 or rooms_cap <= 0:
+                continue
+            revenue_total = float(row.get("revenue_total") or 0)
+            month_revpar_map[(fy, fiscal_index)] = revenue_total / (rooms_cap * days)
+
+    lines_by_fy: dict[int, list[float | None]] = {}
+    for fy in show_years:
+        values: list[float | None] = [None] * 12
+        for idx in range(12):
+            value = month_revpar_map.get((fy, idx))
+            if value is not None:
+                values[idx] = float(value)
+        lines_by_fy[fy] = values
+
+    current_fy_actual: list[float | None] = [None] * 12
+    for idx in range(12):
+        value = month_revpar_map.get((current_fy, idx))
+        if value is None:
+            continue
+        month_num = months_order[idx]
+        year = current_fy if month_num >= fiscal_year_start_month else current_fy + 1
+        month_end = pd.Timestamp(year=year, month=month_num, day=1) + pd.offsets.MonthEnd(0)
+        if month_end <= asof_ts:
+            current_fy_actual[idx] = float(value)
+
+    forecast_months_all = [target_period + offset for offset in range(forecast_horizon_months)]
+    forecast_months = [
+        month
+        for month in forecast_months_all
+        if _get_fiscal_year(month.year, month.month) == current_fy
+    ]
+    forecast_month_strs = [m.strftime("%Y%m") for m in forecast_months]
+    run_forecast_for_gui(
+        hotel_tag=hotel_tag,
+        target_months=forecast_month_strs,
+        as_of_date=as_of_date,
+        gui_model=model_key,
+        capacity=None,
+        pax_capacity=None,
+        phase_factors=phase_factors,
+        phase_clip_pct=phase_clip_pct,
+    )
+
+    current_fy_forecast: list[float | None] = [None] * 12
+    forecast_revpar_map: dict[str, float | None] = {}
+    for month_str in forecast_month_strs:
+        revpar_value = _get_projected_monthly_revpar(
+            hotel_tag=hotel_tag,
+            target_month=month_str,
+            as_of_date=as_of_date,
+            gui_model=model_key,
+            rooms_cap=rooms_cap,
+        )
+        forecast_revpar_map[month_str] = revpar_value
+        try:
+            month_period = pd.Period(month_str, freq="M")
+        except Exception:
+            continue
+        idx = months_order.index(month_period.month)
+        if _get_fiscal_year(month_period.year, month_period.month) == current_fy:
+            current_fy_forecast[idx] = revpar_value
+
+    band_p10: list[float | None] = [None] * 12
+    band_p90: list[float | None] = [None] * 12
+    reference_years = [fy for fy in show_years if fy != current_fy]
+    forecast_indices = {
+        months_order.index(pd.Period(month_str, freq="M").month) for month_str in forecast_month_strs
+    }
+    for idx in range(12):
+        if idx not in forecast_indices:
+            continue
+        candidates = []
+        for fy in reference_years:
+            value = lines_by_fy.get(fy, [None] * 12)[idx]
+            if value is not None:
+                candidates.append(float(value))
+        if not candidates:
+            continue
+        band_p10[idx] = float(np.percentile(candidates, 10))
+        band_p90[idx] = float(np.percentile(candidates, 90))
+
+    diagnostics: list[dict[str, object]] = []
+    for month_str in forecast_month_strs:
+        revpar_value = forecast_revpar_map.get(month_str)
+        idx = months_order.index(pd.Period(month_str, freq="M").month)
+        p10 = band_p10[idx]
+        p90 = band_p90[idx]
+        out_of_range = False
+        if revpar_value is not None and p10 is not None and p90 is not None:
+            out_of_range = revpar_value < p10 or revpar_value > p90
+        diagnostics.append(
+            {
+                "month": month_str,
+                "revpar": revpar_value,
+                "p10": p10,
+                "p90": p90,
+                "out_of_range": out_of_range,
+            }
+        )
+
+    return {
+        "fiscal_month_labels": fiscal_month_labels,
+        "lines_by_fy": lines_by_fy,
+        "current_fy": current_fy,
+        "current_fy_actual": current_fy_actual,
+        "current_fy_forecast": current_fy_forecast,
+        "band_p10": band_p10,
+        "band_p90": band_p90,
+        "diagnostics": diagnostics,
+        "target_month_index": target_month_idx,
+        "forecast_months": forecast_month_strs,
+    }
 
 
 def get_daily_forecast_table(

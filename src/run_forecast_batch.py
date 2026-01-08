@@ -192,7 +192,7 @@ def _load_history_raw(
 def infer_pax_capacity_p99(
     hotel_tag: str,
     as_of_ts: pd.Timestamp,
-    lookback_months: int = 24,
+    lookback_months: int = 6,
     q: float = 0.99,
 ) -> float | None:
     months = get_history_months_around_asof(

@@ -812,9 +812,9 @@ class BookingCurveApp(tk.Tk):
 
         ly = get_daily_forecast_ly_summary(hotel_tag=hotel, target_month=target_month, capacity=occ_capacity)
 
-        def _fmt_metric(metric: str, value: float | None) -> str:
+        def _fmt_metric(metric: str, value: float | None, empty_label: str = "N/A") -> str:
             if value is None or pd.isna(value):
-                return "N/A"
+                return empty_label
             if metric in ("Rooms", "Pax", "Rev"):
                 return _fmt_num(value)
             if metric in ("ADR", "RevPAR"):
@@ -825,27 +825,27 @@ class BookingCurveApp(tk.Tk):
 
         self.df_summary_vars["oh"]["Rooms"].set(_fmt_metric("Rooms", rooms_oh))
         self.df_summary_vars["forecast"]["Rooms"].set(_fmt_metric("Rooms", rooms_fc))
-        self.df_summary_vars["ly"]["Rooms"].set(_fmt_metric("Rooms", ly.get("rooms")))
+        self.df_summary_vars["ly"]["Rooms"].set(_fmt_metric("Rooms", ly.get("rooms"), empty_label="-"))
 
         self.df_summary_vars["oh"]["Pax"].set(_fmt_metric("Pax", pax_oh))
         self.df_summary_vars["forecast"]["Pax"].set(_fmt_metric("Pax", pax_fc))
-        self.df_summary_vars["ly"]["Pax"].set(_fmt_metric("Pax", ly.get("pax")))
+        self.df_summary_vars["ly"]["Pax"].set(_fmt_metric("Pax", ly.get("pax"), empty_label="-"))
 
         self.df_summary_vars["oh"]["Rev"].set(_fmt_metric("Rev", rev_oh))
         self.df_summary_vars["forecast"]["Rev"].set(_fmt_metric("Rev", rev_fc))
-        self.df_summary_vars["ly"]["Rev"].set(_fmt_metric("Rev", ly.get("revenue")))
+        self.df_summary_vars["ly"]["Rev"].set(_fmt_metric("Rev", ly.get("revenue"), empty_label="-"))
 
         self.df_summary_vars["oh"]["ADR"].set(_fmt_metric("ADR", adr_oh))
         self.df_summary_vars["forecast"]["ADR"].set(_fmt_metric("ADR", adr_fc))
-        self.df_summary_vars["ly"]["ADR"].set(_fmt_metric("ADR", ly.get("adr")))
+        self.df_summary_vars["ly"]["ADR"].set(_fmt_metric("ADR", ly.get("adr"), empty_label="-"))
 
         self.df_summary_vars["oh"]["DOR"].set(_fmt_metric("DOR", dor_oh))
         self.df_summary_vars["forecast"]["DOR"].set(_fmt_metric("DOR", dor_fc))
-        self.df_summary_vars["ly"]["DOR"].set(_fmt_metric("DOR", ly.get("dor")))
+        self.df_summary_vars["ly"]["DOR"].set(_fmt_metric("DOR", ly.get("dor"), empty_label="-"))
 
         self.df_summary_vars["oh"]["RevPAR"].set(_fmt_metric("RevPAR", revpar_oh))
         self.df_summary_vars["forecast"]["RevPAR"].set(_fmt_metric("RevPAR", revpar_fc))
-        self.df_summary_vars["ly"]["RevPAR"].set(_fmt_metric("RevPAR", ly.get("revpar")))
+        self.df_summary_vars["ly"]["RevPAR"].set(_fmt_metric("RevPAR", ly.get("revpar"), empty_label="-"))
 
         if hasattr(self, "df_status_var"):
             self.df_status_var.set("表示中")
@@ -1927,54 +1927,67 @@ class BookingCurveApp(tk.Tk):
         frame = self.tab_daily_forecast
 
         # 上部入力フォーム
-        form = ttk.Frame(frame)
-        form.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
+        header_frame = ttk.Frame(frame)
+        header_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
+        header_frame.grid_columnconfigure(0, weight=1)
+        header_frame.grid_columnconfigure(1, weight=0)
+
+        left_header = ttk.Frame(header_frame)
+        left_header.grid(row=0, column=0, sticky="nw")
+        right_header = ttk.Frame(header_frame)
+        right_header.grid(row=0, column=1, sticky="ne", padx=(12, 0))
 
         # ホテル
-        ttk.Label(form, text="ホテル:").grid(row=0, column=0, sticky="w")
+        ttk.Label(left_header, text="ホテル:").grid(row=0, column=0, sticky="w")
         self.df_hotel_var = self.hotel_var
-        hotel_combo = ttk.Combobox(form, textvariable=self.df_hotel_var, state="readonly")
+        hotel_combo = ttk.Combobox(left_header, textvariable=self.df_hotel_var, state="readonly")
         hotel_combo["values"] = sorted(HOTEL_CONFIG.keys())
         hotel_combo.grid(row=0, column=1, padx=4, pady=2)
         hotel_combo.bind("<<ComboboxSelected>>", self._on_df_hotel_changed)
 
         # 対象月
-        ttk.Label(form, text="対象月 (YYYYMM):").grid(row=0, column=2, sticky="w")
+        ttk.Label(left_header, text="対象月 (YYYYMM):").grid(row=0, column=2, sticky="w")
         current_month = date.today().strftime("%Y%m")
         self.df_month_var = tk.StringVar(value=current_month)
-        ttk.Entry(form, textvariable=self.df_month_var, width=8).grid(row=0, column=3, padx=4, pady=2)
+        ttk.Entry(left_header, textvariable=self.df_month_var, width=8).grid(row=0, column=3, padx=4, pady=2)
         self.df_month_var.trace_add("write", lambda *_: self._refresh_phase_overrides_ui())
 
         # as_of
-        ttk.Label(form, text="AS OF (YYYY-MM-DD):").grid(row=0, column=4, sticky="w")
+        ttk.Label(left_header, text="AS OF (YYYY-MM-DD):").grid(row=0, column=4, sticky="w")
         self.df_asof_var = tk.StringVar(value="")
         if DateEntry is not None:
             self.df_asof_entry = DateEntry(
-                form,
+                left_header,
                 textvariable=self.df_asof_var,
                 date_pattern="yyyy-mm-dd",
                 width=12,
             )
         else:
             self.df_asof_entry = ttk.Entry(
-                form,
+                left_header,
                 textvariable=self.df_asof_var,
                 width=12,
             )
         self.df_asof_entry.grid(row=0, column=5, padx=4, pady=2)
 
         self.df_latest_asof_var = tk.StringVar(value="")
-        ttk.Label(form, text="最新ASOF:").grid(row=0, column=6, sticky="w")
-        self.df_latest_asof_label = tk.Label(form, textvariable=self.df_latest_asof_var, width=12, anchor="w")
+        ttk.Label(left_header, text="最新ASOF:").grid(row=0, column=6, sticky="w")
+        self.df_latest_asof_label = tk.Label(left_header, textvariable=self.df_latest_asof_var, width=12, anchor="w")
         self._latest_asof_label_defaults[self.df_latest_asof_label] = (
             self.df_latest_asof_label.cget("background"),
             self.df_latest_asof_label.cget("foreground"),
         )
         self.df_latest_asof_label.grid(row=0, column=7, padx=4, pady=2, sticky="w")
-        ttk.Button(form, text="最新に反映", command=self._on_df_set_asof_to_latest).grid(row=0, column=8, padx=4, pady=2, sticky="w")
+        ttk.Button(left_header, text="最新に反映", command=self._on_df_set_asof_to_latest).grid(
+            row=0,
+            column=8,
+            padx=4,
+            pady=2,
+            sticky="w",
+        )
 
         # モデル
-        ttk.Label(form, text="モデル:").grid(row=1, column=0, sticky="w", pady=(4, 2))
+        ttk.Label(left_header, text="モデル:").grid(row=1, column=0, sticky="w", pady=(4, 2))
         model_values = [
             "recent90",
             "recent90w",
@@ -1987,7 +2000,7 @@ class BookingCurveApp(tk.Tk):
         initial_model = saved_model if saved_model in model_values else default_model
         self.df_model_var = tk.StringVar(value=initial_model)
         model_combo = ttk.Combobox(
-            form,
+            left_header,
             textvariable=self.df_model_var,
             state="readonly",
             width=14,
@@ -1998,17 +2011,17 @@ class BookingCurveApp(tk.Tk):
 
         self.df_monthly_rounding_var = tk.BooleanVar(value=True)
         df_rounding_checkbox = ttk.Checkbutton(
-            form,
+            left_header,
             text="月次丸め（Forecast整合）",
             variable=self.df_monthly_rounding_var,
             command=self._reload_daily_forecast_table,
         )
         df_rounding_checkbox.grid(row=1, column=10, padx=4, pady=(4, 2), sticky="w")
 
-        ttk.Label(form, text="表示:").grid(row=1, column=11, sticky="w", padx=(8, 2))
+        ttk.Label(left_header, text="表示:").grid(row=1, column=11, sticky="w", padx=(8, 2))
         self.df_display_mode_var = tk.StringVar(value="Standard")
         df_display_combo = ttk.Combobox(
-            form,
+            left_header,
             textvariable=self.df_display_mode_var,
             values=["Standard", "Detail"],
             state="readonly",
@@ -2022,16 +2035,16 @@ class BookingCurveApp(tk.Tk):
         current_hotel = self.hotel_var.get().strip() or DEFAULT_HOTEL
         fc_cap, pax_cap, occ_cap = self._get_daily_caps_for_hotel(current_hotel)
 
-        ttk.Label(form, text="予測キャップ(Rm):").grid(row=1, column=2, sticky="w")
+        ttk.Label(left_header, text="予測キャップ(Rm):").grid(row=2, column=2, sticky="w")
         self.df_forecast_cap_var = tk.StringVar(value=str(fc_cap))
-        ttk.Entry(form, textvariable=self.df_forecast_cap_var, width=6).grid(row=1, column=3, padx=4, pady=2)
+        ttk.Entry(left_header, textvariable=self.df_forecast_cap_var, width=6).grid(row=2, column=3, padx=4, pady=2)
 
-        ttk.Label(form, text="予測キャップ(Px):").grid(row=1, column=4, sticky="w")
+        ttk.Label(left_header, text="予測キャップ(Px):").grid(row=2, column=4, sticky="w")
         self.df_forecast_cap_pax_var = tk.StringVar(value="" if pax_cap is None else str(pax_cap))
-        ttk.Entry(form, textvariable=self.df_forecast_cap_pax_var, width=6).grid(row=1, column=5, padx=4, pady=2)
+        ttk.Entry(left_header, textvariable=self.df_forecast_cap_pax_var, width=6).grid(row=2, column=5, padx=4, pady=2)
 
-        nav_frame = ttk.Frame(form)
-        nav_frame.grid(row=2, column=2, columnspan=6, sticky="w", pady=(4, 0))
+        nav_frame = ttk.Frame(left_header)
+        nav_frame.grid(row=3, column=2, columnspan=6, sticky="w", pady=(4, 0))
 
         ttk.Label(nav_frame, text="月移動:").pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(
@@ -2055,8 +2068,8 @@ class BookingCurveApp(tk.Tk):
             command=lambda: self._on_df_shift_month(+12),
         ).pack(side=tk.LEFT, padx=2)
 
-        phase_frame = ttk.LabelFrame(form, text="フェーズ補正（売上）")
-        phase_frame.grid(row=2, column=0, columnspan=2, sticky="w", padx=4, pady=(4, 0))
+        phase_frame = ttk.LabelFrame(right_header, text="フェーズ補正（売上）")
+        phase_frame.grid(row=0, column=0, sticky="ne", padx=4, pady=(2, 0))
 
         clip_frame = ttk.Frame(phase_frame)
         clip_frame.pack(side=tk.TOP, fill=tk.X, padx=4, pady=(2, 0))
@@ -2116,47 +2129,58 @@ class BookingCurveApp(tk.Tk):
 
         # 実行ボタン
         forecast_btn = ttk.Button(
-            form,
+            left_header,
             text="Forecast実行",
             command=self._on_run_daily_forecast,
         )
         forecast_btn.grid(row=1, column=8, padx=4, pady=2, sticky="e")
-        export_btn = ttk.Button(form, text="CSV出力", command=self._on_export_daily_forecast_csv)
+        export_btn = ttk.Button(left_header, text="CSV出力", command=self._on_export_daily_forecast_csv)
         export_btn.grid(row=1, column=9, padx=4, pady=2, sticky="e")
-        ttk.Label(form, text="稼働率キャパ(Occ):").grid(row=1, column=6, sticky="w")
+        ttk.Label(left_header, text="稼働率キャパ(Occ):").grid(row=2, column=6, sticky="w")
         self.df_occ_cap_var = tk.StringVar(value=str(occ_cap))
-        ttk.Entry(form, textvariable=self.df_occ_cap_var, width=6).grid(row=1, column=7, padx=4, pady=2)
+        ttk.Entry(left_header, textvariable=self.df_occ_cap_var, width=6).grid(row=2, column=7, padx=4, pady=2)
+
+        summary_controls = ttk.Frame(frame)
+        summary_controls.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 2))
+        self.df_summary_visible_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            summary_controls,
+            text="サマリ表示",
+            variable=self.df_summary_visible_var,
+            command=self._toggle_df_summary_visibility,
+        ).pack(side=tk.LEFT)
 
         summary_frame = ttk.LabelFrame(frame, text="サマリ")
         summary_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 6))
-        summary_frame.grid_columnconfigure(0, weight=1)
-        summary_frame.grid_columnconfigure(1, weight=1)
-        summary_frame.grid_columnconfigure(2, weight=1)
-        summary_frame.grid_columnconfigure(3, weight=1)
+        self.df_summary_frame = summary_frame
+
+        metrics = ["Rooms", "Pax", "Rev", "ADR", "DOR", "RevPAR"]
+        for col in range(len(metrics) + 1):
+            summary_frame.grid_columnconfigure(col, weight=1)
 
         status_frame = ttk.Frame(summary_frame)
-        status_frame.grid(row=0, column=0, columnspan=4, sticky="w")
+        status_frame.grid(row=0, column=0, columnspan=len(metrics) + 1, sticky="w")
         ttk.Label(status_frame, text="ステータス:").pack(side=tk.LEFT)
         self.df_status_var = tk.StringVar(value="")
         ttk.Label(status_frame, textvariable=self.df_status_var).pack(side=tk.LEFT, padx=(4, 0))
 
-        ttk.Label(summary_frame, text="KPI").grid(row=1, column=0, sticky="w")
-        ttk.Label(summary_frame, text="OH").grid(row=1, column=1, sticky="e")
-        ttk.Label(summary_frame, text="Forecast").grid(row=1, column=2, sticky="e")
-        ttk.Label(summary_frame, text="LY ACT").grid(row=1, column=3, sticky="e")
+        ttk.Label(summary_frame, text="").grid(row=1, column=0, sticky="w")
+        for col_idx, metric in enumerate(metrics, start=1):
+            ttk.Label(summary_frame, text=metric).grid(row=1, column=col_idx, sticky="e")
 
         self.df_summary_vars = {"oh": {}, "forecast": {}, "ly": {}}
-        metrics = ["Rooms", "Pax", "Rev", "ADR", "DOR", "RevPAR"]
-        for idx, metric in enumerate(metrics, start=2):
-            ttk.Label(summary_frame, text=metric).grid(row=idx, column=0, sticky="w")
-            for col_key, col_idx in (("oh", 1), ("forecast", 2), ("ly", 3)):
+        row_labels = [("oh", "OH"), ("forecast", "Forecast"), ("ly", "LY ACT")]
+        for row_idx, (row_key, label) in enumerate(row_labels, start=2):
+            ttk.Label(summary_frame, text=label).grid(row=row_idx, column=0, sticky="w")
+            for col_idx, metric in enumerate(metrics, start=1):
                 var = tk.StringVar(value="")
-                self.df_summary_vars[col_key][metric] = var
-                ttk.Label(summary_frame, textvariable=var, anchor="e").grid(row=idx, column=col_idx, sticky="e")
+                self.df_summary_vars[row_key][metric] = var
+                ttk.Label(summary_frame, textvariable=var, anchor="e").grid(row=row_idx, column=col_idx, sticky="e")
 
         # テーブル用コンテナ
         table_container = ttk.Frame(frame)
         table_container.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+        self.df_table_container = table_container
 
         self.df_tree = ttk.Treeview(table_container, columns=[], show="headings", height=25)
         self._setup_df_tree_columns(self.df_display_mode_var.get())
@@ -2204,6 +2228,19 @@ class BookingCurveApp(tk.Tk):
 
         self._update_df_latest_asof_label(update_asof_if_empty=True)
         self._refresh_phase_overrides_ui()
+
+    def _toggle_df_summary_visibility(self) -> None:
+        frame = getattr(self, "df_summary_frame", None)
+        if frame is None:
+            return
+        if self.df_summary_visible_var.get():
+            before_widget = getattr(self, "df_table_container", None)
+            if before_widget is not None:
+                frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 6), before=before_widget)
+            else:
+                frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 6))
+        else:
+            frame.pack_forget()
 
     def _apply_latest_asof_freshness(self, label: tk.Label, latest_asof_str: str) -> None:
         default_bg, default_fg = self._latest_asof_label_defaults.get(

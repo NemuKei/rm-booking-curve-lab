@@ -88,8 +88,8 @@ try:
         get_best_model_for_month,
         get_booking_curve_data,
         get_calendar_coverage,
-        get_daily_forecast_table,
         get_daily_forecast_ly_summary,
+        get_daily_forecast_table,
         get_eval_monthly_by_asof,
         get_eval_overview_by_asof,
         get_latest_asof_for_hotel,
@@ -4617,9 +4617,7 @@ class BookingCurveApp(tk.Tk):
             return
 
         if skipped_months:
-            warn_parts: list[str] = [
-                "取得できなかった月次カーブ: " + ", ".join(sorted(skipped_months))
-            ]
+            warn_parts: list[str] = ["取得できなかった月次カーブ: " + ", ".join(sorted(skipped_months))]
             if skipped_prev_months:
                 warn_parts.append("取得できなかった前年同月: " + ", ".join(sorted(skipped_prev_months)))
             warn_parts.append("必要なら daily snapshots を更新してください。")

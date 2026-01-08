@@ -89,6 +89,7 @@ try:
         get_booking_curve_data,
         get_calendar_coverage,
         get_daily_forecast_table,
+        get_daily_forecast_ly_summary,
         get_eval_monthly_by_asof,
         get_eval_overview_by_asof,
         get_latest_asof_for_hotel,
@@ -512,12 +513,15 @@ class BookingCurveApp(tk.Tk):
         fc_rooms_map = daily.get("forecast_cap_rooms", {})
         fc_legacy_map = daily.get("forecast_cap", {})
         fc_pax_map = daily.get("forecast_cap_pax", {})
+        pax_map = daily.get("pax_capacity", {})
         occ_map = daily.get("occ_capacity", {})
         rooms_value = fc_rooms_map.get(hotel_tag)
         if rooms_value is None or rooms_value == "":
             rooms_value = fc_legacy_map.get(hotel_tag, base_fc_cap)
         rooms_cap = _safe_float(rooms_value, base_fc_cap)
-        pax_cap = _safe_optional_float(fc_pax_map.get(hotel_tag))
+        pax_cap = _safe_optional_float(pax_map.get(hotel_tag))
+        if pax_cap is None:
+            pax_cap = _safe_optional_float(fc_pax_map.get(hotel_tag))
         occ = _safe_float(occ_map.get(hotel_tag, base_cap), base_cap)
         return rooms_cap, pax_cap, occ
 
@@ -531,14 +535,17 @@ class BookingCurveApp(tk.Tk):
         daily = self._settings.setdefault("daily_forecast", {})
         fc_rooms_map = daily.setdefault("forecast_cap_rooms", {})
         fc_pax_map = daily.setdefault("forecast_cap_pax", {})
+        pax_map = daily.setdefault("pax_capacity", {})
         occ_map = daily.setdefault("occ_capacity", {})
         try:
             fc_rooms_map[hotel_tag] = float(forecast_cap)
             occ_map[hotel_tag] = float(occ_capacity)
             if pax_capacity is None:
                 fc_pax_map.pop(hotel_tag, None)
+                pax_map.pop(hotel_tag, None)
             else:
                 fc_pax_map[hotel_tag] = float(pax_capacity)
+                pax_map[hotel_tag] = float(pax_capacity)
         except Exception:
             return
         self._save_settings()
@@ -744,6 +751,104 @@ class BookingCurveApp(tk.Tk):
             return None
 
         return total
+
+    def _clear_daily_forecast_summary(self, status: str | None = None) -> None:
+        if hasattr(self, "df_status_var") and status is not None:
+            self.df_status_var.set(status)
+        if not hasattr(self, "df_summary_vars"):
+            return
+        for scope in self.df_summary_vars.values():
+            for var in scope.values():
+                var.set("N/A")
+
+    def _update_daily_forecast_summary(
+        self,
+        df: pd.DataFrame,
+        hotel: str,
+        target_month: str,
+        occ_capacity: float,
+    ) -> None:
+        if df is None or df.empty or "stay_date" not in df.columns:
+            self._clear_daily_forecast_summary("")
+            return
+
+        total_rows = df[df["stay_date"].isna()]
+        if total_rows.empty:
+            self._clear_daily_forecast_summary("")
+            return
+
+        total_row = total_rows.iloc[0]
+        num_days = int(df["stay_date"].notna().sum())
+
+        def _safe_float(value) -> float | None:
+            try:
+                if pd.isna(value):
+                    return None
+                return float(value)
+            except Exception:
+                return None
+
+        rooms_oh = _safe_float(total_row.get("asof_oh_rooms"))
+        rooms_fc = _safe_float(total_row.get("forecast_rooms"))
+        pax_oh = _safe_float(total_row.get("asof_oh_pax"))
+        pax_fc = _safe_float(total_row.get("forecast_pax"))
+        rev_oh = _safe_float(total_row.get("revenue_oh_now"))
+        rev_fc = _safe_float(total_row.get("forecast_revenue"))
+        adr_oh = _safe_float(total_row.get("adr_oh_now"))
+        adr_fc = _safe_float(total_row.get("forecast_adr"))
+
+        def _safe_ratio(num: float | None, denom: float | None) -> float | None:
+            if num is None or denom is None or denom == 0:
+                return None
+            return num / denom
+
+        dor_oh = _safe_ratio(pax_oh, rooms_oh)
+        dor_fc = _safe_ratio(pax_fc, rooms_fc)
+
+        revpar_oh = None
+        revpar_fc = _safe_float(total_row.get("forecast_revpar"))
+        if rev_oh is not None and occ_capacity > 0 and num_days > 0:
+            revpar_oh = rev_oh / (occ_capacity * num_days)
+
+        ly = get_daily_forecast_ly_summary(hotel_tag=hotel, target_month=target_month, capacity=occ_capacity)
+
+        def _fmt_metric(metric: str, value: float | None) -> str:
+            if value is None or pd.isna(value):
+                return "N/A"
+            if metric in ("Rooms", "Pax", "Rev"):
+                return _fmt_num(value)
+            if metric in ("ADR", "RevPAR"):
+                return f"{float(value):.1f}"
+            if metric == "DOR":
+                return f"{float(value):.2f}"
+            return _fmt_num(value)
+
+        self.df_summary_vars["oh"]["Rooms"].set(_fmt_metric("Rooms", rooms_oh))
+        self.df_summary_vars["forecast"]["Rooms"].set(_fmt_metric("Rooms", rooms_fc))
+        self.df_summary_vars["ly"]["Rooms"].set(_fmt_metric("Rooms", ly.get("rooms")))
+
+        self.df_summary_vars["oh"]["Pax"].set(_fmt_metric("Pax", pax_oh))
+        self.df_summary_vars["forecast"]["Pax"].set(_fmt_metric("Pax", pax_fc))
+        self.df_summary_vars["ly"]["Pax"].set(_fmt_metric("Pax", ly.get("pax")))
+
+        self.df_summary_vars["oh"]["Rev"].set(_fmt_metric("Rev", rev_oh))
+        self.df_summary_vars["forecast"]["Rev"].set(_fmt_metric("Rev", rev_fc))
+        self.df_summary_vars["ly"]["Rev"].set(_fmt_metric("Rev", ly.get("revenue")))
+
+        self.df_summary_vars["oh"]["ADR"].set(_fmt_metric("ADR", adr_oh))
+        self.df_summary_vars["forecast"]["ADR"].set(_fmt_metric("ADR", adr_fc))
+        self.df_summary_vars["ly"]["ADR"].set(_fmt_metric("ADR", ly.get("adr")))
+
+        self.df_summary_vars["oh"]["DOR"].set(_fmt_metric("DOR", dor_oh))
+        self.df_summary_vars["forecast"]["DOR"].set(_fmt_metric("DOR", dor_fc))
+        self.df_summary_vars["ly"]["DOR"].set(_fmt_metric("DOR", ly.get("dor")))
+
+        self.df_summary_vars["oh"]["RevPAR"].set(_fmt_metric("RevPAR", revpar_oh))
+        self.df_summary_vars["forecast"]["RevPAR"].set(_fmt_metric("RevPAR", revpar_fc))
+        self.df_summary_vars["ly"]["RevPAR"].set(_fmt_metric("RevPAR", ly.get("revpar")))
+
+        if hasattr(self, "df_status_var"):
+            self.df_status_var.set("表示中")
 
     def _update_daily_forecast_scenario_label(
         self,
@@ -1894,11 +1999,23 @@ class BookingCurveApp(tk.Tk):
         self.df_monthly_rounding_var = tk.BooleanVar(value=True)
         df_rounding_checkbox = ttk.Checkbutton(
             form,
-            text="月次丸め（TOTAL行）",
+            text="月次丸め（Forecast整合）",
             variable=self.df_monthly_rounding_var,
             command=self._reload_daily_forecast_table,
         )
         df_rounding_checkbox.grid(row=1, column=10, padx=4, pady=(4, 2), sticky="w")
+
+        ttk.Label(form, text="表示:").grid(row=1, column=11, sticky="w", padx=(8, 2))
+        self.df_display_mode_var = tk.StringVar(value="Standard")
+        df_display_combo = ttk.Combobox(
+            form,
+            textvariable=self.df_display_mode_var,
+            values=["Standard", "Detail"],
+            state="readonly",
+            width=9,
+        )
+        df_display_combo.grid(row=1, column=12, padx=2, pady=(4, 2), sticky="w")
+        df_display_combo.bind("<<ComboboxSelected>>", self._on_df_display_mode_changed)
 
         # 予測キャップ / 稼働率キャパ
         # 現在選択されているホテルのキャパを取得
@@ -2010,101 +2127,39 @@ class BookingCurveApp(tk.Tk):
         self.df_occ_cap_var = tk.StringVar(value=str(occ_cap))
         ttk.Entry(form, textvariable=self.df_occ_cap_var, width=6).grid(row=1, column=7, padx=4, pady=2)
 
+        summary_frame = ttk.LabelFrame(frame, text="サマリ")
+        summary_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 6))
+        summary_frame.grid_columnconfigure(0, weight=1)
+        summary_frame.grid_columnconfigure(1, weight=1)
+        summary_frame.grid_columnconfigure(2, weight=1)
+        summary_frame.grid_columnconfigure(3, weight=1)
+
+        status_frame = ttk.Frame(summary_frame)
+        status_frame.grid(row=0, column=0, columnspan=4, sticky="w")
+        ttk.Label(status_frame, text="ステータス:").pack(side=tk.LEFT)
+        self.df_status_var = tk.StringVar(value="")
+        ttk.Label(status_frame, textvariable=self.df_status_var).pack(side=tk.LEFT, padx=(4, 0))
+
+        ttk.Label(summary_frame, text="KPI").grid(row=1, column=0, sticky="w")
+        ttk.Label(summary_frame, text="OH").grid(row=1, column=1, sticky="e")
+        ttk.Label(summary_frame, text="Forecast").grid(row=1, column=2, sticky="e")
+        ttk.Label(summary_frame, text="LY ACT").grid(row=1, column=3, sticky="e")
+
+        self.df_summary_vars = {"oh": {}, "forecast": {}, "ly": {}}
+        metrics = ["Rooms", "Pax", "Rev", "ADR", "DOR", "RevPAR"]
+        for idx, metric in enumerate(metrics, start=2):
+            ttk.Label(summary_frame, text=metric).grid(row=idx, column=0, sticky="w")
+            for col_key, col_idx in (("oh", 1), ("forecast", 2), ("ly", 3)):
+                var = tk.StringVar(value="")
+                self.df_summary_vars[col_key][metric] = var
+                ttk.Label(summary_frame, textvariable=var, anchor="e").grid(row=idx, column=col_idx, sticky="e")
+
         # テーブル用コンテナ
         table_container = ttk.Frame(frame)
         table_container.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
 
-        columns = [
-            "stay_date",
-            "weekday",
-            "actual_rooms_display",
-            "asof_oh_rooms_display",
-            "forecast_rooms_display",
-            "actual_pax_display",
-            "asof_oh_pax_display",
-            "forecast_pax_display",
-            "forecast_revenue_display",
-            "revenue_oh_now",
-            "adr_oh_now",
-            "forecast_adr",
-            "adr_pickup_est",
-            "forecast_revpar",
-            "diff_rooms_vs_actual",
-            "diff_pct_vs_actual",
-            "pickup_expected_from_asof",
-            "diff_rooms",
-            "diff_pct",
-            "occ_actual_pct",
-            "occ_asof_pct",
-            "occ_forecast_pct",
-        ]
-
-        self.df_tree = ttk.Treeview(table_container, columns=columns, show="headings", height=25)
-        header_map = {
-            "stay_date": "Date",
-            "weekday": "Wk",
-            "actual_rooms_display": "ActRm",
-            "asof_oh_rooms_display": "OH(Rm)",
-            "forecast_rooms_display": "FcRm",
-            "actual_pax_display": "ActPx",
-            "asof_oh_pax_display": "OH(Px)",
-            "forecast_pax_display": "FcPx",
-            "forecast_revenue_display": "FcRev",
-            "revenue_oh_now": "OHRev",
-            "adr_oh_now": "OH ADR",
-            "forecast_adr": "Fc ADR",
-            "adr_pickup_est": "ADR PU",
-            "forecast_revpar": "Fc RevPAR",
-            "diff_rooms_vs_actual": "ΔRm(Act)",
-            "diff_pct_vs_actual": "Δ%(Act)",
-            "pickup_expected_from_asof": "PU Exp",
-            "diff_rooms": "ΔRm",
-            "diff_pct": "Δ%",
-            "occ_actual_pct": "Occ Act",
-            "occ_asof_pct": "Occ OH",
-            "occ_forecast_pct": "Occ Fc",
-        }
-        for col in columns:
-            header = header_map.get(col, col)
-            if col == "stay_date":
-                width = 100
-                anchor = "center"
-            elif col == "weekday":
-                width = 55
-                anchor = "center"
-            elif col in (
-                "actual_rooms_display",
-                "asof_oh_rooms_display",
-                "forecast_rooms_display",
-                "actual_pax_display",
-                "asof_oh_pax_display",
-                "forecast_pax_display",
-                "forecast_revenue_display",
-                "revenue_oh_now",
-                "diff_rooms_vs_actual",
-                "pickup_expected_from_asof",
-                "diff_rooms",
-            ):
-                width = 80
-                anchor = "e"
-            elif col in ("adr_oh_now", "forecast_adr", "adr_pickup_est", "forecast_revpar"):
-                width = 80
-                anchor = "e"
-            elif col in (
-                "diff_pct_vs_actual",
-                "diff_pct",
-                "occ_actual_pct",
-                "occ_asof_pct",
-                "occ_forecast_pct",
-            ):
-                width = 75
-                anchor = "e"
-            else:
-                width = 80
-                anchor = "e"
-
-            self.df_tree.heading(col, text=header)
-            self.df_tree.column(col, width=width, anchor=anchor)
+        self.df_tree = ttk.Treeview(table_container, columns=[], show="headings", height=25)
+        self._setup_df_tree_columns(self.df_display_mode_var.get())
 
         self.df_tree.tag_configure("oddrow", background="#F7F7F7")
 
@@ -2195,6 +2250,87 @@ class BookingCurveApp(tk.Tk):
 
         self._apply_latest_asof_freshness(self.df_latest_asof_label, self.df_latest_asof_var.get())
         self._update_df_best_model_label()
+
+    def _get_df_column_defs(self, mode: str) -> list[tuple[str, str, int, str]]:
+        if mode == "Standard":
+            return [
+                ("stay_date", "Date", 100, "center"),
+                ("weekday", "Wk", 55, "center"),
+                ("asof_oh_rooms_display", "OH(Rm)", 80, "e"),
+                ("forecast_rooms_display", "FcRm", 80, "e"),
+                ("asof_oh_pax_display", "OH(Px)", 80, "e"),
+                ("forecast_pax_display", "FcPx", 80, "e"),
+                ("forecast_revenue_display", "FcRev", 90, "e"),
+                ("adr_oh_now", "OH ADR", 80, "e"),
+                ("forecast_adr", "Fc ADR", 80, "e"),
+                ("forecast_revpar", "Fc RevPAR", 90, "e"),
+                ("pickup_expected_from_asof", "PU Exp", 80, "e"),
+                ("occ_forecast_pct", "Occ Fc", 75, "e"),
+            ]
+
+        return [
+            ("stay_date", "Date", 100, "center"),
+            ("weekday", "Wk", 55, "center"),
+            ("actual_rooms_display", "ActRm", 80, "e"),
+            ("asof_oh_rooms_display", "OH(Rm)", 80, "e"),
+            ("forecast_rooms_display", "FcRm", 80, "e"),
+            ("actual_pax_display", "ActPx", 80, "e"),
+            ("asof_oh_pax_display", "OH(Px)", 80, "e"),
+            ("forecast_pax_display", "FcPx", 80, "e"),
+            ("forecast_revenue_display", "FcRev", 80, "e"),
+            ("revenue_oh_now", "OHRev", 80, "e"),
+            ("adr_oh_now", "OH ADR", 80, "e"),
+            ("forecast_adr", "Fc ADR", 80, "e"),
+            ("adr_pickup_est", "ADR PU", 80, "e"),
+            ("forecast_revpar", "Fc RevPAR", 80, "e"),
+            ("diff_rooms_vs_actual", "ΔRm(Act)", 80, "e"),
+            ("diff_pct_vs_actual", "Δ%(Act)", 75, "e"),
+            ("pickup_expected_from_asof", "PU Exp", 80, "e"),
+            ("diff_rooms", "ΔRm", 80, "e"),
+            ("diff_pct", "Δ%", 75, "e"),
+            ("occ_actual_pct", "Occ Act", 75, "e"),
+            ("occ_asof_pct", "Occ OH", 75, "e"),
+            ("occ_forecast_pct", "Occ Fc", 75, "e"),
+        ]
+
+    def _setup_df_tree_columns(self, mode: str) -> None:
+        defs = self._get_df_column_defs(mode)
+        columns = [col for col, _, _, _ in defs]
+        self.df_tree.configure(columns=columns)
+        for col, header, width, anchor in defs:
+            self.df_tree.heading(col, text=header)
+            self.df_tree.column(col, width=width, anchor=anchor)
+        self.df_tree_columns = columns
+
+    def _format_df_cell(self, row: pd.Series, col: str) -> str:
+        if col == "stay_date":
+            stay_date = row.get("stay_date")
+            if pd.isna(stay_date):
+                return "TOTAL"
+            return pd.to_datetime(stay_date).strftime("%Y-%m-%d")
+        if col == "weekday":
+            weekday = row.get("weekday")
+            if isinstance(weekday, (int, float)) and not pd.isna(weekday) and 0 <= int(weekday) <= 6:
+                weekday_idx = int(weekday)
+                return ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][weekday_idx]
+            return str(weekday)
+
+        pct_cols = {
+            "diff_pct_vs_actual",
+            "diff_pct",
+            "occ_actual_pct",
+            "occ_asof_pct",
+            "occ_forecast_pct",
+        }
+        if col in pct_cols:
+            return _fmt_pct(row.get(col))
+
+        return _fmt_num(row.get(col))
+
+    def _on_df_display_mode_changed(self, event=None) -> None:
+        mode = self.df_display_mode_var.get().strip()
+        self._setup_df_tree_columns(mode)
+        self._reload_daily_forecast_table()
 
     def _get_phase_months(self, base_month: str) -> list[str]:
         try:
@@ -2396,6 +2532,7 @@ class BookingCurveApp(tk.Tk):
         asof = self.df_asof_var.get()
         model = self.df_model_var.get()
         occ_cap_str = self.df_occ_cap_var.get().strip()
+        pax_cap_str = self.df_forecast_cap_pax_var.get().strip() if hasattr(self, "df_forecast_cap_pax_var") else ""
 
         if not month:
             messagebox.showerror("エラー", "対象月(YYYYMM)を入力してください。")
@@ -2411,6 +2548,15 @@ class BookingCurveApp(tk.Tk):
             messagebox.showerror("エラー", "稼働率キャパには数値を入力してください。")
             return
 
+        if pax_cap_str:
+            try:
+                pax_capacity = float(pax_cap_str)
+            except Exception:
+                messagebox.showerror("エラー", "予測キャップ(Px)には数値を入力してください。")
+                return
+        else:
+            pax_capacity = None
+
         try:
             df = get_daily_forecast_table(
                 hotel_tag=hotel,
@@ -2418,8 +2564,16 @@ class BookingCurveApp(tk.Tk):
                 as_of_date=asof,
                 gui_model=model,
                 capacity=occ_capacity,
+                pax_capacity=pax_capacity,
                 apply_monthly_rounding=self.df_monthly_rounding_var.get(),
             )
+        except FileNotFoundError:
+            self.df_daily_forecast_df = pd.DataFrame()
+            self.df_table_df = self.df_daily_forecast_df
+            for row_id in self.df_tree.get_children():
+                self.df_tree.delete(row_id)
+            self._clear_daily_forecast_summary("未作成")
+            return
         except Exception as e:
             self.df_daily_forecast_df = None
             messagebox.showerror("エラー", f"日別フォーキャスト読み込みに失敗しました:\n{e}")
@@ -2431,46 +2585,11 @@ class BookingCurveApp(tk.Tk):
         for row_id in self.df_tree.get_children():
             self.df_tree.delete(row_id)
 
+        self._setup_df_tree_columns(self.df_display_mode_var.get().strip())
+
         # DataFrame を Treeview に流し込む
         for idx, (_, row) in enumerate(df.iterrows()):
-            # TOTAL 行は stay_date が NaT なので、表示用に "TOTAL" とする
-            stay_date = row["stay_date"]
-            if pd.isna(stay_date):
-                stay_str = "TOTAL"
-            else:
-                stay_str = pd.to_datetime(stay_date).strftime("%Y-%m-%d")
-
-            weekday = row["weekday"]
-            if isinstance(weekday, (int, float)) and not pd.isna(weekday) and 0 <= int(weekday) <= 6:
-                weekday_idx = int(weekday)
-                weekday_str = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][weekday_idx]
-            else:
-                weekday_str = str(weekday)
-
-            values = [
-                stay_str,
-                weekday_str,
-                _fmt_num(row.get("actual_rooms_display")),
-                _fmt_num(row.get("asof_oh_rooms_display")),
-                _fmt_num(row.get("forecast_rooms_display")),
-                _fmt_num(row.get("actual_pax_display")),
-                _fmt_num(row.get("asof_oh_pax_display")),
-                _fmt_num(row.get("forecast_pax_display")),
-                _fmt_num(row.get("forecast_revenue_display")),
-                _fmt_num(row.get("revenue_oh_now")),
-                _fmt_num(row.get("adr_oh_now")),
-                _fmt_num(row.get("forecast_adr")),
-                _fmt_num(row.get("adr_pickup_est")),
-                _fmt_num(row.get("forecast_revpar")),
-                _fmt_num(row.get("diff_rooms_vs_actual")),
-                _fmt_pct(row.get("diff_pct_vs_actual")),
-                _fmt_num(row.get("pickup_expected_from_asof")),
-                _fmt_num(row.get("diff_rooms")),
-                _fmt_pct(row.get("diff_pct")),
-                _fmt_pct(row.get("occ_actual_pct")),
-                _fmt_pct(row.get("occ_asof_pct")),
-                _fmt_pct(row.get("occ_forecast_pct")),
-            ]
+            values = [self._format_df_cell(row, col) for col in self.df_tree_columns]
             tags: tuple[str, ...] = ()
             if idx % 2 == 1:
                 tags = ("oddrow",)
@@ -2479,6 +2598,7 @@ class BookingCurveApp(tk.Tk):
 
         self.df_daily_forecast_df = df
         self.df_table_df = df
+        self._update_daily_forecast_summary(df, hotel, month, occ_capacity)
 
         self._update_df_best_model_label()
 

@@ -484,9 +484,9 @@ class BookingCurveApp(tk.Tk):
             general["last_bc_model"] = selected_model
             self._save_settings()
 
-    def _get_daily_caps_for_hotel(self, hotel_tag: str) -> tuple[float, float]:
+    def _get_daily_caps_for_hotel(self, hotel_tag: str) -> tuple[float, float | None, float]:
         """
-        Returns (forecast_cap, occ_capacity).
+        Returns (forecast_cap_rooms, forecast_cap_pax, occ_capacity).
         """
 
         def _safe_float(value: object, fallback: float) -> float:
@@ -497,23 +497,48 @@ class BookingCurveApp(tk.Tk):
             except (TypeError, ValueError):
                 return fallback
 
+        def _safe_optional_float(value: object) -> float | None:
+            if value is None or value == "":
+                return None
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
         hotel_cfg = HOTEL_CONFIG.get(hotel_tag, {})
         base_cap = _safe_float(hotel_cfg.get("capacity"), 100.0)
         base_fc_cap = _safe_float(hotel_cfg.get("forecast_cap"), base_cap)
         daily = self._settings.get("daily_forecast", {})
-        fc_map = daily.get("forecast_cap", {})
+        fc_rooms_map = daily.get("forecast_cap_rooms", {})
+        fc_legacy_map = daily.get("forecast_cap", {})
+        fc_pax_map = daily.get("forecast_cap_pax", {})
         occ_map = daily.get("occ_capacity", {})
-        fc = _safe_float(fc_map.get(hotel_tag, base_fc_cap), base_fc_cap)
+        rooms_value = fc_rooms_map.get(hotel_tag)
+        if rooms_value is None or rooms_value == "":
+            rooms_value = fc_legacy_map.get(hotel_tag, base_fc_cap)
+        rooms_cap = _safe_float(rooms_value, base_fc_cap)
+        pax_cap = _safe_optional_float(fc_pax_map.get(hotel_tag))
         occ = _safe_float(occ_map.get(hotel_tag, base_cap), base_cap)
-        return fc, occ
+        return rooms_cap, pax_cap, occ
 
-    def _set_daily_caps_for_hotel(self, hotel_tag: str, forecast_cap: float, occ_capacity: float) -> None:
+    def _set_daily_caps_for_hotel(
+        self,
+        hotel_tag: str,
+        forecast_cap: float,
+        occ_capacity: float,
+        pax_capacity: float | None = None,
+    ) -> None:
         daily = self._settings.setdefault("daily_forecast", {})
-        fc_map = daily.setdefault("forecast_cap", {})
+        fc_rooms_map = daily.setdefault("forecast_cap_rooms", {})
+        fc_pax_map = daily.setdefault("forecast_cap_pax", {})
         occ_map = daily.setdefault("occ_capacity", {})
         try:
-            fc_map[hotel_tag] = float(forecast_cap)
+            fc_rooms_map[hotel_tag] = float(forecast_cap)
             occ_map[hotel_tag] = float(occ_capacity)
+            if pax_capacity is None:
+                fc_pax_map.pop(hotel_tag, None)
+            else:
+                fc_pax_map[hotel_tag] = float(pax_capacity)
         except Exception:
             return
         self._save_settings()
@@ -1016,8 +1041,9 @@ class BookingCurveApp(tk.Tk):
         self._update_master_missing_check_status()
 
         if hasattr(self, "df_hotel_var"):
-            fc_cap, occ_cap = self._get_daily_caps_for_hotel(hotel_tag)
+            fc_cap, pax_cap, occ_cap = self._get_daily_caps_for_hotel(hotel_tag)
             self.df_forecast_cap_var.set(str(fc_cap))
+            self.df_forecast_cap_pax_var.set("" if pax_cap is None else str(pax_cap))
             self.df_occ_cap_var.set(str(occ_cap))
             self._update_df_latest_asof_label(update_asof_if_empty=False)
             self._update_df_best_model_label()
@@ -1030,7 +1056,7 @@ class BookingCurveApp(tk.Tk):
             self.df_table_df = None
 
         if hasattr(self, "bc_hotel_var"):
-            fc_cap, _ = self._get_daily_caps_for_hotel(hotel_tag)
+            fc_cap, _, _ = self._get_daily_caps_for_hotel(hotel_tag)
             self.bc_forecast_cap_var.set(str(fc_cap))
             self._update_bc_latest_asof_label(update_asof_if_empty=False)
             self._update_bc_best_model_label()
@@ -1117,7 +1143,7 @@ class BookingCurveApp(tk.Tk):
             self.master_occ_cap_var.set("")
             return
 
-        fc_cap, occ_cap = self._get_daily_caps_for_hotel(hotel_tag)
+        fc_cap, _, occ_cap = self._get_daily_caps_for_hotel(hotel_tag)
         # 整数っぽい値は整数表示、それ以外はそのまま
         try:
             self.master_fc_cap_var.set(str(int(fc_cap)))
@@ -1262,8 +1288,10 @@ class BookingCurveApp(tk.Tk):
             messagebox.showerror("エラー", "キャパシティには数値を入力してください。")
             return
 
+        _, pax_cap, _ = self._get_daily_caps_for_hotel(hotel_tag)
+
         # 永続化
-        self._set_daily_caps_for_hotel(hotel_tag, fc_val, occ_val)
+        self._set_daily_caps_for_hotel(hotel_tag, fc_val, occ_val, pax_cap)
 
         # 日別フォーキャストタブに反映（同じホテルを見ている場合のみ）
         if hasattr(self, "df_hotel_var") and self.df_hotel_var.get().strip() == hotel_tag:
@@ -1870,16 +1898,20 @@ class BookingCurveApp(tk.Tk):
             variable=self.df_monthly_rounding_var,
             command=self._reload_daily_forecast_table,
         )
-        df_rounding_checkbox.grid(row=1, column=8, padx=4, pady=(4, 2), sticky="w")
+        df_rounding_checkbox.grid(row=1, column=10, padx=4, pady=(4, 2), sticky="w")
 
         # 予測キャップ / 稼働率キャパ
         # 現在選択されているホテルのキャパを取得
         current_hotel = self.hotel_var.get().strip() or DEFAULT_HOTEL
-        fc_cap, occ_cap = self._get_daily_caps_for_hotel(current_hotel)
+        fc_cap, pax_cap, occ_cap = self._get_daily_caps_for_hotel(current_hotel)
 
-        ttk.Label(form, text="予測キャップ:").grid(row=1, column=2, sticky="w")
+        ttk.Label(form, text="予測キャップ(Rm):").grid(row=1, column=2, sticky="w")
         self.df_forecast_cap_var = tk.StringVar(value=str(fc_cap))
         ttk.Entry(form, textvariable=self.df_forecast_cap_var, width=6).grid(row=1, column=3, padx=4, pady=2)
+
+        ttk.Label(form, text="予測キャップ(Px):").grid(row=1, column=4, sticky="w")
+        self.df_forecast_cap_pax_var = tk.StringVar(value="" if pax_cap is None else str(pax_cap))
+        ttk.Entry(form, textvariable=self.df_forecast_cap_pax_var, width=6).grid(row=1, column=5, padx=4, pady=2)
 
         nav_frame = ttk.Frame(form)
         nav_frame.grid(row=2, column=2, columnspan=6, sticky="w", pady=(4, 0))
@@ -1971,10 +2003,10 @@ class BookingCurveApp(tk.Tk):
             text="Forecast実行",
             command=self._on_run_daily_forecast,
         )
-        forecast_btn.grid(row=1, column=4, padx=4, pady=2, sticky="e")
+        forecast_btn.grid(row=1, column=8, padx=4, pady=2, sticky="e")
         export_btn = ttk.Button(form, text="CSV出力", command=self._on_export_daily_forecast_csv)
-        export_btn.grid(row=1, column=5, padx=4, pady=2, sticky="e")
-        ttk.Label(form, text="稼働率キャパ:").grid(row=1, column=6, sticky="w")
+        export_btn.grid(row=1, column=9, padx=4, pady=2, sticky="e")
+        ttk.Label(form, text="稼働率キャパ(Occ):").grid(row=1, column=6, sticky="w")
         self.df_occ_cap_var = tk.StringVar(value=str(occ_cap))
         ttk.Entry(form, textvariable=self.df_occ_cap_var, width=6).grid(row=1, column=7, padx=4, pady=2)
 
@@ -2349,7 +2381,7 @@ class BookingCurveApp(tk.Tk):
 
     def _on_bc_hotel_changed(self, event=None) -> None:
         hotel = self.bc_hotel_var.get().strip()
-        fc_cap, _ = self._get_daily_caps_for_hotel(hotel)
+        fc_cap, _, _ = self._get_daily_caps_for_hotel(hotel)
         self.bc_forecast_cap_var.set(str(fc_cap))
         self._update_bc_latest_asof_label(False)
 
@@ -2458,6 +2490,7 @@ class BookingCurveApp(tk.Tk):
         asof = self.df_asof_var.get()
         model = self.df_model_var.get()
         fc_cap_str = self.df_forecast_cap_var.get().strip()
+        pax_cap_str = self.df_forecast_cap_pax_var.get().strip()
         occ_cap_str = self.df_occ_cap_var.get().strip()
 
         if not month:
@@ -2474,6 +2507,15 @@ class BookingCurveApp(tk.Tk):
         except Exception:
             messagebox.showerror("エラー", "キャパシティには数値を入力してください。")
             return
+
+        if pax_cap_str:
+            try:
+                pax_capacity = float(pax_cap_str)
+            except Exception:
+                messagebox.showerror("エラー", "予測キャップ(Px)には数値を入力してください。")
+                return
+        else:
+            pax_capacity = None
 
         # ASOF 日付の簡易検証
         try:
@@ -2518,6 +2560,7 @@ class BookingCurveApp(tk.Tk):
                 as_of_date=asof,
                 gui_model=model,
                 capacity=forecast_cap,
+                pax_capacity=pax_capacity,
                 phase_factors=phase_factors,
                 phase_clip_pct=clip_pct,
             )
@@ -2528,7 +2571,7 @@ class BookingCurveApp(tk.Tk):
             messagebox.showerror("エラー", f"Forecast実行に失敗しました:\n{e}")
             return
 
-        self._set_daily_caps_for_hotel(hotel, forecast_cap, occ_capacity)
+        self._set_daily_caps_for_hotel(hotel, forecast_cap, occ_capacity, pax_capacity)
         self._reload_daily_forecast_table()
 
     def _df_get_row_col_index(self, row_id: str, col_id: str) -> tuple[int, int]:
@@ -2674,8 +2717,9 @@ class BookingCurveApp(tk.Tk):
 
     def _on_df_hotel_changed(self, event=None) -> None:
         hotel = self.df_hotel_var.get().strip()
-        fc_cap, occ_cap = self._get_daily_caps_for_hotel(hotel)
+        fc_cap, pax_cap, occ_cap = self._get_daily_caps_for_hotel(hotel)
         self.df_forecast_cap_var.set(str(fc_cap))
+        self.df_forecast_cap_pax_var.set("" if pax_cap is None else str(pax_cap))
         self.df_occ_cap_var.set(str(occ_cap))
 
         self._update_df_latest_asof_label(False)
@@ -3419,7 +3463,7 @@ class BookingCurveApp(tk.Tk):
 
         # 現在選択されているホテルのキャパを取得
         current_hotel = self.hotel_var.get().strip() or DEFAULT_HOTEL
-        fc_cap, _ = self._get_daily_caps_for_hotel(current_hotel)
+        fc_cap, _, _ = self._get_daily_caps_for_hotel(current_hotel)
         self.bc_forecast_cap_var = tk.StringVar(value=str(fc_cap))
 
         ttk.Label(form, text="予測キャップ:").grid(row=1, column=11, sticky="w", pady=(4, 2))
@@ -3847,8 +3891,8 @@ class BookingCurveApp(tk.Tk):
             messagebox.showerror("Error", "予測キャップには数値を入力してください。")
             return
 
-        _, occ_cap = self._get_daily_caps_for_hotel(hotel_tag)
-        self._set_daily_caps_for_hotel(hotel_tag, forecast_cap, occ_cap)
+        _, pax_cap, occ_cap = self._get_daily_caps_for_hotel(hotel_tag)
+        self._set_daily_caps_for_hotel(hotel_tag, forecast_cap, occ_cap, pax_cap)
 
         # ASOF と最新ASOFの比較
         latest_str = self.bc_latest_asof_var.get().strip()

@@ -814,6 +814,8 @@ def run_forecast_for_gui(
     gui_model: str,
     capacity: float | None = None,
     phase_factors: dict[str, float] | None = None,
+    phase_clip_pct: float | None = None,
+    pax_capacity: float | None = None,
 ) -> None:
     """
     日別フォーキャストタブから Forecast を実行するための薄いラッパー。
@@ -845,40 +847,50 @@ def run_forecast_for_gui(
                 target_month=ym,
                 as_of_date=asof_tag,
                 capacity=capacity,
+                pax_capacity=pax_capacity,
                 hotel_tag=hotel_tag,
                 phase_factor=phase_factor,
+                phase_clip_pct=phase_clip_pct,
             )
         elif base_model == "recent90":
             run_forecast_batch.run_recent90_forecast(
                 target_month=ym,
                 as_of_date=asof_tag,
                 capacity=capacity,
+                pax_capacity=pax_capacity,
                 hotel_tag=hotel_tag,
                 phase_factor=phase_factor,
+                phase_clip_pct=phase_clip_pct,
             )
         elif base_model == "recent90w":
             run_forecast_batch.run_recent90_weighted_forecast(
                 target_month=ym,
                 as_of=asof_tag,
                 capacity=capacity,
+                pax_capacity=pax_capacity,
                 hotel_tag=hotel_tag,
                 phase_factor=phase_factor,
+                phase_clip_pct=phase_clip_pct,
             )
         elif base_model == "pace14":
             run_forecast_batch.run_pace14_forecast(
                 target_month=ym,
                 as_of_date=asof_tag,
                 capacity=capacity,
+                pax_capacity=pax_capacity,
                 hotel_tag=hotel_tag,
                 phase_factor=phase_factor,
+                phase_clip_pct=phase_clip_pct,
             )
         elif base_model == "pace14_market":
             run_forecast_batch.run_pace14_market_forecast(
                 target_month=ym,
                 as_of_date=asof_tag,
                 capacity=capacity,
+                pax_capacity=pax_capacity,
                 hotel_tag=hotel_tag,
                 phase_factor=phase_factor,
+                phase_clip_pct=phase_clip_pct,
             )
         else:
             raise ValueError(f"Unsupported gui_model: {gui_model}")

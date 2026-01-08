@@ -138,6 +138,10 @@ LT_VALUE_TYPES = ("rooms", "pax", "revenue")
 PHASE_FACTOR_DEFAULT = 1.0
 PHASE_FACTOR_CLIP_PCT_DEFAULT = 0.05
 ADR_EPS = 1e-6
+DOR_MIN_DEFAULT = 1.0
+DOR_MAX_DEFAULT = 3.0
+DOR_K_MAX_DEFAULT = 1.0
+DOR_K_MIN_DEFAULT = 0.2
 
 
 def _resolve_lt_csv_path(month: str, hotel_tag: str, value_type: str) -> Path:
@@ -190,7 +194,7 @@ def infer_pax_capacity_p99(
     as_of_ts: pd.Timestamp,
     lookback_months: int = 24,
     q: float = 0.99,
-) -> int | None:
+) -> float | None:
     months = get_history_months_around_asof(
         as_of_ts=as_of_ts,
         months_back=lookback_months,
@@ -225,7 +229,7 @@ def infer_pax_capacity_p99(
     estimate = np.nanquantile(np.asarray(values, dtype=float), q)
     if np.isnan(estimate):
         return None
-    return max(0, int(round(estimate)))
+    return max(0.0, float(estimate))
 
 
 def _normalize_lt_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -260,6 +264,182 @@ def _extract_asof_oh_series(lt_df: pd.DataFrame, as_of_ts: pd.Timestamp) -> pd.S
             value = float("nan")
         result[stay_date] = value
     return pd.Series(result, dtype=float)
+
+
+def _extract_act_series(lt_df: pd.DataFrame) -> pd.Series:
+    if lt_df is None or lt_df.empty:
+        return pd.Series(dtype=float)
+
+    working = _normalize_lt_df(lt_df)
+    if -1 not in working.columns:
+        return pd.Series(dtype=float)
+
+    series = pd.to_numeric(working[-1], errors="coerce")
+    series.index = pd.to_datetime(series.index)
+    return series
+
+
+def _estimate_dor_convergence_factor_by_lt(
+    history_rooms_df: dict[str, pd.DataFrame],
+    history_pax_df: dict[str, pd.DataFrame],
+) -> dict[int, float]:
+    ratios_by_lt: dict[int, list[float]] = {}
+
+    common_months = set(history_rooms_df.keys()) & set(history_pax_df.keys())
+    for ym in sorted(common_months):
+        rooms_df = _normalize_lt_df(history_rooms_df[ym])
+        pax_df = _normalize_lt_df(history_pax_df[ym])
+        if rooms_df.empty or pax_df.empty:
+            continue
+
+        rooms_act = _extract_act_series(rooms_df)
+        pax_act = _extract_act_series(pax_df)
+        if rooms_act.empty or pax_act.empty:
+            continue
+
+        rooms_act = rooms_act.reindex(rooms_df.index)
+        pax_act = pax_act.reindex(rooms_df.index)
+
+        dor_final = pax_act / rooms_act.replace(0, np.nan)
+        dor_final = dor_final.replace([np.inf, -np.inf], np.nan)
+
+        for lt in rooms_df.columns:
+            if lt < 0 or lt not in pax_df.columns:
+                continue
+            rooms_lt = pd.to_numeric(rooms_df[lt], errors="coerce")
+            pax_lt = pd.to_numeric(pax_df[lt], errors="coerce")
+            dor_at_lt = pax_lt / rooms_lt.replace(0, np.nan)
+            ratio = dor_final / dor_at_lt.replace(0, np.nan)
+            ratio = ratio.replace([np.inf, -np.inf], np.nan)
+            ratio = ratio[(ratio > 0) & ratio.notna()]
+            if ratio.empty:
+                continue
+            ratio = ratio.clip(lower=DOR_K_MIN_DEFAULT, upper=DOR_K_MAX_DEFAULT)
+            ratios_by_lt.setdefault(int(lt), []).extend(ratio.to_list())
+
+    k_by_lt: dict[int, float] = {}
+    for lt, values in ratios_by_lt.items():
+        if not values:
+            continue
+        median = float(np.nanmedian(np.asarray(values, dtype=float)))
+        if np.isnan(median):
+            continue
+        k_by_lt[int(lt)] = min(median, DOR_K_MAX_DEFAULT)
+
+    if not k_by_lt:
+        return {}
+
+    lts = sorted(k_by_lt.keys())
+    series = pd.Series([k_by_lt[lt] for lt in lts], index=lts, dtype=float)
+    full_index = range(min(lts), max(lts) + 1)
+    series = series.reindex(full_index)
+    series = series.interpolate(method="linear", limit_area="inside")
+    overall_median = float(np.nanmedian(series.to_numpy(dtype=float)))
+    if np.isnan(overall_median):
+        overall_median = 1.0
+    series = series.fillna(overall_median)
+    series = series.clip(lower=DOR_K_MIN_DEFAULT, upper=DOR_K_MAX_DEFAULT)
+    return {int(lt): float(val) for lt, val in series.items() if not np.isnan(val)}
+
+
+def _estimate_dor_final_median(
+    history_rooms_df: dict[str, pd.DataFrame],
+    history_pax_df: dict[str, pd.DataFrame],
+) -> float | None:
+    values: list[float] = []
+    common_months = set(history_rooms_df.keys()) & set(history_pax_df.keys())
+    for ym in sorted(common_months):
+        rooms_df = _normalize_lt_df(history_rooms_df[ym])
+        pax_df = _normalize_lt_df(history_pax_df[ym])
+        rooms_act = _extract_act_series(rooms_df)
+        pax_act = _extract_act_series(pax_df)
+        if rooms_act.empty or pax_act.empty:
+            continue
+        dor_final = pax_act / rooms_act.replace(0, np.nan)
+        dor_final = dor_final.replace([np.inf, -np.inf], np.nan)
+        dor_final = dor_final[(dor_final > 0) & dor_final.notna()]
+        if not dor_final.empty:
+            values.extend(dor_final.to_numpy(dtype=float))
+    if not values:
+        return None
+    median = float(np.nanmedian(np.asarray(values, dtype=float)))
+    if np.isnan(median):
+        return None
+    return median
+
+
+def _append_pax_forecast_from_dor(
+    out_df: pd.DataFrame,
+    df_target_rooms: pd.DataFrame,
+    df_target_pax: pd.DataFrame,
+    as_of_ts: pd.Timestamp,
+    history_rooms: dict[str, pd.DataFrame],
+    history_pax: dict[str, pd.DataFrame],
+    pax_capacity: float | None,
+    dor_min: float = DOR_MIN_DEFAULT,
+    dor_max: float = DOR_MAX_DEFAULT,
+) -> pd.DataFrame:
+    if out_df is None or out_df.empty:
+        return out_df
+
+    k_by_lt = _estimate_dor_convergence_factor_by_lt(history_rooms, history_pax)
+    overall_k = float(np.nanmedian(list(k_by_lt.values()))) if k_by_lt else 1.0
+    if np.isnan(overall_k) or overall_k <= 0:
+        overall_k = 1.0
+    dor_final_median = _estimate_dor_final_median(history_rooms, history_pax)
+
+    rooms_oh_now = _extract_asof_oh_series(df_target_rooms, as_of_ts)
+    pax_oh_now = _extract_asof_oh_series(df_target_pax, as_of_ts)
+
+    rooms_oh_now = rooms_oh_now.reindex(out_df.index)
+    pax_oh_now = pax_oh_now.reindex(out_df.index)
+
+    dor_now = pax_oh_now / rooms_oh_now.replace(0, np.nan)
+    dor_now = dor_now.replace([np.inf, -np.inf], np.nan)
+
+    lt_now_series = pd.Series(
+        [(stay_date - as_of_ts).days for stay_date in out_df.index],
+        index=out_df.index,
+        dtype="Int64",
+    )
+    k_series = lt_now_series.map(lambda lt: k_by_lt.get(int(lt), overall_k) if not pd.isna(lt) else overall_k)
+
+    dor_est = dor_now * k_series.astype(float)
+    if dor_final_median is not None:
+        dor_est = dor_est.fillna(dor_final_median)
+    dor_est = dor_est.clip(lower=dor_min, upper=dor_max)
+
+    forecast_rooms = pd.to_numeric(out_df.get("forecast_rooms"), errors="coerce")
+    forecast_pax = forecast_rooms * dor_est
+    if pax_capacity is not None:
+        forecast_pax = forecast_pax.clip(upper=float(pax_capacity))
+
+    actual_pax_series = _extract_act_series(df_target_pax).reindex(out_df.index)
+    forecast_pax = forecast_pax.copy()
+    mask_past = out_df.index < as_of_ts
+    actual_available = actual_pax_series.notna()
+    forecast_pax.loc[mask_past & actual_available] = actual_pax_series.loc[mask_past & actual_available]
+
+    def _round_int_series(series: pd.Series) -> pd.Series:
+        return pd.to_numeric(series, errors="coerce").round().astype("Int64")
+
+    out_df["actual_pax"] = _round_int_series(actual_pax_series)
+    out_df["forecast_pax"] = _round_int_series(forecast_pax)
+
+    projected = []
+    for dt in out_df.index:
+        actual_value = out_df.loc[dt, "actual_pax"]
+        forecast_value = out_df.loc[dt, "forecast_pax"]
+        if dt < as_of_ts:
+            if pd.isna(actual_value):
+                projected.append(forecast_value)
+            else:
+                projected.append(actual_value)
+        else:
+            projected.append(forecast_value)
+
+    out_df["projected_pax"] = _round_int_series(pd.Series(projected, index=out_df.index))
+    return out_df
 
 
 def _round_int_series(series: pd.Series) -> pd.Series:
@@ -492,10 +672,8 @@ def run_avg_forecast(
 
     if not history_raw:
         print(f"[avg] No history LT_DATA for target_month={target_month}")
-        return
 
     all_forecasts: dict[pd.Timestamp, float] = {}
-    all_forecasts_pax: dict[pd.Timestamp, float] = {}
     as_of_ts = pd.to_datetime(as_of_date)
     if pax_capacity is None:
         pax_capacity = infer_pax_capacity_p99(hotel_tag, as_of_ts)
@@ -525,35 +703,20 @@ def run_avg_forecast(
         for stay_date, value in fc_series.items():
             all_forecasts[stay_date] = value
 
-        if df_target_pax is not None and history_raw_pax:
-            history_pax_dfs = []
-            for df_m in history_raw_pax.values():
-                df_m_wd = filter_by_weekday(df_m, weekday=weekday)
-                if not df_m_wd.empty:
-                    history_pax_dfs.append(df_m_wd)
-            if history_pax_dfs:
-                avg_curve_pax = moving_average_3months(history_pax_dfs, lt_min=LT_MIN, lt_max=LT_MAX)
-                df_target_pax_wd = filter_by_weekday(df_target_pax, weekday=weekday)
-                if not df_target_pax_wd.empty:
-                    fc_series_pax = forecast_final_from_avg(
-                        lt_df=df_target_pax_wd,
-                        avg_curve=avg_curve_pax,
-                        as_of_date=as_of_ts,
-                        capacity=pax_capacity,
-                        lt_min=0,
-                        lt_max=LT_MAX,
-                    )
-                    for stay_date, value in fc_series_pax.items():
-                        all_forecasts_pax[stay_date] = value
-
     if not all_forecasts:
         print("No forecasts were generated. Check settings or data.")
-        return
 
     out_df = _prepare_output(df_target, all_forecasts, as_of_ts)
-    if df_target_pax is not None and all_forecasts_pax:
-        pax_df = _prepare_output_for_pax(df_target_pax, all_forecasts_pax, as_of_ts)
-        out_df = out_df.join(pax_df, how="left")
+    if df_target_pax is not None:
+        out_df = _append_pax_forecast_from_dor(
+            out_df=out_df,
+            df_target_rooms=df_target,
+            df_target_pax=df_target_pax,
+            as_of_ts=as_of_ts,
+            history_rooms=history_raw,
+            history_pax=history_raw_pax,
+            pax_capacity=pax_capacity,
+        )
     if df_target_revenue is not None:
         out_df = _append_revenue_columns(
             out_df,
@@ -601,7 +764,6 @@ def run_recent90_forecast(
 
     if not history_raw:
         print(f"[recent90] No history LT_DATA for as_of={as_of_date}")
-        return
 
     df_target = load_lt_csv(target_month, hotel_tag=hotel_tag, value_type="rooms")
     df_target_pax: pd.DataFrame | None
@@ -616,7 +778,6 @@ def run_recent90_forecast(
         df_target_revenue = None
 
     all_forecasts: dict[pd.Timestamp, float] = {}
-    all_forecasts_pax: dict[pd.Timestamp, float] = {}
 
     for weekday in range(7):
         history_dfs = []
@@ -654,37 +815,8 @@ def run_recent90_forecast(
         for stay_date, value in fc_series.items():
             all_forecasts[stay_date] = value
 
-        if df_target_pax is not None and history_raw_pax:
-            history_pax_dfs = []
-            for df_m in history_raw_pax.values():
-                df_m_wd = filter_by_weekday(df_m, weekday=weekday)
-                if not df_m_wd.empty:
-                    history_pax_dfs.append(df_m_wd)
-            if history_pax_dfs:
-                history_all_pax = pd.concat(history_pax_dfs, axis=0)
-                history_all_pax.index = pd.to_datetime(history_all_pax.index)
-                avg_curve_pax = moving_average_recent_90days(
-                    lt_df=history_all_pax,
-                    as_of_date=as_of_ts,
-                    lt_min=LT_MIN,
-                    lt_max=LT_MAX,
-                )
-                df_target_pax_wd = filter_by_weekday(df_target_pax, weekday=weekday)
-                if not df_target_pax_wd.empty:
-                    fc_series_pax = forecast_final_from_avg(
-                        lt_df=df_target_pax_wd,
-                        avg_curve=avg_curve_pax,
-                        as_of_date=as_of_ts,
-                        capacity=pax_capacity,
-                        lt_min=0,
-                        lt_max=LT_MAX,
-                    )
-                    for stay_date, value in fc_series_pax.items():
-                        all_forecasts_pax[stay_date] = value
-
     if not all_forecasts:
         print("No forecasts were generated. Check settings or data.")
-        return
 
     out_df = forecast_month_from_recent90(
         df_target=df_target,
@@ -692,9 +824,16 @@ def run_recent90_forecast(
         as_of_ts=as_of_ts,
         hotel_tag=hotel_tag,
     )
-    if df_target_pax is not None and all_forecasts_pax:
-        pax_df = _prepare_output_for_pax(df_target_pax, all_forecasts_pax, as_of_ts)
-        out_df = out_df.join(pax_df, how="left")
+    if df_target_pax is not None:
+        out_df = _append_pax_forecast_from_dor(
+            out_df=out_df,
+            df_target_rooms=df_target,
+            df_target_pax=df_target_pax,
+            as_of_ts=as_of_ts,
+            history_rooms=history_raw,
+            history_pax=history_raw_pax,
+            pax_capacity=pax_capacity,
+        )
     if df_target_revenue is not None:
         out_df = _append_revenue_columns(
             out_df,
@@ -746,7 +885,6 @@ def run_recent90_weighted_forecast(
 
     if not history_raw:
         print(f"[recent90_weighted] No history LT_DATA for as_of={as_of}")
-        return
 
     df_target = load_lt_csv(target_month, hotel_tag=hotel_tag, value_type="rooms")
     df_target_pax: pd.DataFrame | None
@@ -761,7 +899,6 @@ def run_recent90_weighted_forecast(
         df_target_revenue = None
 
     all_forecasts: dict[pd.Timestamp, float] = {}
-    all_forecasts_pax: dict[pd.Timestamp, float] = {}
 
     for weekday in range(7):
         # 履歴側: 該当曜日だけに絞る
@@ -802,37 +939,8 @@ def run_recent90_weighted_forecast(
         for stay_date, value in fc_series.items():
             all_forecasts[stay_date] = value
 
-        if df_target_pax is not None and history_raw_pax:
-            history_pax_dfs = []
-            for df_m in history_raw_pax.values():
-                df_m_wd = filter_by_weekday(df_m, weekday=weekday)
-                if not df_m_wd.empty:
-                    history_pax_dfs.append(df_m_wd)
-            if history_pax_dfs:
-                history_all_pax = pd.concat(history_pax_dfs, axis=0)
-                history_all_pax.index = pd.to_datetime(history_all_pax.index)
-                avg_curve_pax = moving_average_recent_90days_weighted(
-                    lt_df=history_all_pax,
-                    as_of_date=as_of_ts,
-                    lt_min=LT_MIN,
-                    lt_max=LT_MAX,
-                )
-                df_target_pax_wd = filter_by_weekday(df_target_pax, weekday=weekday)
-                if not df_target_pax_wd.empty:
-                    fc_series_pax = forecast_final_from_avg(
-                        lt_df=df_target_pax_wd,
-                        avg_curve=avg_curve_pax,
-                        as_of_date=as_of_ts,
-                        capacity=pax_capacity,
-                        lt_min=0,
-                        lt_max=LT_MAX,
-                    )
-                    for stay_date, value in fc_series_pax.items():
-                        all_forecasts_pax[stay_date] = value
-
     if not all_forecasts:
         print(f"[recent90_weighted] No forecasts for {target_month} as_of={as_of}")
-        return
 
     out_df = forecast_month_from_recent90(
         df_target=df_target,
@@ -840,9 +948,16 @@ def run_recent90_weighted_forecast(
         as_of_ts=as_of_ts,
         hotel_tag=hotel_tag,
     )
-    if df_target_pax is not None and all_forecasts_pax:
-        pax_df = _prepare_output_for_pax(df_target_pax, all_forecasts_pax, as_of_ts)
-        out_df = out_df.join(pax_df, how="left")
+    if df_target_pax is not None:
+        out_df = _append_pax_forecast_from_dor(
+            out_df=out_df,
+            df_target_rooms=df_target,
+            df_target_pax=df_target_pax,
+            as_of_ts=as_of_ts,
+            history_rooms=history_raw,
+            history_pax=history_raw_pax,
+            pax_capacity=pax_capacity,
+        )
     if df_target_revenue is not None:
         out_df = _append_revenue_columns(
             out_df,
@@ -885,7 +1000,6 @@ def run_pace14_forecast(
 
     if not history_raw:
         print(f"[pace14] No history LT_DATA for as_of={as_of_date}")
-        return
 
     df_target = load_lt_csv(target_month, hotel_tag=hotel_tag, value_type="rooms")
     df_target_pax: pd.DataFrame | None
@@ -900,7 +1014,6 @@ def run_pace14_forecast(
         df_target_revenue = None
 
     all_forecasts: dict[pd.Timestamp, float] = {}
-    all_forecasts_pax: dict[pd.Timestamp, float] = {}
     detail_frames: list[pd.DataFrame] = []
 
     for weekday in range(7):
@@ -943,46 +1056,23 @@ def run_pace14_forecast(
         for stay_date, value in fc_series.items():
             all_forecasts[stay_date] = value
 
-        if df_target_pax is not None and history_raw_pax:
-            history_pax_dfs = []
-            for df_m in history_raw_pax.values():
-                df_m_wd = filter_by_weekday(df_m, weekday=weekday)
-                if not df_m_wd.empty:
-                    history_pax_dfs.append(df_m_wd)
-            if history_pax_dfs:
-                history_all_pax = pd.concat(history_pax_dfs, axis=0)
-                history_all_pax.index = pd.to_datetime(history_all_pax.index)
-                avg_curve_pax = moving_average_recent_90days(
-                    lt_df=history_all_pax,
-                    as_of_date=as_of_ts,
-                    lt_min=LT_MIN,
-                    lt_max=LT_MAX,
-                )
-                df_target_pax_wd = filter_by_weekday(df_target_pax, weekday=weekday)
-                if not df_target_pax_wd.empty:
-                    fc_series_pax, _ = forecast_final_from_pace14(
-                        lt_df=df_target_pax_wd,
-                        baseline_curve=avg_curve_pax,
-                        history_df=history_all_pax,
-                        as_of_date=as_of_ts,
-                        capacity=pax_capacity,
-                        lt_min=0,
-                        lt_max=LT_MAX,
-                    )
-                    for stay_date, value in fc_series_pax.items():
-                        all_forecasts_pax[stay_date] = value
-
     if not all_forecasts:
         print("No forecasts were generated. Check settings or data.")
-        return
 
     out_df = _prepare_output(df_target, all_forecasts, as_of_ts)
     if detail_frames:
         detail_all = pd.concat(detail_frames, axis=0)
         out_df = _merge_pace14_details(out_df, detail_all, prefix="pace14")
-    if df_target_pax is not None and all_forecasts_pax:
-        pax_df = _prepare_output_for_pax(df_target_pax, all_forecasts_pax, as_of_ts)
-        out_df = out_df.join(pax_df, how="left")
+    if df_target_pax is not None:
+        out_df = _append_pax_forecast_from_dor(
+            out_df=out_df,
+            df_target_rooms=df_target,
+            df_target_pax=df_target_pax,
+            as_of_ts=as_of_ts,
+            history_rooms=history_raw,
+            history_pax=history_raw_pax,
+            pax_capacity=pax_capacity,
+        )
     if df_target_revenue is not None:
         out_df = _append_revenue_columns(
             out_df,
@@ -1027,7 +1117,6 @@ def run_pace14_market_forecast(
 
     if not history_raw:
         print(f"[pace14_market] No history LT_DATA for as_of={as_of_date}")
-        return
 
     df_target = load_lt_csv(target_month, hotel_tag=hotel_tag, value_type="rooms")
     df_target_pax: pd.DataFrame | None
@@ -1042,12 +1131,9 @@ def run_pace14_market_forecast(
         df_target_revenue = None
 
     all_forecasts: dict[pd.Timestamp, float] = {}
-    all_forecasts_pax: dict[pd.Timestamp, float] = {}
     detail_frames: list[pd.DataFrame] = []
     baseline_curves: dict[int, pd.Series] = {}
     history_by_weekday: dict[int, pd.DataFrame] = {}
-    baseline_curves_pax: dict[int, pd.Series] = {}
-    history_by_weekday_pax: dict[int, pd.DataFrame] = {}
 
     for weekday in range(7):
         history_dfs = []
@@ -1071,24 +1157,6 @@ def run_pace14_market_forecast(
 
         baseline_curves[weekday] = avg_curve
         history_by_weekday[weekday] = history_all
-
-        if history_raw_pax:
-            history_pax_dfs = []
-            for df_m in history_raw_pax.values():
-                df_m_wd = filter_by_weekday(df_m, weekday=weekday)
-                if not df_m_wd.empty:
-                    history_pax_dfs.append(df_m_wd)
-            if history_pax_dfs:
-                history_all_pax = pd.concat(history_pax_dfs, axis=0)
-                history_all_pax.index = pd.to_datetime(history_all_pax.index)
-                avg_curve_pax = moving_average_recent_90days(
-                    lt_df=history_all_pax,
-                    as_of_date=as_of_ts,
-                    lt_min=LT_MIN,
-                    lt_max=LT_MAX,
-                )
-                baseline_curves_pax[weekday] = avg_curve_pax
-                history_by_weekday_pax[weekday] = history_all_pax
 
     market_pace_7d, mp_df = compute_market_pace_7d(
         lt_df=df_target,
@@ -1125,28 +1193,8 @@ def run_pace14_market_forecast(
         for stay_date, value in fc_series.items():
             all_forecasts[stay_date] = value
 
-        if df_target_pax is not None:
-            history_all_pax = history_by_weekday_pax.get(weekday)
-            avg_curve_pax = baseline_curves_pax.get(weekday)
-            if history_all_pax is not None and avg_curve_pax is not None:
-                df_target_pax_wd = filter_by_weekday(df_target_pax, weekday=weekday)
-                if not df_target_pax_wd.empty:
-                    fc_series_pax, _ = forecast_final_from_pace14_market(
-                        lt_df=df_target_pax_wd,
-                        baseline_curve=avg_curve_pax,
-                        history_df=history_all_pax,
-                        as_of_date=as_of_ts,
-                        capacity=pax_capacity,
-                        market_pace_7d=market_pace_7d,
-                        lt_min=0,
-                        lt_max=LT_MAX,
-                    )
-                    for stay_date, value in fc_series_pax.items():
-                        all_forecasts_pax[stay_date] = value
-
     if not all_forecasts:
         print("No forecasts were generated. Check settings or data.")
-        return
 
     out_df = _prepare_output(df_target, all_forecasts, as_of_ts)
     if detail_frames:
@@ -1154,9 +1202,16 @@ def run_pace14_market_forecast(
         out_df = _merge_pace14_details(out_df, detail_all, prefix="pace14")
         if not mp_df.empty:
             out_df.attrs["market_pace_7d"] = market_pace_7d
-    if df_target_pax is not None and all_forecasts_pax:
-        pax_df = _prepare_output_for_pax(df_target_pax, all_forecasts_pax, as_of_ts)
-        out_df = out_df.join(pax_df, how="left")
+    if df_target_pax is not None:
+        out_df = _append_pax_forecast_from_dor(
+            out_df=out_df,
+            df_target_rooms=df_target,
+            df_target_pax=df_target_pax,
+            as_of_ts=as_of_ts,
+            history_rooms=history_raw,
+            history_pax=history_raw_pax,
+            pax_capacity=pax_capacity,
+        )
     if df_target_revenue is not None:
         out_df = _append_revenue_columns(
             out_df,

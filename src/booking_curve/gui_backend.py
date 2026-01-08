@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import numpy as np
 import pandas as pd
 
 import build_calendar_features
@@ -902,6 +903,7 @@ def get_daily_forecast_table(
     as_of_date: str,
     gui_model: str,
     capacity: Optional[float] = None,
+    pax_capacity: Optional[float] = None,
     apply_monthly_rounding: bool = True,
 ) -> pd.DataFrame:
     """日別フォーキャスト一覧画面向けのテーブルを構築する。
@@ -919,8 +921,10 @@ def get_daily_forecast_table(
         ("avg", "recent90", "recent90_adj", "recent90w", "recent90w_adj", "pace14", "pace14_market")
     capacity : float, optional
         None の場合は HOTEL_CONFIG の設定を使用
+    pax_capacity : float, optional
+        pax の日別キャップ。None の場合は自動推定値を使用
     apply_monthly_rounding : bool, optional
-        True の場合、TOTAL 行の *_display を資料向けに丸める
+        True の場合、Forecast 系の *_display を資料向けに丸める
 
     Returns
     -------
@@ -1132,6 +1136,62 @@ def get_daily_forecast_table(
         values = pd.to_numeric(series, errors="coerce")
         return (values / unit).round() * unit
 
+    def _distribute_forecast_rounding(
+        values: pd.Series,
+        goal_total: float,
+        unit: float,
+        cap_value: float | None,
+    ) -> tuple[pd.Series, float]:
+        working = pd.to_numeric(values, errors="coerce").fillna(0.0).clip(lower=0.0)
+        units_raw = working / unit
+        base_units = np.floor(units_raw).astype(int)
+        remainders = units_raw - base_units
+
+        cap_units: int | None = None
+        if cap_value is not None:
+            try:
+                cap_units = int(np.floor(float(cap_value) / unit))
+            except Exception:
+                cap_units = None
+        if cap_units is not None and cap_units >= 0:
+            base_units = np.minimum(base_units, cap_units)
+
+        total_units = int(base_units.sum())
+        goal_units = int(round(goal_total / unit))
+
+        max_increase = None
+        if cap_units is not None and cap_units >= 0:
+            max_increase = int(np.maximum(cap_units - base_units, 0).sum())
+        max_decrease = int(base_units.sum())
+
+        if max_increase is not None and goal_units - total_units > max_increase:
+            goal_units = total_units + max_increase
+        if goal_units - total_units < -max_decrease:
+            goal_units = total_units - max_decrease
+
+        delta = goal_units - total_units
+        if delta > 0:
+            order = np.argsort(-remainders.to_numpy())
+            for idx in order:
+                if delta == 0:
+                    break
+                if cap_units is not None and cap_units >= 0 and base_units[idx] >= cap_units:
+                    continue
+                base_units[idx] += 1
+                delta -= 1
+        elif delta < 0:
+            order = np.argsort(remainders.to_numpy())
+            for idx in order:
+                if delta == 0:
+                    break
+                if base_units[idx] <= 0:
+                    continue
+                base_units[idx] -= 1
+                delta += 1
+
+        rounded = pd.Series(base_units * unit, index=working.index)
+        return rounded, float(goal_units * unit)
+
     out["actual_rooms_display"] = out["actual_rooms"].copy()
     out["asof_oh_rooms_display"] = out["asof_oh_rooms"].copy()
     out["forecast_rooms_display"] = out["forecast_rooms"].copy()
@@ -1142,30 +1202,35 @@ def get_daily_forecast_table(
 
     total_mask = out["stay_date"].isna()
     if total_mask.any() and apply_monthly_rounding:
-        out.loc[total_mask, "actual_rooms_display"] = _round_display(
-            out.loc[total_mask, "actual_rooms"],
+        daily_mask = ~total_mask
+
+        forecast_total_goal = _round_display(out.loc[total_mask, "forecast_rooms"], 100.0).iloc[0]
+        if pd.isna(forecast_total_goal):
+            forecast_total_goal = 0.0
+        rounded_rooms, adjusted_rooms_total = _distribute_forecast_rounding(
+            out.loc[daily_mask, "forecast_rooms"],
+            float(forecast_total_goal),
             100.0,
+            cap,
         )
-        out.loc[total_mask, "asof_oh_rooms_display"] = _round_display(
-            out.loc[total_mask, "asof_oh_rooms"],
-            100.0,
-        )
-        out.loc[total_mask, "forecast_rooms_display"] = _round_display(
-            out.loc[total_mask, "forecast_rooms"],
-            100.0,
-        )
-        out.loc[total_mask, "actual_pax_display"] = _round_display(
-            out.loc[total_mask, "actual_pax"],
-            100.0,
-        )
-        out.loc[total_mask, "forecast_pax_display"] = _round_display(
-            out.loc[total_mask, "forecast_pax"],
-            100.0,
-        )
-        out.loc[total_mask, "asof_oh_pax_display"] = _round_display(
-            out.loc[total_mask, "asof_oh_pax"],
-            100.0,
-        )
+        out.loc[daily_mask, "forecast_rooms_display"] = rounded_rooms
+        out.loc[total_mask, "forecast_rooms_display"] = adjusted_rooms_total
+
+        if out["forecast_pax"].notna().any():
+            if pax_capacity is None:
+                pax_capacity = run_forecast_batch.infer_pax_capacity_p99(hotel_tag, asof_ts)
+            forecast_pax_total_goal = _round_display(out.loc[total_mask, "forecast_pax"], 100.0).iloc[0]
+            if pd.isna(forecast_pax_total_goal):
+                forecast_pax_total_goal = 0.0
+            rounded_pax, adjusted_pax_total = _distribute_forecast_rounding(
+                out.loc[daily_mask, "forecast_pax"],
+                float(forecast_pax_total_goal),
+                100.0,
+                pax_capacity,
+            )
+            out.loc[daily_mask, "forecast_pax_display"] = rounded_pax
+            out.loc[total_mask, "forecast_pax_display"] = adjusted_pax_total
+
         out.loc[total_mask, "forecast_revenue_display"] = _round_display(
             out.loc[total_mask, "forecast_revenue"],
             100000.0,
@@ -1207,6 +1272,79 @@ def get_daily_forecast_table(
     out = out[column_order]
 
     return out
+
+
+def get_daily_forecast_ly_summary(
+    hotel_tag: str,
+    target_month: str,
+    capacity: Optional[float] = None,
+) -> dict[str, float | None]:
+    try:
+        period = pd.Period(target_month, freq="M")
+    except Exception:
+        return {
+            "rooms": None,
+            "pax": None,
+            "revenue": None,
+            "adr": None,
+            "dor": None,
+            "revpar": None,
+        }
+
+    ly_period = period - 12
+    ly_month = f"{ly_period.year}{ly_period.month:02d}"
+
+    def _sum_act(value_type: str) -> float | None:
+        try:
+            df = run_forecast_batch.load_lt_csv(ly_month, hotel_tag=hotel_tag, value_type=value_type)
+        except FileNotFoundError:
+            return None
+        if df.empty:
+            return None
+        act_col = None
+        for col in df.columns:
+            try:
+                if int(col) == -1:
+                    act_col = col
+                    break
+            except Exception:
+                continue
+        if act_col is None:
+            return None
+        series = pd.to_numeric(df[act_col], errors="coerce")
+        series = series[series.notna()]
+        if series.empty:
+            return None
+        return float(series.sum())
+
+    rooms_total = _sum_act("rooms")
+    pax_total = _sum_act("pax")
+    revenue_total = _sum_act("revenue")
+
+    adr = None
+    dor = None
+    revpar = None
+    if rooms_total is not None and rooms_total > 0:
+        if pax_total is not None:
+            dor = pax_total / rooms_total
+        if revenue_total is not None:
+            adr = revenue_total / rooms_total
+
+    if revenue_total is not None:
+        cap = _get_capacity(hotel_tag, capacity)
+        days = monthrange(ly_period.year, ly_period.month)[1]
+        denom = cap * days if cap > 0 and days > 0 else None
+        if denom:
+            revpar = revenue_total / denom
+
+    return {
+        "rooms": rooms_total,
+        "pax": pax_total,
+        "revenue": revenue_total,
+        "adr": adr,
+        "dor": dor,
+        "revpar": revpar,
+    }
 
 
 def get_model_evaluation_table(hotel_tag: str) -> pd.DataFrame:

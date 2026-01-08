@@ -135,8 +135,7 @@ def get_asof_dates_for_month(target_month: str) -> list[str]:
 
 LT_VALUE_TYPES = ("rooms", "pax", "revenue")
 PHASE_FACTOR_DEFAULT = 1.0
-PHASE_FACTOR_MIN = 0.95
-PHASE_FACTOR_MAX = 1.05
+PHASE_FACTOR_CLIP_PCT_DEFAULT = 0.05
 ADR_EPS = 1e-6
 
 
@@ -307,14 +306,24 @@ def _prepare_output_for_pax(
     return out_df
 
 
-def _apply_phase_factor(value: float | None) -> float:
+def _apply_phase_factor(value: float | None, clip_pct: float | None) -> float:
     if value is None:
         return PHASE_FACTOR_DEFAULT
     try:
         factor = float(value)
     except Exception:
         return PHASE_FACTOR_DEFAULT
-    return min(max(factor, PHASE_FACTOR_MIN), PHASE_FACTOR_MAX)
+    if clip_pct is None:
+        clip_pct = PHASE_FACTOR_CLIP_PCT_DEFAULT
+    try:
+        clip_pct = float(clip_pct)
+    except Exception:
+        clip_pct = PHASE_FACTOR_CLIP_PCT_DEFAULT
+    if clip_pct < 0:
+        clip_pct = PHASE_FACTOR_CLIP_PCT_DEFAULT
+    min_factor = 1.0 - clip_pct
+    max_factor = 1.0 + clip_pct
+    return min(max(factor, min_factor), max_factor)
 
 
 def _append_revenue_columns(
@@ -323,6 +332,7 @@ def _append_revenue_columns(
     df_revenue: pd.DataFrame,
     as_of_ts: pd.Timestamp,
     phase_factor: float | None,
+    phase_clip_pct: float | None,
 ) -> pd.DataFrame:
     if out_df is None or out_df.empty:
         return out_df
@@ -354,7 +364,7 @@ def _append_revenue_columns(
 
     remaining_rooms = (forecast_final_rooms - rooms_oh_now).clip(lower=0.0)
 
-    factor = _apply_phase_factor(phase_factor)
+    factor = _apply_phase_factor(phase_factor, phase_clip_pct)
     adr_pickup_est = adr_oh_now * factor
     forecast_revenue = revenue_oh_now + remaining_rooms * adr_pickup_est
 
@@ -399,6 +409,7 @@ def run_avg_forecast(
     capacity: float | None = None,
     hotel_tag: str = HOTEL_TAG,
     phase_factor: float | None = None,
+    phase_clip_pct: float | None = None,
 ) -> None:
     """
     avgモデル(3ヶ月平均)で target_month を as_of_date 時点で予測し、
@@ -493,6 +504,7 @@ def run_avg_forecast(
             df_revenue=df_target_revenue,
             as_of_ts=as_of_ts,
             phase_factor=phase_factor,
+            phase_clip_pct=phase_clip_pct,
         )
 
     asof_tag = as_of_date.replace("-", "")
@@ -509,6 +521,7 @@ def run_recent90_forecast(
     capacity: float | None = None,
     hotel_tag: str = HOTEL_TAG,
     phase_factor: float | None = None,
+    phase_clip_pct: float | None = None,
 ) -> None:
     """
     recent90モデル(観測日から遡る90日平均)で target_month を as_of_date 時点で予測し、
@@ -602,7 +615,7 @@ def run_recent90_forecast(
                         lt_df=df_target_pax_wd,
                         avg_curve=avg_curve_pax,
                         as_of_date=as_of_ts,
-                        capacity=cap,
+                        capacity=None,
                         lt_min=0,
                         lt_max=LT_MAX,
                     )
@@ -629,6 +642,7 @@ def run_recent90_forecast(
             df_revenue=df_target_revenue,
             as_of_ts=as_of_ts,
             phase_factor=phase_factor,
+            phase_clip_pct=phase_clip_pct,
         )
 
     asof_tag = as_of_date.replace("-", "")
@@ -645,6 +659,7 @@ def run_recent90_weighted_forecast(
     capacity: float | None = None,
     hotel_tag: str = HOTEL_TAG,
     phase_factor: float | None = None,
+    phase_clip_pct: float | None = None,
 ) -> None:
     """
     recent90_weightedモデル(観測日から遡る90日平均・重み付き)で
@@ -745,7 +760,7 @@ def run_recent90_weighted_forecast(
                         lt_df=df_target_pax_wd,
                         avg_curve=avg_curve_pax,
                         as_of_date=as_of_ts,
-                        capacity=cap,
+                        capacity=None,
                         lt_min=0,
                         lt_max=LT_MAX,
                     )
@@ -772,6 +787,7 @@ def run_recent90_weighted_forecast(
             df_revenue=df_target_revenue,
             as_of_ts=as_of_ts,
             phase_factor=phase_factor,
+            phase_clip_pct=phase_clip_pct,
         )
 
     out_name = f"forecast_recent90w_{target_month}_{hotel_tag}_asof_{as_of}.csv"
@@ -786,6 +802,7 @@ def run_pace14_forecast(
     capacity: float | None = None,
     hotel_tag: str = HOTEL_TAG,
     phase_factor: float | None = None,
+    phase_clip_pct: float | None = None,
 ) -> None:
     """pace14モデルで target_month を as_of_date 時点で予測し、CSVを出力する。"""
     cap = _resolve_capacity(capacity)
@@ -882,7 +899,7 @@ def run_pace14_forecast(
                         baseline_curve=avg_curve_pax,
                         history_df=history_all_pax,
                         as_of_date=as_of_ts,
-                        capacity=cap,
+                        capacity=None,
                         lt_min=0,
                         lt_max=LT_MAX,
                     )
@@ -907,6 +924,7 @@ def run_pace14_forecast(
             df_revenue=df_target_revenue,
             as_of_ts=as_of_ts,
             phase_factor=phase_factor,
+            phase_clip_pct=phase_clip_pct,
         )
 
     asof_tag = as_of_date.replace("-", "")
@@ -923,6 +941,7 @@ def run_pace14_market_forecast(
     capacity: float | None = None,
     hotel_tag: str = HOTEL_TAG,
     phase_factor: float | None = None,
+    phase_clip_pct: float | None = None,
 ) -> None:
     """pace14_marketモデルで target_month を as_of_date 時点で予測し、CSVを出力する。"""
     cap = _resolve_capacity(capacity)
@@ -1048,7 +1067,7 @@ def run_pace14_market_forecast(
                         baseline_curve=avg_curve_pax,
                         history_df=history_all_pax,
                         as_of_date=as_of_ts,
-                        capacity=cap,
+                        capacity=None,
                         market_pace_7d=market_pace_7d,
                         lt_min=0,
                         lt_max=LT_MAX,
@@ -1076,6 +1095,7 @@ def run_pace14_market_forecast(
             df_revenue=df_target_revenue,
             as_of_ts=as_of_ts,
             phase_factor=phase_factor,
+            phase_clip_pct=phase_clip_pct,
         )
 
     asof_tag = as_of_date.replace("-", "")

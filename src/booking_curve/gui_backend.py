@@ -1136,61 +1136,67 @@ def get_daily_forecast_table(
         values = pd.to_numeric(series, errors="coerce")
         return (values / unit).round() * unit
 
-    def _distribute_forecast_rounding(
+    def _reconcile_daily_sum_to_goal(
         values: pd.Series,
         goal_total: float,
-        unit: float,
         cap_value: float | None,
     ) -> tuple[pd.Series, float]:
-        working = pd.to_numeric(values, errors="coerce").fillna(0.0).clip(lower=0.0)
-        units_raw = working / unit
-        base_units = np.floor(units_raw).astype(int)
-        remainders = units_raw - base_units
+        working = pd.to_numeric(values, errors="coerce").fillna(0.0).round().astype(int)
+        working = working.clip(lower=0)
+        goal_int = int(round(goal_total))
 
-        cap_units: int | None = None
+        cap_int: int | None = None
         if cap_value is not None:
             try:
-                cap_units = int(np.floor(float(cap_value) / unit))
+                cap_int = int(np.floor(float(cap_value)))
             except Exception:
-                cap_units = None
-        if cap_units is not None and cap_units >= 0:
-            base_units = np.minimum(base_units, cap_units)
+                cap_int = None
+        if cap_int is not None and cap_int >= 0:
+            working = working.clip(upper=cap_int)
 
-        total_units = int(base_units.sum())
-        goal_units = int(round(goal_total / unit))
+        delta = goal_int - int(working.sum())
 
-        max_increase = None
-        if cap_units is not None and cap_units >= 0:
-            max_increase = int(np.maximum(cap_units - base_units, 0).sum())
-        max_decrease = int(base_units.sum())
-
-        if max_increase is not None and goal_units - total_units > max_increase:
-            goal_units = total_units + max_increase
-        if goal_units - total_units < -max_decrease:
-            goal_units = total_units - max_decrease
-
-        delta = goal_units - total_units
         if delta > 0:
-            order = np.argsort(-remainders.to_numpy())
-            for idx in order:
-                if delta == 0:
-                    break
-                if cap_units is not None and cap_units >= 0 and base_units[idx] >= cap_units:
-                    continue
-                base_units[idx] += 1
-                delta -= 1
+            if cap_int is not None and cap_int >= 0:
+                margins = (cap_int - working).clip(lower=0)
+                max_increase = int(margins.sum())
+                if delta > max_increase:
+                    delta = max_increase
+            if delta > 0:
+                order = working.sort_values().index.tolist()
+                while delta > 0:
+                    progress = False
+                    for idx in order:
+                        if delta == 0:
+                            break
+                        if cap_int is not None and cap_int >= 0 and working.at[idx] >= cap_int:
+                            continue
+                        working.at[idx] += 1
+                        delta -= 1
+                        progress = True
+                    if not progress:
+                        break
         elif delta < 0:
-            order = np.argsort(remainders.to_numpy())
-            for idx in order:
-                if delta == 0:
-                    break
-                if base_units[idx] <= 0:
-                    continue
-                base_units[idx] -= 1
-                delta += 1
+            max_decrease = int(working.sum())
+            if -delta > max_decrease:
+                delta = -max_decrease
+            if delta < 0:
+                order = working.sort_values(ascending=False).index.tolist()
+                while delta < 0:
+                    progress = False
+                    for idx in order:
+                        if delta == 0:
+                            break
+                        if working.at[idx] <= 0:
+                            continue
+                        working.at[idx] -= 1
+                        delta += 1
+                        progress = True
+                    if not progress:
+                        break
 
-        rounded = pd.Series(base_units * unit, index=working.index)
-        return rounded, float(goal_units * unit)
+        adjusted_total = float(working.sum())
+        return working.astype(float), adjusted_total
 
     out["actual_rooms_display"] = out["actual_rooms"].copy()
     out["asof_oh_rooms_display"] = out["asof_oh_rooms"].copy()
@@ -1207,13 +1213,12 @@ def get_daily_forecast_table(
         forecast_total_goal = _round_display(out.loc[total_mask, "forecast_rooms"], 100.0).iloc[0]
         if pd.isna(forecast_total_goal):
             forecast_total_goal = 0.0
-        rounded_rooms, adjusted_rooms_total = _distribute_forecast_rounding(
+        reconciled_rooms, adjusted_rooms_total = _reconcile_daily_sum_to_goal(
             out.loc[daily_mask, "forecast_rooms"],
             float(forecast_total_goal),
-            100.0,
             cap,
         )
-        out.loc[daily_mask, "forecast_rooms_display"] = rounded_rooms
+        out.loc[daily_mask, "forecast_rooms_display"] = reconciled_rooms
         out.loc[total_mask, "forecast_rooms_display"] = adjusted_rooms_total
 
         if out["forecast_pax"].notna().any():
@@ -1222,13 +1227,12 @@ def get_daily_forecast_table(
             forecast_pax_total_goal = _round_display(out.loc[total_mask, "forecast_pax"], 100.0).iloc[0]
             if pd.isna(forecast_pax_total_goal):
                 forecast_pax_total_goal = 0.0
-            rounded_pax, adjusted_pax_total = _distribute_forecast_rounding(
+            reconciled_pax, adjusted_pax_total = _reconcile_daily_sum_to_goal(
                 out.loc[daily_mask, "forecast_pax"],
                 float(forecast_pax_total_goal),
-                100.0,
                 pax_capacity,
             )
-            out.loc[daily_mask, "forecast_pax_display"] = rounded_pax
+            out.loc[daily_mask, "forecast_pax_display"] = reconciled_pax
             out.loc[total_mask, "forecast_pax_display"] = adjusted_pax_total
 
         out.loc[total_mask, "forecast_revenue_display"] = _round_display(

@@ -83,6 +83,7 @@ try:
         OUTPUT_DIR,
         build_calendar_for_gui,
         build_range_rebuild_plan_for_gui,
+        build_topdown_revpar_panel,
         clear_evaluation_detail_cache,
         get_all_target_months_for_lt_from_daily_snapshots,
         get_best_model_for_month,
@@ -2077,6 +2078,11 @@ class BookingCurveApp(tk.Tk):
         forecast_btn.grid(row=1, column=2, padx=4, pady=(4, 2), sticky="w")
         export_btn = ttk.Button(left_header, text="CSV出力", command=self._on_export_daily_forecast_csv)
         export_btn.grid(row=1, column=3, padx=4, pady=(4, 2), sticky="w")
+        ttk.Button(
+            left_header,
+            text="TopDown RevPAR",
+            command=self._open_topdown_revpar_popup,
+        ).grid(row=1, column=4, padx=4, pady=(4, 2), sticky="w")
 
         self.df_monthly_rounding_var = tk.BooleanVar(value=True)
         df_rounding_checkbox = ttk.Checkbutton(
@@ -2085,9 +2091,9 @@ class BookingCurveApp(tk.Tk):
             variable=self.df_monthly_rounding_var,
             command=self._reload_daily_forecast_table,
         )
-        df_rounding_checkbox.grid(row=1, column=4, padx=4, pady=(4, 2), sticky="w")
+        df_rounding_checkbox.grid(row=1, column=5, padx=4, pady=(4, 2), sticky="w")
 
-        ttk.Label(left_header, text="表示:").grid(row=1, column=5, sticky="w", padx=(8, 2))
+        ttk.Label(left_header, text="表示:").grid(row=1, column=6, sticky="w", padx=(8, 2))
         self.df_display_mode_var = tk.StringVar(value="Standard")
         df_display_combo = ttk.Combobox(
             left_header,
@@ -2096,7 +2102,7 @@ class BookingCurveApp(tk.Tk):
             state="readonly",
             width=9,
         )
-        df_display_combo.grid(row=1, column=6, padx=2, pady=(4, 2), sticky="w")
+        df_display_combo.grid(row=1, column=7, padx=2, pady=(4, 2), sticky="w")
         df_display_combo.bind("<<ComboboxSelected>>", self._on_df_display_mode_changed)
 
         # 予測キャップ / 稼働率キャパ
@@ -2293,6 +2299,314 @@ class BookingCurveApp(tk.Tk):
 
         self._update_df_latest_asof_label(update_asof_if_empty=True)
         self._refresh_phase_overrides_ui()
+
+    def _get_fiscal_year_for_month(self, yyyymm: str, fiscal_year_start_month: int = 6) -> int:
+        try:
+            year = int(yyyymm[:4])
+            month = int(yyyymm[4:])
+        except Exception:
+            today = date.today()
+            year = today.year
+            month = today.month
+        if month >= fiscal_year_start_month:
+            return year
+        return year - 1
+
+    def _ensure_topdown_year_options(self, fiscal_year: int) -> None:
+        years = list(range(fiscal_year - 5, fiscal_year + 1))
+        year_vars = getattr(self, "_topdown_year_vars", {})
+        if list(year_vars.keys()) == years:
+            return
+
+        self._topdown_year_vars = {year: tk.BooleanVar(value=True) for year in years}
+        frame = getattr(self, "_topdown_year_frame", None)
+        if frame is None:
+            return
+        for child in frame.winfo_children():
+            child.destroy()
+        for idx, year in enumerate(years):
+            ttk.Checkbutton(
+                frame,
+                text=f"{year}年度",
+                variable=self._topdown_year_vars[year],
+            ).grid(row=0, column=idx, padx=4, pady=2, sticky="w")
+
+    def _get_topdown_selected_years(self) -> list[int]:
+        year_vars = getattr(self, "_topdown_year_vars", {})
+        return [year for year, var in year_vars.items() if var.get()]
+
+    def _collect_phase_factors_for_months(
+        self,
+        hotel: str,
+        months: list[str],
+    ) -> tuple[dict[str, float] | None, float]:
+        clip_pct = self._get_phase_clip_pct_for_hotel(hotel)
+        overrides = self._phase_overrides.get(hotel, {})
+        phase_factors: dict[str, float] = {}
+        for month in months:
+            override = overrides.get(month)
+            if not override:
+                continue
+            phase_factors[month] = self._phase_override_to_factor(
+                override.get("phase", "中立"),
+                override.get("strength", "中"),
+                clip_pct,
+            )
+        return (phase_factors if phase_factors else None, clip_pct)
+
+    def _open_topdown_revpar_popup(self) -> None:
+        popup = getattr(self, "_topdown_popup", None)
+        if popup is not None and popup.winfo_exists():
+            popup.lift()
+            return
+
+        popup = tk.Toplevel(self)
+        popup.title("TopDown RevPAR")
+        popup.geometry("1100x760")
+        popup.minsize(900, 600)
+        popup.columnconfigure(0, weight=1)
+        popup.rowconfigure(2, weight=1)
+        popup.rowconfigure(3, weight=1)
+        self._topdown_popup = popup
+
+        control_frame = ttk.Frame(popup)
+        control_frame.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
+        control_frame.columnconfigure(2, weight=1)
+
+        ttk.Label(control_frame, text="予測範囲（月数）:").grid(row=0, column=0, sticky="w")
+        self._topdown_horizon_var = tk.StringVar(value="3")
+        horizon_spin = ttk.Spinbox(
+            control_frame,
+            from_=1,
+            to=12,
+            textvariable=self._topdown_horizon_var,
+            width=5,
+        )
+        horizon_spin.grid(row=0, column=1, padx=(4, 12), sticky="w")
+
+        self._topdown_show_band_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            control_frame,
+            text="p10–p90帯を表示",
+            variable=self._topdown_show_band_var,
+        ).grid(row=0, column=2, sticky="w")
+
+        update_btn = ttk.Button(
+            control_frame,
+            text="更新",
+            command=self._on_topdown_revpar_update,
+        )
+        update_btn.grid(row=0, column=3, padx=(12, 0), sticky="e")
+
+        self._topdown_status_var = tk.StringVar(value="")
+        ttk.Label(control_frame, textvariable=self._topdown_status_var).grid(row=0, column=4, padx=(12, 0), sticky="e")
+
+        year_frame = ttk.LabelFrame(popup, text="表示年度")
+        year_frame.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 6))
+        self._topdown_year_frame = year_frame
+
+        current_month = (self.df_month_var.get() or "").strip()
+        fiscal_year = self._get_fiscal_year_for_month(current_month)
+        self._ensure_topdown_year_options(fiscal_year)
+
+        fig_frame = ttk.Frame(popup)
+        fig_frame.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 6))
+        fig_frame.rowconfigure(0, weight=1)
+        fig_frame.columnconfigure(0, weight=1)
+
+        self._topdown_fig = Figure(figsize=(8, 4))
+        self._topdown_ax = self._topdown_fig.add_subplot(111)
+        self._topdown_canvas = FigureCanvasTkAgg(self._topdown_fig, master=fig_frame)
+        self._topdown_canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew")
+
+        diag_frame = ttk.LabelFrame(popup, text="Forecast RevPAR と p10–p90 比較")
+        diag_frame.grid(row=3, column=0, sticky="nsew", padx=8, pady=(0, 8))
+        diag_frame.rowconfigure(0, weight=1)
+        diag_frame.columnconfigure(0, weight=1)
+
+        self._topdown_diag_text = tk.Text(diag_frame, height=6, wrap="word")
+        self._topdown_diag_text.grid(row=0, column=0, sticky="nsew")
+        diag_scroll = ttk.Scrollbar(diag_frame, orient="vertical", command=self._topdown_diag_text.yview)
+        diag_scroll.grid(row=0, column=1, sticky="ns")
+        self._topdown_diag_text.configure(yscrollcommand=diag_scroll.set)
+        self._topdown_diag_text.insert("1.0", "更新ボタンを押すと結果が表示されます。")
+        self._topdown_diag_text.configure(state="disabled")
+
+        self._on_topdown_revpar_update()
+
+    def _on_topdown_revpar_update(self) -> None:
+        popup = getattr(self, "_topdown_popup", None)
+        if popup is None or not popup.winfo_exists():
+            return
+
+        hotel = (self.df_hotel_var.get() or "").strip() or DEFAULT_HOTEL
+        month = (self.df_month_var.get() or "").strip()
+        asof = (self.df_asof_var.get() or "").strip()
+        model = (self.df_model_var.get() or "").strip()
+
+        if not month:
+            messagebox.showerror("エラー", "対象月(YYYYMM)を入力してください。")
+            return
+
+        try:
+            pd.to_datetime(asof)
+        except Exception:
+            messagebox.showerror("エラー", f"AS OF 日付の形式が不正です: {asof}")
+            return
+
+        try:
+            horizon = int(self._topdown_horizon_var.get())
+        except Exception:
+            messagebox.showerror("エラー", "予測範囲（月数）には数値を入力してください。")
+            return
+        if horizon <= 0:
+            messagebox.showerror("エラー", "予測範囲（月数）は1以上で指定してください。")
+            return
+
+        fiscal_year = self._get_fiscal_year_for_month(month)
+        self._ensure_topdown_year_options(fiscal_year)
+        selected_years = self._get_topdown_selected_years()
+        if not selected_years:
+            messagebox.showerror("エラー", "表示する年度を1つ以上選択してください。")
+            return
+
+        rooms_cap = HOTEL_CONFIG.get(hotel, {}).get("capacity")
+        if rooms_cap is None:
+            rooms_cap = self.df_occ_cap_var.get().strip()
+        try:
+            rooms_cap_value = float(rooms_cap)
+        except Exception:
+            messagebox.showerror("エラー", "RevPAR計算用キャパシティが取得できません。")
+            return
+
+        forecast_months = []
+        try:
+            base_period = pd.Period(month, freq="M")
+        except Exception:
+            base_period = pd.Period(date.today().strftime("%Y%m"), freq="M")
+        for offset in range(horizon):
+            candidate = (base_period + offset).strftime("%Y%m")
+            if self._get_fiscal_year_for_month(candidate) == fiscal_year:
+                forecast_months.append(candidate)
+
+        phase_factors, clip_pct = self._collect_phase_factors_for_months(hotel, forecast_months)
+
+        self._topdown_status_var.set("更新中...")
+
+        def _worker() -> None:
+            try:
+                panel = build_topdown_revpar_panel(
+                    hotel_tag=hotel,
+                    target_month=month,
+                    as_of_date=asof,
+                    model_key=model,
+                    rooms_cap=rooms_cap_value,
+                    phase_factors=phase_factors,
+                    phase_clip_pct=clip_pct,
+                    forecast_horizon_months=horizon,
+                    show_years=selected_years,
+                    fiscal_year_start_month=6,
+                )
+                error = None
+            except Exception as exc:  # noqa: BLE001
+                panel = None
+                error = exc
+
+            def _finish() -> None:
+                if error is not None:
+                    self._topdown_status_var.set("")
+                    messagebox.showerror("エラー", f"TopDown RevPAR の更新に失敗しました。\n{error}")
+                    return
+                self._render_topdown_revpar_panel(panel)
+
+            self.after(0, _finish)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _render_topdown_revpar_panel(self, panel: dict[str, object] | None) -> None:
+        if panel is None:
+            return
+
+        ax = getattr(self, "_topdown_ax", None)
+        canvas = getattr(self, "_topdown_canvas", None)
+        if ax is None or canvas is None:
+            return
+
+        ax.clear()
+        labels = panel.get("fiscal_month_labels", [])
+        lines_by_fy = panel.get("lines_by_fy", {})
+        current_fy = panel.get("current_fy")
+        target_idx = panel.get("target_month_index", 0)
+        band_p10 = panel.get("band_p10", [])
+        band_p90 = panel.get("band_p90", [])
+        show_band = getattr(self, "_topdown_show_band_var", tk.BooleanVar(value=True)).get()
+
+        x = np.arange(12)
+
+        for fy, values in lines_by_fy.items():
+            y = [np.nan if v is None else float(v) for v in values]
+            ax.plot(x, y, label=f"{fy}年度")
+
+        current_actual = panel.get("current_fy_actual", [])
+        current_forecast = panel.get("current_fy_forecast", [])
+        if current_fy in lines_by_fy:
+            y_actual = [np.nan if v is None else float(v) for v in current_actual]
+            y_forecast = [np.nan if v is None else float(v) for v in current_forecast]
+            ax.plot(x, y_actual, linestyle="-", linewidth=2.2, label=f"{current_fy}年度(確定)")
+            ax.plot(x, y_forecast, linestyle="--", linewidth=2.2, label=f"{current_fy}年度(予測)")
+
+        try:
+            idx = int(target_idx)
+        except Exception:
+            idx = 0
+        ax.axvspan(idx - 0.5, idx + 0.5, color="gold", alpha=0.15, label="対象月")
+
+        if show_band:
+            band_low = np.array([np.nan if v is None else float(v) for v in band_p10])
+            band_high = np.array([np.nan if v is None else float(v) for v in band_p90])
+            mask = np.isfinite(band_low) & np.isfinite(band_high)
+            if mask.any():
+                ax.fill_between(x[mask], band_low[mask], band_high[mask], alpha=0.18, label="p10–p90")
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels)
+        ax.set_ylabel("RevPAR")
+        ax.set_title("RevPAR 月次推移（TopDown）")
+        ax.grid(True, axis="y", linestyle=":", alpha=0.5)
+        ax.legend(loc="best", fontsize=9)
+        canvas.draw()
+
+        diagnostics = panel.get("diagnostics", [])
+        self._update_topdown_diagnostics(diagnostics)
+        self._topdown_status_var.set("更新完了")
+
+    def _update_topdown_diagnostics(self, diagnostics: list[dict[str, object]] | object) -> None:
+        text = getattr(self, "_topdown_diag_text", None)
+        if text is None:
+            return
+        lines = []
+        if isinstance(diagnostics, list):
+            for row in diagnostics:
+                month = row.get("month")
+                revpar = row.get("revpar")
+                p10 = row.get("p10")
+                p90 = row.get("p90")
+                flag = " ⚠" if row.get("out_of_range") else ""
+                if revpar is None:
+                    revpar_str = "-"
+                else:
+                    revpar_str = f"{revpar:,.0f}"
+                p10_str = "-" if p10 is None else f"{p10:,.0f}"
+                p90_str = "-" if p90 is None else f"{p90:,.0f}"
+                lines.append(f"{month}: FcRevPAR={revpar_str} / p10={p10_str} / p90={p90_str}{flag}")
+
+        if not lines:
+            lines = ["表示可能な診断情報がありません。"]
+
+        text.configure(state="normal")
+        text.delete("1.0", tk.END)
+        text.insert("1.0", "\n".join(lines))
+        text.configure(state="disabled")
 
     def _toggle_df_summary_visibility(self) -> None:
         frame = getattr(self, "df_summary_frame", None)

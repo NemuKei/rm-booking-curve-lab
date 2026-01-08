@@ -1103,6 +1103,141 @@ def get_daily_forecast_table(
     forecast_adr_total = forecast_revenue_total / denom_forecast_total
     forecast_revpar_total = forecast_revenue_total / denom_cap_total
 
+    def _round_display(series: pd.Series, unit: float) -> pd.Series:
+        values = pd.to_numeric(series, errors="coerce")
+        return (values / unit).round() * unit
+
+    def _apply_remainder_rounding(
+        values: pd.Series,
+        stay_dates: pd.Series,
+        goal_total: float,
+        cap_value: float | None,
+    ) -> tuple[pd.Series, float]:
+        numeric = pd.to_numeric(values, errors="coerce").fillna(0.0)
+        stay_norm = pd.to_datetime(stay_dates, errors="coerce").dt.normalize()
+        past_mask = stay_norm < asof_ts
+        future_mask = ~past_mask
+
+        past_fixed = numeric.loc[past_mask].round().astype(int).clip(lower=0)
+        future_raw = numeric.loc[future_mask]
+        base_future = np.floor(future_raw).astype(int).clip(lower=0)
+        remainder = future_raw - base_future
+
+        cap_int: int | None = None
+        if cap_value is not None:
+            try:
+                cap_int = int(np.floor(float(cap_value)))
+            except Exception:
+                cap_int = None
+
+        if cap_int is not None and cap_int >= 0:
+            base_future = base_future.clip(upper=cap_int)
+
+        goal_int = int(round(goal_total))
+        need = goal_int - int(past_fixed.sum() + base_future.sum())
+
+        if need > 0:
+            order = remainder.sort_values(ascending=False).index.tolist()
+            while need > 0:
+                progress = False
+                for idx in order:
+                    if need == 0:
+                        break
+                    if cap_int is not None and cap_int >= 0 and base_future.at[idx] >= cap_int:
+                        continue
+                    base_future.at[idx] += 1
+                    need -= 1
+                    progress = True
+                if not progress:
+                    break
+        elif need < 0:
+            order = remainder.sort_values(ascending=True).index.tolist()
+            while need < 0:
+                progress = False
+                for idx in order:
+                    if need == 0:
+                        break
+                    if base_future.at[idx] <= 0:
+                        continue
+                    base_future.at[idx] -= 1
+                    need += 1
+                    progress = True
+                if not progress:
+                    break
+
+        adjusted = pd.Series(index=values.index, dtype=float)
+        adjusted.loc[past_mask] = past_fixed.astype(float)
+        adjusted.loc[future_mask] = base_future.astype(float)
+        adjusted_total = float(adjusted.sum())
+        return adjusted, adjusted_total
+
+    out["actual_rooms_display"] = out["actual_rooms"].copy()
+    out["asof_oh_rooms_display"] = out["asof_oh_rooms"].copy()
+    out["forecast_rooms_display"] = out["forecast_rooms"].copy()
+    out["actual_pax_display"] = out["actual_pax"].copy()
+    out["forecast_pax_display"] = out["forecast_pax"].copy()
+    out["asof_oh_pax_display"] = out["asof_oh_pax"].copy()
+    out["forecast_revenue_display"] = out["forecast_revenue"].copy()
+
+    if apply_monthly_rounding:
+        forecast_total_goal = _round_display(pd.Series([forecast_total]), 100.0).iloc[0]
+        if pd.isna(forecast_total_goal):
+            forecast_total_goal = 0.0
+        reconciled_rooms, adjusted_rooms_total = _apply_remainder_rounding(
+            out["forecast_rooms"],
+            out["stay_date"],
+            float(forecast_total_goal),
+            cap,
+        )
+        out["forecast_rooms_display"] = reconciled_rooms
+        forecast_rooms_total_display = adjusted_rooms_total
+
+        if out["forecast_pax"].notna().any():
+            if pax_capacity is None:
+                pax_capacity = run_forecast_batch.infer_pax_capacity_p99(hotel_tag, asof_ts)
+            forecast_pax_total_goal = _round_display(pd.Series([forecast_pax_total]), 100.0).iloc[0]
+            if pd.isna(forecast_pax_total_goal):
+                forecast_pax_total_goal = 0.0
+            reconciled_pax, adjusted_pax_total = _apply_remainder_rounding(
+                out["forecast_pax"],
+                out["stay_date"],
+                float(forecast_pax_total_goal),
+                pax_capacity,
+            )
+            out["forecast_pax_display"] = reconciled_pax
+            forecast_pax_total_display = adjusted_pax_total
+        else:
+            forecast_pax_total_display = float(out["forecast_pax_display"].fillna(0).sum())
+    else:
+        forecast_rooms_total_display = float(out["forecast_rooms_display"].fillna(0).sum())
+        forecast_pax_total_display = float(out["forecast_pax_display"].fillna(0).sum())
+
+    if apply_monthly_rounding:
+        out.loc[:, "forecast_revenue_display"] = out["forecast_revenue"].copy()
+        forecast_revenue_display_total = _round_display(pd.Series([forecast_revenue_total]), 100000.0).iloc[0]
+    else:
+        forecast_revenue_display_total = forecast_revenue_total
+
+    out["pickup_expected_from_asof_display"] = out["forecast_rooms_display"] - out["asof_oh_rooms_display"]
+    out["occ_forecast_pct_display"] = (out["forecast_rooms_display"] / cap * 100.0).astype(float)
+    denom_forecast_display = out["forecast_rooms_display"].replace(0, pd.NA)
+    out["forecast_adr_display"] = (out["forecast_revenue"] / denom_forecast_display).astype(float)
+    denom_cap = pd.Series(cap, index=out.index, dtype="float").replace(0, pd.NA)
+    out["forecast_revpar_display"] = (out["forecast_revenue"] / denom_cap).astype(float)
+
+    forecast_rooms_total_display = float(forecast_rooms_total_display)
+    forecast_pax_total_display = float(forecast_pax_total_display)
+
+    pickup_total_display = forecast_rooms_total_display - asof_total
+    if num_days > 0:
+        occ_forecast_month_display = forecast_rooms_total_display / (cap * num_days) * 100.0
+    else:
+        occ_forecast_month_display = float("nan")
+
+    denom_forecast_total_display = forecast_rooms_total_display if forecast_rooms_total_display > 0 else float("nan")
+    forecast_adr_total_display = forecast_revenue_total / denom_forecast_total_display
+    forecast_revpar_total_display = forecast_revenue_total / denom_cap_total
+
     total_row = {
         "stay_date": pd.NaT,
         "weekday": "",
@@ -1119,126 +1254,29 @@ def get_daily_forecast_table(
         "forecast_revenue": forecast_revenue_total,
         "forecast_adr": forecast_adr_total,
         "forecast_revpar": forecast_revpar_total,
+        "actual_rooms_display": actual_total,
+        "asof_oh_rooms_display": asof_total,
+        "forecast_rooms_display": forecast_rooms_total_display,
+        "actual_pax_display": actual_pax_total,
+        "forecast_pax_display": forecast_pax_total_display,
+        "asof_oh_pax_display": asof_pax_total,
+        "forecast_revenue_display": forecast_revenue_display_total,
         "diff_rooms_vs_actual": diff_total_vs_actual,
         "diff_pct_vs_actual": diff_total_pct_vs_actual,
         "pickup_expected_from_asof": pickup_total_from_asof,
+        "pickup_expected_from_asof_display": pickup_total_display,
         "diff_rooms": diff_total_vs_actual,
         "diff_pct": diff_total_pct_vs_actual,
         "occ_actual_pct": occ_actual_month,
         "occ_asof_pct": occ_asof_month,
         "occ_forecast_pct": occ_forecast_month,
+        "occ_forecast_pct_display": occ_forecast_month_display,
+        "forecast_adr_display": forecast_adr_total_display,
+        "forecast_revpar_display": forecast_revpar_total_display,
     }
 
     out = out.reset_index(drop=True)
     out = pd.concat([out, pd.DataFrame([total_row])], ignore_index=True)
-
-    def _round_display(series: pd.Series, unit: float) -> pd.Series:
-        values = pd.to_numeric(series, errors="coerce")
-        return (values / unit).round() * unit
-
-    def _reconcile_daily_sum_to_goal(
-        values: pd.Series,
-        goal_total: float,
-        cap_value: float | None,
-    ) -> tuple[pd.Series, float]:
-        working = pd.to_numeric(values, errors="coerce").fillna(0.0).round().astype(int)
-        working = working.clip(lower=0)
-        goal_int = int(round(goal_total))
-
-        cap_int: int | None = None
-        if cap_value is not None:
-            try:
-                cap_int = int(np.floor(float(cap_value)))
-            except Exception:
-                cap_int = None
-        if cap_int is not None and cap_int >= 0:
-            working = working.clip(upper=cap_int)
-
-        delta = goal_int - int(working.sum())
-
-        if delta > 0:
-            if cap_int is not None and cap_int >= 0:
-                margins = (cap_int - working).clip(lower=0)
-                max_increase = int(margins.sum())
-                if delta > max_increase:
-                    delta = max_increase
-            if delta > 0:
-                order = working.sort_values().index.tolist()
-                while delta > 0:
-                    progress = False
-                    for idx in order:
-                        if delta == 0:
-                            break
-                        if cap_int is not None and cap_int >= 0 and working.at[idx] >= cap_int:
-                            continue
-                        working.at[idx] += 1
-                        delta -= 1
-                        progress = True
-                    if not progress:
-                        break
-        elif delta < 0:
-            max_decrease = int(working.sum())
-            if -delta > max_decrease:
-                delta = -max_decrease
-            if delta < 0:
-                order = working.sort_values(ascending=False).index.tolist()
-                while delta < 0:
-                    progress = False
-                    for idx in order:
-                        if delta == 0:
-                            break
-                        if working.at[idx] <= 0:
-                            continue
-                        working.at[idx] -= 1
-                        delta += 1
-                        progress = True
-                    if not progress:
-                        break
-
-        adjusted_total = float(working.sum())
-        return working.astype(float), adjusted_total
-
-    out["actual_rooms_display"] = out["actual_rooms"].copy()
-    out["asof_oh_rooms_display"] = out["asof_oh_rooms"].copy()
-    out["forecast_rooms_display"] = out["forecast_rooms"].copy()
-    out["actual_pax_display"] = out["actual_pax"].copy()
-    out["forecast_pax_display"] = out["forecast_pax"].copy()
-    out["asof_oh_pax_display"] = out["asof_oh_pax"].copy()
-    out["forecast_revenue_display"] = out["forecast_revenue"].copy()
-
-    total_mask = out["stay_date"].isna()
-    if total_mask.any() and apply_monthly_rounding:
-        daily_mask = ~total_mask
-
-        forecast_total_goal = _round_display(out.loc[total_mask, "forecast_rooms"], 100.0).iloc[0]
-        if pd.isna(forecast_total_goal):
-            forecast_total_goal = 0.0
-        reconciled_rooms, adjusted_rooms_total = _reconcile_daily_sum_to_goal(
-            out.loc[daily_mask, "forecast_rooms"],
-            float(forecast_total_goal),
-            cap,
-        )
-        out.loc[daily_mask, "forecast_rooms_display"] = reconciled_rooms
-        out.loc[total_mask, "forecast_rooms_display"] = adjusted_rooms_total
-
-        if out["forecast_pax"].notna().any():
-            if pax_capacity is None:
-                pax_capacity = run_forecast_batch.infer_pax_capacity_p99(hotel_tag, asof_ts)
-            forecast_pax_total_goal = _round_display(out.loc[total_mask, "forecast_pax"], 100.0).iloc[0]
-            if pd.isna(forecast_pax_total_goal):
-                forecast_pax_total_goal = 0.0
-            reconciled_pax, adjusted_pax_total = _reconcile_daily_sum_to_goal(
-                out.loc[daily_mask, "forecast_pax"],
-                float(forecast_pax_total_goal),
-                pax_capacity,
-            )
-            out.loc[daily_mask, "forecast_pax_display"] = reconciled_pax
-            out.loc[total_mask, "forecast_pax_display"] = adjusted_pax_total
-
-        out.loc[total_mask, "forecast_revenue_display"] = _round_display(
-            out.loc[total_mask, "forecast_revenue"],
-            100000.0,
-        )
 
     column_order = [
         "stay_date",
@@ -1266,11 +1304,15 @@ def get_daily_forecast_table(
         "diff_rooms_vs_actual",
         "diff_pct_vs_actual",
         "pickup_expected_from_asof",
+        "pickup_expected_from_asof_display",
         "diff_rooms",
         "diff_pct",
         "occ_actual_pct",
         "occ_asof_pct",
         "occ_forecast_pct",
+        "occ_forecast_pct_display",
+        "forecast_adr_display",
+        "forecast_revpar_display",
     ]
 
     out = out[column_order]

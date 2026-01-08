@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from booking_curve.config import OUTPUT_DIR
@@ -184,6 +185,49 @@ def _load_history_raw(
     return history_raw
 
 
+def infer_pax_capacity_p99(
+    hotel_tag: str,
+    as_of_ts: pd.Timestamp,
+    lookback_months: int = 24,
+    q: float = 0.99,
+) -> int | None:
+    months = get_history_months_around_asof(
+        as_of_ts=as_of_ts,
+        months_back=lookback_months,
+        months_forward=0,
+    )
+    values: list[float] = []
+    for ym in months:
+        try:
+            df = load_lt_csv(ym, hotel_tag=hotel_tag, value_type="pax")
+        except FileNotFoundError:
+            continue
+        if df.empty:
+            continue
+        act_col = None
+        for col in df.columns:
+            try:
+                if int(col) == -1:
+                    act_col = col
+                    break
+            except Exception:
+                continue
+        if act_col is None:
+            continue
+        series = pd.to_numeric(df[act_col], errors="coerce")
+        series = series[(series >= 0) & series.notna()]
+        if not series.empty:
+            values.extend(series.to_numpy(dtype=float))
+
+    if not values:
+        return None
+
+    estimate = np.nanquantile(np.asarray(values, dtype=float), q)
+    if np.isnan(estimate):
+        return None
+    return max(0, int(round(estimate)))
+
+
 def _normalize_lt_df(df: pd.DataFrame) -> pd.DataFrame:
     working = df.copy()
     working.index = pd.to_datetime(working.index)
@@ -254,10 +298,15 @@ def _prepare_output(
 
     projected = []
     for dt in out_df.index:
+        actual_value = out_df.loc[dt, "actual_rooms"]
+        forecast_value = out_df.loc[dt, "forecast_rooms"]
         if dt < as_of_ts:
-            projected.append(out_df.loc[dt, "actual_rooms"])
+            if pd.isna(actual_value):
+                projected.append(forecast_value)
+            else:
+                projected.append(actual_value)
         else:
-            projected.append(out_df.loc[dt, "forecast_rooms"])
+            projected.append(forecast_value)
 
     out_df["projected_rooms"] = _round_int_series(pd.Series(projected, index=out_df.index))
     return out_df
@@ -297,10 +346,15 @@ def _prepare_output_for_pax(
 
     projected = []
     for dt in out_df.index:
+        actual_value = out_df.loc[dt, "actual_pax"]
+        forecast_value = out_df.loc[dt, "forecast_pax"]
         if dt < as_of_ts:
-            projected.append(out_df.loc[dt, "actual_pax"])
+            if pd.isna(actual_value):
+                projected.append(forecast_value)
+            else:
+                projected.append(actual_value)
         else:
-            projected.append(out_df.loc[dt, "forecast_pax"])
+            projected.append(forecast_value)
 
     out_df["projected_pax"] = _round_int_series(pd.Series(projected, index=out_df.index))
     return out_df
@@ -407,6 +461,7 @@ def run_avg_forecast(
     target_month: str,
     as_of_date: str,
     capacity: float | None = None,
+    pax_capacity: float | None = None,
     hotel_tag: str = HOTEL_TAG,
     phase_factor: float | None = None,
     phase_clip_pct: float | None = None,
@@ -442,6 +497,8 @@ def run_avg_forecast(
     all_forecasts: dict[pd.Timestamp, float] = {}
     all_forecasts_pax: dict[pd.Timestamp, float] = {}
     as_of_ts = pd.to_datetime(as_of_date)
+    if pax_capacity is None:
+        pax_capacity = infer_pax_capacity_p99(hotel_tag, as_of_ts)
 
     for weekday in range(7):
         history_dfs = []
@@ -482,7 +539,7 @@ def run_avg_forecast(
                         lt_df=df_target_pax_wd,
                         avg_curve=avg_curve_pax,
                         as_of_date=as_of_ts,
-                        capacity=cap,
+                        capacity=pax_capacity,
                         lt_min=0,
                         lt_max=LT_MAX,
                     )
@@ -519,6 +576,7 @@ def run_recent90_forecast(
     target_month: str,
     as_of_date: str,
     capacity: float | None = None,
+    pax_capacity: float | None = None,
     hotel_tag: str = HOTEL_TAG,
     phase_factor: float | None = None,
     phase_clip_pct: float | None = None,
@@ -530,6 +588,8 @@ def run_recent90_forecast(
     cap = _resolve_capacity(capacity)
 
     as_of_ts = pd.to_datetime(as_of_date)
+    if pax_capacity is None:
+        pax_capacity = infer_pax_capacity_p99(hotel_tag, as_of_ts)
     history_months = get_history_months_around_asof(
         as_of_ts=as_of_ts,
         months_back=4,
@@ -615,7 +675,7 @@ def run_recent90_forecast(
                         lt_df=df_target_pax_wd,
                         avg_curve=avg_curve_pax,
                         as_of_date=as_of_ts,
-                        capacity=None,
+                        capacity=pax_capacity,
                         lt_min=0,
                         lt_max=LT_MAX,
                     )
@@ -657,6 +717,7 @@ def run_recent90_weighted_forecast(
     target_month: str,
     as_of: str,
     capacity: float | None = None,
+    pax_capacity: float | None = None,
     hotel_tag: str = HOTEL_TAG,
     phase_factor: float | None = None,
     phase_clip_pct: float | None = None,
@@ -671,6 +732,8 @@ def run_recent90_weighted_forecast(
     cap = _resolve_capacity(capacity)
 
     as_of_ts = pd.to_datetime(as_of, format="%Y%m%d")
+    if pax_capacity is None:
+        pax_capacity = infer_pax_capacity_p99(hotel_tag, as_of_ts)
 
     history_months = get_history_months_around_asof(
         as_of_ts=as_of_ts,
@@ -760,7 +823,7 @@ def run_recent90_weighted_forecast(
                         lt_df=df_target_pax_wd,
                         avg_curve=avg_curve_pax,
                         as_of_date=as_of_ts,
-                        capacity=None,
+                        capacity=pax_capacity,
                         lt_min=0,
                         lt_max=LT_MAX,
                     )
@@ -800,6 +863,7 @@ def run_pace14_forecast(
     target_month: str,
     as_of_date: str,
     capacity: float | None = None,
+    pax_capacity: float | None = None,
     hotel_tag: str = HOTEL_TAG,
     phase_factor: float | None = None,
     phase_clip_pct: float | None = None,
@@ -808,6 +872,8 @@ def run_pace14_forecast(
     cap = _resolve_capacity(capacity)
 
     as_of_ts = pd.to_datetime(as_of_date)
+    if pax_capacity is None:
+        pax_capacity = infer_pax_capacity_p99(hotel_tag, as_of_ts)
     history_months = get_history_months_around_asof(
         as_of_ts=as_of_ts,
         months_back=4,
@@ -899,7 +965,7 @@ def run_pace14_forecast(
                         baseline_curve=avg_curve_pax,
                         history_df=history_all_pax,
                         as_of_date=as_of_ts,
-                        capacity=None,
+                        capacity=pax_capacity,
                         lt_min=0,
                         lt_max=LT_MAX,
                     )
@@ -939,6 +1005,7 @@ def run_pace14_market_forecast(
     target_month: str,
     as_of_date: str,
     capacity: float | None = None,
+    pax_capacity: float | None = None,
     hotel_tag: str = HOTEL_TAG,
     phase_factor: float | None = None,
     phase_clip_pct: float | None = None,
@@ -947,6 +1014,8 @@ def run_pace14_market_forecast(
     cap = _resolve_capacity(capacity)
 
     as_of_ts = pd.to_datetime(as_of_date)
+    if pax_capacity is None:
+        pax_capacity = infer_pax_capacity_p99(hotel_tag, as_of_ts)
     history_months = get_history_months_around_asof(
         as_of_ts=as_of_ts,
         months_back=4,
@@ -1067,7 +1136,7 @@ def run_pace14_market_forecast(
                         baseline_curve=avg_curve_pax,
                         history_df=history_all_pax,
                         as_of_date=as_of_ts,
-                        capacity=None,
+                        capacity=pax_capacity,
                         market_pace_7d=market_pace_7d,
                         lt_min=0,
                         lt_max=LT_MAX,

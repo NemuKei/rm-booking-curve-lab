@@ -1989,14 +1989,14 @@ class BookingCurveApp(tk.Tk):
 
         # 上部入力フォーム
         header_frame = ttk.Frame(frame)
-        header_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
-        header_frame.grid_columnconfigure(0, weight=1)
-        header_frame.grid_columnconfigure(1, weight=0)
+        header_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(4, 6))
+        header_frame.grid_columnconfigure(0, weight=0)
+        header_frame.grid_columnconfigure(1, weight=1)
 
         left_header = ttk.Frame(header_frame)
         left_header.grid(row=0, column=0, sticky="nw")
         right_header = ttk.Frame(header_frame)
-        right_header.grid(row=0, column=1, sticky="ne", padx=(12, 0))
+        right_header.grid(row=0, column=1, sticky="ne", padx=(6, 0))
 
         # ホテル
         ttk.Label(left_header, text="ホテル:").grid(row=0, column=0, sticky="w")
@@ -2399,7 +2399,7 @@ class BookingCurveApp(tk.Tk):
             textvariable=self._topdown_view_mode_var,
             values=["年度固定", "回転（対象月を中央寄せ）"],
             state="readonly",
-            width=14,
+            width=22,
         )
         view_mode_combo.grid(row=1, column=1, padx=(4, 12), sticky="w", pady=(4, 0))
         view_mode_combo.bind("<<ComboboxSelected>>", lambda _event: self._on_topdown_revpar_update())
@@ -2507,11 +2507,8 @@ class BookingCurveApp(tk.Tk):
             except Exception:
                 latest_asof_ts = pd.to_datetime(date.today()).normalize()
 
-        end_ts = latest_asof_ts + timedelta(days=90)
-        try:
-            start_period = pd.Period(month, freq="M")
-        except Exception:
-            start_period = pd.Period(date.today().strftime("%Y%m"), freq="M")
+        end_ts = latest_asof_ts + timedelta(days=horizon * 30)
+        start_period = pd.Period(latest_asof_ts, freq="M")
         end_period = pd.Period(end_ts, freq="M")
         if start_period > end_period:
             end_period = start_period
@@ -2590,12 +2587,14 @@ class BookingCurveApp(tk.Tk):
 
         x = np.arange(12)
 
+        seam_idx = None
         if view_mode_label == "回転（対象月を中央寄せ）":
             try:
                 target_idx = int(target_idx)
             except Exception:
                 target_idx = 0
             shift = 5 - target_idx
+            shift_mod = shift % 12
             labels = _rotate_sequence(list(labels), shift)
             lines_by_fy = {fy: _rotate_sequence(list(values), shift) for fy, values in lines_by_fy.items()}
             current_actual = _rotate_sequence(list(current_actual), shift)
@@ -2603,16 +2602,42 @@ class BookingCurveApp(tk.Tk):
             band_p10 = _rotate_sequence(list(band_p10), shift)
             band_p90 = _rotate_sequence(list(band_p90), shift)
             target_idx = (target_idx + shift) % 12
+            if shift_mod != 0:
+                seam_idx = shift_mod
+
+        def _plot_segmented_line(
+            y_values: list[float | None],
+            *,
+            label: str | None = None,
+            **kwargs: object,
+        ) -> object | None:
+            y = [np.nan if v is None else float(v) for v in y_values]
+            if seam_idx in (None, 0):
+                lines = ax.plot(x, y, label=label, **kwargs)
+                return lines[0] if lines else None
+            first = ax.plot(x[:seam_idx], y[:seam_idx], label=label, **kwargs)
+            color = first[0].get_color() if first else None
+            ax.plot(
+                x[seam_idx:],
+                y[seam_idx:],
+                label="_nolegend_",
+                color=color,
+                **kwargs,
+            )
+            return first[0] if first else None
 
         for fy, values in lines_by_fy.items():
             if fy == current_fy:
                 continue
-            y = [np.nan if v is None else float(v) for v in values]
-            ax.plot(x, y, label=f"{fy}年度")
+            _plot_segmented_line(values, label=f"{fy}年度")
 
-        y_actual = [np.nan if v is None else float(v) for v in current_actual]
-        actual_line = ax.plot(x, y_actual, linestyle="-", linewidth=2.2, label=f"{current_fy}年度(確定)")
-        line_color = actual_line[0].get_color() if actual_line else None
+        actual_line = _plot_segmented_line(
+            list(current_actual),
+            label=f"{current_fy}年度(確定)",
+            linestyle="-",
+            linewidth=2.2,
+        )
+        line_color = actual_line.get_color() if actual_line is not None else None
 
         dashed_series = [np.nan] * 12
         last_actual_idx = None
@@ -2635,15 +2660,10 @@ class BookingCurveApp(tk.Tk):
                     for step in range(1, steps):
                         interp = start_value + (end_value - start_value) * (step / steps)
                         dashed_series[last_actual_idx + step] = interp
-        y_forecast = [np.nan if v is None else float(v) for v in dashed_series]
-        ax.plot(
-            x,
-            y_forecast,
-            linestyle="--",
-            linewidth=2.2,
-            color=line_color,
-            label=f"{current_fy}年度(予測)",
-        )
+        forecast_kwargs = {"linestyle": "--", "linewidth": 2.2, "label": f"{current_fy}年度(予測)"}
+        if line_color is not None:
+            forecast_kwargs["color"] = line_color
+        _plot_segmented_line(dashed_series, **forecast_kwargs)
 
         try:
             idx = int(target_idx)
@@ -2663,7 +2683,10 @@ class BookingCurveApp(tk.Tk):
         ax.set_ylabel("RevPAR")
         ax.set_title("RevPAR 月次推移（TopDown）")
         ax.grid(True, axis="y", linestyle=":", alpha=0.5)
-        ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0), borderaxespad=0, frameon=False, fontsize=9)
+        fig = getattr(self, "_topdown_fig", None)
+        if fig is not None:
+            fig.subplots_adjust(left=0.08, right=0.78)
+        ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), borderaxespad=0, frameon=False, fontsize=9)
         canvas.draw()
 
         diagnostics = panel.get("diagnostics", [])

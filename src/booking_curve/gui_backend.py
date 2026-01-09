@@ -972,6 +972,7 @@ def _get_projected_monthly_revpar(
     as_of_date: str,
     gui_model: str,
     rooms_cap: float,
+    missing_ok: bool = False,
 ) -> float | None:
     prefix, _ = _get_forecast_csv_prefix(gui_model)
     asof_ts = pd.to_datetime(as_of_date)
@@ -979,10 +980,14 @@ def _get_projected_monthly_revpar(
     csv_name = f"{prefix}_{target_month}_{hotel_tag}_asof_{asof_tag}.csv"
     csv_path = OUTPUT_DIR / csv_name
     if not csv_path.exists():
+        if missing_ok:
+            return None
         raise FileNotFoundError(f"forecast csv not found: {csv_path}")
 
     df = pd.read_csv(csv_path, index_col=0, parse_dates=True)
     if "forecast_revenue" not in df.columns:
+        if missing_ok:
+            return None
         return None
 
     revenue = pd.to_numeric(df["forecast_revenue"], errors="coerce")
@@ -1094,12 +1099,13 @@ def build_topdown_revpar_panel(
         if month_end <= asof_ts:
             current_fy_actual[idx] = float(value)
 
-    end_ts = latest_asof_ts + timedelta(days=90)
+    start_period = pd.Period(latest_asof_ts, freq="M")
+    end_ts = latest_asof_ts + timedelta(days=forecast_horizon_months * 30)
     end_period = pd.Period(end_ts, freq="M")
-    if target_period > end_period:
-        end_period = target_period
+    if start_period > end_period:
+        end_period = start_period
     forecast_month_strs_all = generate_month_range(
-        target_period.strftime("%Y%m"),
+        start_period.strftime("%Y%m"),
         end_period.strftime("%Y%m"),
     )
     forecast_month_strs = [
@@ -1128,6 +1134,7 @@ def build_topdown_revpar_panel(
             as_of_date=as_of_date,
             gui_model=model_key,
             rooms_cap=rooms_cap,
+            missing_ok=True,
         )
         forecast_revpar_map[month_str] = revpar_value
         try:

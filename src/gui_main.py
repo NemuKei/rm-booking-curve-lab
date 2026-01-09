@@ -2516,6 +2516,16 @@ class BookingCurveApp(tk.Tk):
         view_mode_combo.grid(row=1, column=1, padx=(4, 12), sticky="w", pady=(4, 0))
         view_mode_combo.bind("<<ComboboxSelected>>", lambda _event: self._on_topdown_view_mode_changed())
 
+        ttk.Label(
+            control_frame,
+            text=(
+                "p10–p90帯: 直近着地月を基準に、過去年(表示年度)の"
+                "月次比率分布(10–90%)を掛けた参考レンジ"
+            ),
+            wraplength=700,
+            justify="left",
+        ).grid(row=2, column=0, columnspan=4, sticky="w", pady=(6, 0))
+
         update_btn = ttk.Button(
             control_frame,
             text="更新",
@@ -2790,6 +2800,17 @@ class BookingCurveApp(tk.Tk):
                 dashed_series[last_actual_idx] = current_actual[last_actual_idx]
                 can_interpolate = seam_idx in (None, 0)
                 if (
+                    not can_interpolate
+                    and seam_idx is not None
+                    and first_forecast_idx is not None
+                    and last_actual_idx is not None
+                ):
+                    same_side = (last_actual_idx < seam_idx and first_forecast_idx < seam_idx) or (
+                        last_actual_idx >= seam_idx and first_forecast_idx >= seam_idx
+                    )
+                    if same_side:
+                        can_interpolate = True
+                if (
                     can_interpolate
                     and first_forecast_idx is not None
                     and first_forecast_idx > last_actual_idx + 1
@@ -2819,7 +2840,48 @@ class BookingCurveApp(tk.Tk):
             band_high = np.array([np.nan if v is None else float(v) for v in band_p90])
             mask = np.isfinite(band_low) & np.isfinite(band_high)
             if mask.any():
-                ax.fill_between(x[mask], band_low[mask], band_high[mask], alpha=0.18, label="p10–p90")
+                if seam_idx in (None, 0):
+                    ax.fill_between(
+                        x,
+                        band_low,
+                        band_high,
+                        where=mask,
+                        interpolate=True,
+                        alpha=0.18,
+                        label="p10–p90",
+                    )
+                else:
+                    left_mask = mask[:seam_idx]
+                    right_mask = mask[seam_idx:]
+                    left_collection = None
+                    if left_mask.any():
+                        left_collection = ax.fill_between(
+                            x[:seam_idx],
+                            band_low[:seam_idx],
+                            band_high[:seam_idx],
+                            where=left_mask,
+                            interpolate=True,
+                            alpha=0.18,
+                            label="p10–p90",
+                        )
+                    if right_mask.any():
+                        facecolor = None
+                        if left_collection is not None:
+                            colors = left_collection.get_facecolor()
+                            if len(colors):
+                                facecolor = colors[0]
+                        right_label = "_nolegend_" if left_mask.any() else "p10–p90"
+                        ax.fill_between(
+                            x[seam_idx:],
+                            band_low[seam_idx:],
+                            band_high[seam_idx:],
+                            where=right_mask,
+                            interpolate=True,
+                            alpha=0.18,
+                            label=right_label,
+                            facecolor=facecolor,
+                            edgecolor=facecolor,
+                        )
 
         ax.set_xticks(x)
         ax.set_xticklabels(labels)

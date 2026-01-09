@@ -2749,12 +2749,14 @@ class BookingCurveApp(tk.Tk):
                 return lines[0] if lines else None
             first = ax.plot(x[:seam_idx], y[:seam_idx], label=label, **kwargs)
             color = first[0].get_color() if first else None
+            kwargs2 = dict(kwargs)
+            kwargs2.pop("color", None)
             ax.plot(
                 x[seam_idx:],
                 y[seam_idx:],
                 label="_nolegend_",
                 color=color,
-                **kwargs,
+                **kwargs2,
             )
             return first[0] if first else None
 

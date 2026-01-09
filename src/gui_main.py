@@ -2056,7 +2056,7 @@ class BookingCurveApp(tk.Tk):
 
         # 上部入力フォーム
         header_frame = ttk.Frame(frame)
-        header_frame.pack(side=tk.TOP, anchor="w", padx=UI_SECTION_PADX, pady=(UI_GRID_PADY + 1, UI_SECTION_PADY))
+        header_frame.pack(side=tk.TOP, anchor="w", padx=UI_SECTION_PADX, pady=(UI_GRID_PADY + 1, 1))
 
         left_header = ttk.Frame(header_frame)
         left_header.pack(side=tk.LEFT, anchor="nw")
@@ -2066,7 +2066,7 @@ class BookingCurveApp(tk.Tk):
         # ホテル
         ttk.Label(left_header, text="ホテル:").grid(row=0, column=0, sticky="w")
         self.df_hotel_var = self.hotel_var
-        hotel_combo = ttk.Combobox(left_header, textvariable=self.df_hotel_var, state="readonly")
+        hotel_combo = ttk.Combobox(left_header, textvariable=self.df_hotel_var, state="readonly", width=11)
         hotel_combo["values"] = sorted(HOTEL_CONFIG.keys())
         hotel_combo.grid(row=0, column=1, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
         hotel_combo.bind("<<ComboboxSelected>>", self._on_df_hotel_changed)
@@ -2236,7 +2236,7 @@ class BookingCurveApp(tk.Tk):
             column=6,
             columnspan=3,
             sticky="w",
-            padx=(UI_GRID_PADX * 2, 0),
+            padx=(UI_GRID_PADX, 0),
             pady=(UI_GRID_PADY, UI_GRID_PADY),
         )
 
@@ -2244,23 +2244,27 @@ class BookingCurveApp(tk.Tk):
         ttk.Button(
             nav_frame,
             text="-1Y",
+            width=4,
             command=lambda: self._on_df_shift_month(-12),
-        ).pack(side=tk.LEFT, padx=UI_GRID_PADX)
+        ).pack(side=tk.LEFT, padx=1)
         ttk.Button(
             nav_frame,
             text="-1M",
+            width=4,
             command=lambda: self._on_df_shift_month(-1),
-        ).pack(side=tk.LEFT, padx=UI_GRID_PADX)
+        ).pack(side=tk.LEFT, padx=1)
         ttk.Button(
             nav_frame,
             text="+1M",
+            width=4,
             command=lambda: self._on_df_shift_month(+1),
-        ).pack(side=tk.LEFT, padx=UI_GRID_PADX)
+        ).pack(side=tk.LEFT, padx=1)
         ttk.Button(
             nav_frame,
             text="+1Y",
+            width=4,
             command=lambda: self._on_df_shift_month(+12),
-        ).pack(side=tk.LEFT, padx=UI_GRID_PADX)
+        ).pack(side=tk.LEFT, padx=1)
 
         phase_frame = ttk.LabelFrame(right_header, text="フェーズ補正（売上）")
         phase_frame.grid(row=0, column=0, sticky="ne", padx=UI_GRID_PADX, pady=(UI_GRID_PADY, 0))
@@ -2322,7 +2326,7 @@ class BookingCurveApp(tk.Tk):
             self.df_phase_month_labels.append(month_label)
 
         summary_controls = ttk.Frame(frame)
-        summary_controls.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, UI_GRID_PADY))
+        summary_controls.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, 0))
         self.df_summary_visible_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             summary_controls,
@@ -2332,7 +2336,7 @@ class BookingCurveApp(tk.Tk):
         ).pack(side=tk.LEFT)
 
         summary_frame = ttk.LabelFrame(frame, text="サマリ")
-        summary_frame.pack(side=tk.TOP, anchor="w", padx=UI_SECTION_PADX, pady=(0, UI_GRID_PADY + 1))
+        summary_frame.pack(side=tk.TOP, anchor="w", padx=UI_SECTION_PADX, pady=(0, 1))
         self.df_summary_frame = summary_frame
 
         metrics = ["Rooms", "Pax", "Rev", "OCC", "ADR", "DOR", "RevPAR"]

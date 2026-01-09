@@ -133,6 +133,10 @@ PHASE_STRENGTH_OPTIONS = ["弱", "中", "強"]
 PHASE_STRENGTH_FACTORS = {"弱": 0.4, "中": 0.7, "強": 1.0}
 PHASE_CLIP_DEFAULT = 0.05
 PHASE_CLIP_OPTIONS = [0.05, 0.1, 0.15]
+UI_GRID_PADX = 2
+UI_GRID_PADY = 1
+UI_SECTION_PADX = 6
+UI_SECTION_PADY = 4
 
 
 def _safe_ratio(num: float | None, denom: float | None) -> float | None:
@@ -1008,53 +1012,90 @@ class BookingCurveApp(tk.Tk):
 
         # ------- カレンダー設定 -------
         calendar_frame = ttk.LabelFrame(frame, text="カレンダー")
-        calendar_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
+        calendar_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=UI_SECTION_PADY)
 
         ttk.Label(calendar_frame, text="ホテル:").grid(row=0, column=0, sticky="w")
         self.hotel_combo = ttk.Combobox(calendar_frame, textvariable=self.hotel_var, state="readonly")
         self.hotel_combo["values"] = sorted(HOTEL_CONFIG.keys())
-        self.hotel_combo.grid(row=0, column=1, padx=4, pady=2, sticky="w")
+        self.hotel_combo.grid(row=0, column=1, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
         self.hotel_combo.bind("<<ComboboxSelected>>", self._on_hotel_changed)
 
         self.calendar_coverage_var = tk.StringVar()
         self.calendar_coverage_label = ttk.Label(calendar_frame, textvariable=self.calendar_coverage_var)
-        self.calendar_coverage_label.grid(row=1, column=0, columnspan=3, padx=4, pady=2, sticky="w")
+        self.calendar_coverage_label.grid(
+            row=1,
+            column=0,
+            columnspan=3,
+            padx=UI_GRID_PADX,
+            pady=UI_GRID_PADY,
+            sticky="w",
+        )
 
         self.calendar_build_button = ttk.Button(
             calendar_frame,
             text="カレンダー再生成",
             command=self._on_build_calendar_clicked,
         )
-        self.calendar_build_button.grid(row=1, column=3, padx=4, pady=2, sticky="e")
+        self.calendar_build_button.grid(row=1, column=3, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="e")
 
         # ------- 日別FC / ブッキング共通キャパ設定 -------
         caps_frame = ttk.LabelFrame(frame, text="日別フォーキャスト / ブッキングカーブ共通設定")
-        caps_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 8))
+        caps_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, UI_SECTION_PADY))
 
-        ttk.Label(caps_frame, text="予測キャップ:").grid(row=0, column=0, sticky="w", padx=4, pady=2)
+        ttk.Label(caps_frame, text="予測キャップ:").grid(
+            row=0,
+            column=0,
+            sticky="w",
+            padx=UI_GRID_PADX,
+            pady=UI_GRID_PADY,
+        )
         self.master_fc_cap_var = tk.StringVar()
-        ttk.Entry(caps_frame, textvariable=self.master_fc_cap_var, width=8).grid(row=0, column=1, padx=4, pady=2, sticky="w")
+        ttk.Entry(caps_frame, textvariable=self.master_fc_cap_var, width=8).grid(
+            row=0,
+            column=1,
+            padx=UI_GRID_PADX,
+            pady=UI_GRID_PADY,
+            sticky="w",
+        )
 
-        ttk.Label(caps_frame, text="稼働率キャパ:").grid(row=0, column=2, sticky="w", padx=12, pady=2)
+        ttk.Label(caps_frame, text="稼働率キャパ:").grid(
+            row=0,
+            column=2,
+            sticky="w",
+            padx=UI_GRID_PADX * 2,
+            pady=UI_GRID_PADY,
+        )
         self.master_occ_cap_var = tk.StringVar()
-        ttk.Entry(caps_frame, textvariable=self.master_occ_cap_var, width=8).grid(row=0, column=3, padx=4, pady=2, sticky="w")
+        ttk.Entry(caps_frame, textvariable=self.master_occ_cap_var, width=8).grid(
+            row=0,
+            column=3,
+            padx=UI_GRID_PADX,
+            pady=UI_GRID_PADY,
+            sticky="w",
+        )
 
         ttk.Button(
             caps_frame,
             text="保存（このホテルのみ）",
             command=self._on_save_master_daily_caps,
-        ).grid(row=0, column=4, padx=12, pady=2, sticky="e")
+        ).grid(row=0, column=4, padx=UI_GRID_PADX * 2, pady=UI_GRID_PADY, sticky="e")
 
         # ------- RAW取込元（このPCのみ） -------
         raw_root_frame = ttk.LabelFrame(frame, text="RAW取込元（このPCのみ）")
-        raw_root_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 8))
+        raw_root_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, UI_SECTION_PADY))
 
         ttk.Label(
             raw_root_frame,
             text="この設定はこのPCのみ有効です（hotels.jsonは変更しません）。",
-        ).grid(row=0, column=0, columnspan=3, padx=4, pady=(2, 6), sticky="w")
+        ).grid(row=0, column=0, columnspan=3, padx=UI_GRID_PADX, pady=(UI_GRID_PADY, UI_GRID_PADY + 2), sticky="w")
 
-        ttk.Label(raw_root_frame, text="現在のRAW取込元:").grid(row=1, column=0, sticky="nw", padx=4, pady=2)
+        ttk.Label(raw_root_frame, text="現在のRAW取込元:").grid(
+            row=1,
+            column=0,
+            sticky="nw",
+            padx=UI_GRID_PADX,
+            pady=UI_GRID_PADY,
+        )
         self.master_raw_root_dir_var = tk.StringVar()
         self.master_raw_root_dir_label = ttk.Label(
             raw_root_frame,
@@ -1062,18 +1103,25 @@ class BookingCurveApp(tk.Tk):
             wraplength=800,
             justify="left",
         )
-        self.master_raw_root_dir_label.grid(row=1, column=1, columnspan=2, padx=4, pady=2, sticky="w")
+        self.master_raw_root_dir_label.grid(
+            row=1,
+            column=1,
+            columnspan=2,
+            padx=UI_GRID_PADX,
+            pady=UI_GRID_PADY,
+            sticky="w",
+        )
 
         ttk.Button(
             raw_root_frame,
             text="変更...",
             command=self._on_change_master_raw_root_dir,
-        ).grid(row=2, column=1, padx=4, pady=4, sticky="w")
+        ).grid(row=2, column=1, padx=UI_GRID_PADX, pady=UI_GRID_PADY + 1, sticky="w")
         ttk.Button(
             raw_root_frame,
             text="初期値に戻す",
             command=self._on_clear_master_raw_root_dir,
-        ).grid(row=2, column=2, padx=4, pady=4, sticky="w")
+        ).grid(row=2, column=2, padx=UI_GRID_PADX, pady=UI_GRID_PADY + 1, sticky="w")
 
         local_overrides_path = get_local_overrides_path()
         ttk.Label(
@@ -1082,10 +1130,10 @@ class BookingCurveApp(tk.Tk):
             foreground="#555555",
             wraplength=800,
             justify="left",
-        ).grid(row=3, column=0, columnspan=3, padx=4, pady=(2, 4), sticky="w")
+        ).grid(row=3, column=0, columnspan=3, padx=UI_GRID_PADX, pady=(UI_GRID_PADY, UI_GRID_PADY + 1), sticky="w")
 
         output_frame = ttk.LabelFrame(frame, text="出力フォルダ")
-        output_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 8))
+        output_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, UI_SECTION_PADY))
 
         ttk.Label(
             output_frame,
@@ -1093,16 +1141,16 @@ class BookingCurveApp(tk.Tk):
             foreground="#555555",
             wraplength=800,
             justify="left",
-        ).grid(row=0, column=0, padx=4, pady=2, sticky="w")
+        ).grid(row=0, column=0, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
 
         ttk.Button(
             output_frame,
             text="出力フォルダを開く",
             command=self._on_open_output_dir,
-        ).grid(row=0, column=1, padx=8, pady=2, sticky="w")
+        ).grid(row=0, column=1, padx=UI_GRID_PADX * 2, pady=UI_GRID_PADY, sticky="w")
 
         config_frame = ttk.LabelFrame(frame, text="設定フォルダ")
-        config_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 8))
+        config_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, UI_SECTION_PADY))
 
         ttk.Label(
             config_frame,
@@ -1110,65 +1158,77 @@ class BookingCurveApp(tk.Tk):
             foreground="#555555",
             wraplength=800,
             justify="left",
-        ).grid(row=0, column=0, padx=4, pady=2, sticky="w")
+        ).grid(row=0, column=0, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
 
         ttk.Button(
             config_frame,
             text="設定フォルダを開く",
             command=self._on_open_config_dir,
-        ).grid(row=0, column=1, padx=8, pady=2, sticky="w")
+        ).grid(row=0, column=1, padx=UI_GRID_PADX * 2, pady=UI_GRID_PADY, sticky="w")
 
         ttk.Button(
             config_frame,
             text="設定を再読み込み",
             command=self._on_reload_settings_clicked,
-        ).grid(row=0, column=2, padx=8, pady=2, sticky="w")
+        ).grid(row=0, column=2, padx=UI_GRID_PADX * 2, pady=UI_GRID_PADY, sticky="w")
 
         advanced_frame = ttk.LabelFrame(frame, text="Advanced / Daily snapshots")
-        advanced_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 8))
+        advanced_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, UI_SECTION_PADY))
 
         ttk.Label(
             advanced_frame,
             text="FULL_ALL は大量処理です。事前確認のうえ実行してください。",
-        ).grid(row=0, column=0, columnspan=2, padx=4, pady=2, sticky="w")
+        ).grid(row=0, column=0, columnspan=2, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
         self.full_all_button = ttk.Button(
             advanced_frame,
             text="Daily snapshots 全量再生成（危険）",
             command=self._on_run_full_all_snapshots,
         )
-        self.full_all_button.grid(row=1, column=0, padx=4, pady=4, sticky="w")
+        self.full_all_button.grid(row=1, column=0, padx=UI_GRID_PADX, pady=UI_GRID_PADY + 1, sticky="w")
         self.full_all_status_var = tk.StringVar(value="")
-        ttk.Label(advanced_frame, textvariable=self.full_all_status_var).grid(row=1, column=1, padx=4, pady=4, sticky="w")
+        ttk.Label(advanced_frame, textvariable=self.full_all_status_var).grid(
+            row=1,
+            column=1,
+            padx=UI_GRID_PADX,
+            pady=UI_GRID_PADY + 1,
+            sticky="w",
+        )
 
         self.lt_all_button = ttk.Button(
             advanced_frame,
             text="LT_DATA 全期間生成（危険）",
             command=self._on_run_lt_all,
         )
-        self.lt_all_button.grid(row=2, column=0, padx=4, pady=4, sticky="w")
+        self.lt_all_button.grid(row=2, column=0, padx=UI_GRID_PADX, pady=UI_GRID_PADY + 1, sticky="w")
         self.lt_all_status_var = tk.StringVar(value="")
-        ttk.Label(advanced_frame, textvariable=self.lt_all_status_var).grid(row=2, column=1, padx=4, pady=4, sticky="w")
+        ttk.Label(advanced_frame, textvariable=self.lt_all_status_var).grid(
+            row=2,
+            column=1,
+            padx=UI_GRID_PADX,
+            pady=UI_GRID_PADY + 1,
+            sticky="w",
+        )
 
         ttk.Button(
             advanced_frame,
             text="欠損チェック（運用）",
             command=self._on_run_missing_check,
-        ).grid(row=3, column=0, padx=4, pady=4, sticky="w")
+        ).grid(row=3, column=0, padx=UI_GRID_PADX, pady=UI_GRID_PADY + 1, sticky="w")
         ttk.Button(
             advanced_frame,
             text="欠損一覧（運用）",
             command=self._on_open_missing_ops_list,
-        ).grid(row=3, column=1, padx=4, pady=4, sticky="w")
+        ).grid(row=3, column=1, padx=UI_GRID_PADX, pady=UI_GRID_PADY + 1, sticky="w")
         ttk.Button(
             advanced_frame,
             text="欠損監査（全期間）",
             command=self._on_run_missing_audit,
-        ).grid(row=4, column=0, padx=4, pady=4, sticky="w")
+        ).grid(row=4, column=0, padx=UI_GRID_PADX, pady=UI_GRID_PADY + 1, sticky="w")
         ttk.Button(
             advanced_frame,
             text="欠損だけ取り込み",
             command=self._on_run_import_missing_only,
-        ).grid(row=5, column=0, padx=4, pady=4, sticky="w")
+        ).grid(row=5, column=0, padx=UI_GRID_PADX, pady=UI_GRID_PADY + 1, sticky="w")
 
         self.master_missing_check_status_var = tk.StringVar(value="欠損検査：未実施")
         self.master_missing_check_status_label = ttk.Label(
@@ -1176,7 +1236,14 @@ class BookingCurveApp(tk.Tk):
             textvariable=self.master_missing_check_status_var,
             foreground="#555555",
         )
-        self.master_missing_check_status_label.grid(row=6, column=0, columnspan=2, padx=4, pady=(8, 4), sticky="w")
+        self.master_missing_check_status_label.grid(
+            row=6,
+            column=0,
+            columnspan=2,
+            padx=UI_GRID_PADX,
+            pady=(UI_GRID_PADY + 3, UI_GRID_PADY + 1),
+            sticky="w",
+        )
 
         # 初期表示
         self._refresh_calendar_coverage()
@@ -1989,28 +2056,32 @@ class BookingCurveApp(tk.Tk):
 
         # 上部入力フォーム
         header_frame = ttk.Frame(frame)
-        header_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(4, 6))
-        header_frame.grid_columnconfigure(0, weight=0)
-        header_frame.grid_columnconfigure(1, weight=1)
+        header_frame.pack(side=tk.TOP, anchor="w", padx=UI_SECTION_PADX, pady=(UI_GRID_PADY + 1, UI_SECTION_PADY))
 
         left_header = ttk.Frame(header_frame)
-        left_header.grid(row=0, column=0, sticky="nw")
+        left_header.pack(side=tk.LEFT, anchor="nw")
         right_header = ttk.Frame(header_frame)
-        right_header.grid(row=0, column=1, sticky="ne", padx=(6, 0))
+        right_header.pack(side=tk.LEFT, anchor="ne", padx=(UI_GRID_PADX * 3, 0))
 
         # ホテル
         ttk.Label(left_header, text="ホテル:").grid(row=0, column=0, sticky="w")
         self.df_hotel_var = self.hotel_var
         hotel_combo = ttk.Combobox(left_header, textvariable=self.df_hotel_var, state="readonly")
         hotel_combo["values"] = sorted(HOTEL_CONFIG.keys())
-        hotel_combo.grid(row=0, column=1, padx=4, pady=2, sticky="w")
+        hotel_combo.grid(row=0, column=1, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
         hotel_combo.bind("<<ComboboxSelected>>", self._on_df_hotel_changed)
 
         # 対象月
         ttk.Label(left_header, text="対象月 (YYYYMM):").grid(row=0, column=2, sticky="w")
         current_month = date.today().strftime("%Y%m")
         self.df_month_var = tk.StringVar(value=current_month)
-        ttk.Entry(left_header, textvariable=self.df_month_var, width=8).grid(row=0, column=3, padx=4, pady=2, sticky="w")
+        ttk.Entry(left_header, textvariable=self.df_month_var, width=8).grid(
+            row=0,
+            column=3,
+            padx=UI_GRID_PADX,
+            pady=UI_GRID_PADY,
+            sticky="w",
+        )
         self.df_month_var.trace_add("write", lambda *_: self._refresh_phase_overrides_ui())
 
         # as_of
@@ -2029,7 +2100,7 @@ class BookingCurveApp(tk.Tk):
                 textvariable=self.df_asof_var,
                 width=12,
             )
-        self.df_asof_entry.grid(row=0, column=5, padx=4, pady=2, sticky="w")
+        self.df_asof_entry.grid(row=0, column=5, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
 
         self.df_latest_asof_var = tk.StringVar(value="")
         ttk.Label(left_header, text="最新ASOF:").grid(row=0, column=6, sticky="w")
@@ -2038,17 +2109,17 @@ class BookingCurveApp(tk.Tk):
             self.df_latest_asof_label.cget("background"),
             self.df_latest_asof_label.cget("foreground"),
         )
-        self.df_latest_asof_label.grid(row=0, column=7, padx=4, pady=2, sticky="w")
+        self.df_latest_asof_label.grid(row=0, column=7, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
         ttk.Button(left_header, text="最新に反映", command=self._on_df_set_asof_to_latest).grid(
             row=0,
             column=8,
-            padx=4,
-            pady=2,
+            padx=UI_GRID_PADX,
+            pady=UI_GRID_PADY,
             sticky="w",
         )
 
         # モデル
-        ttk.Label(left_header, text="モデル:").grid(row=1, column=0, sticky="w", pady=(4, 2))
+        ttk.Label(left_header, text="モデル:").grid(row=1, column=0, sticky="w", pady=(UI_GRID_PADY + 1, UI_GRID_PADY))
         model_values = [
             "recent90",
             "recent90w",
@@ -2064,10 +2135,16 @@ class BookingCurveApp(tk.Tk):
             left_header,
             textvariable=self.df_model_var,
             state="readonly",
-            width=18,
+            width=16,
         )
         model_combo["values"] = model_values
-        model_combo.grid(row=1, column=1, padx=4, pady=(4, 2), sticky="w")
+        model_combo.grid(
+            row=1,
+            column=1,
+            padx=UI_GRID_PADX,
+            pady=(UI_GRID_PADY + 1, UI_GRID_PADY),
+            sticky="w",
+        )
         self.df_model_var.trace_add("write", lambda *_: self._on_df_model_changed(model_values))
 
         # 実行ボタン
@@ -2076,14 +2153,14 @@ class BookingCurveApp(tk.Tk):
             text="Forecast実行",
             command=self._on_run_daily_forecast,
         )
-        forecast_btn.grid(row=1, column=2, padx=4, pady=(4, 2), sticky="w")
+        forecast_btn.grid(row=1, column=2, padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 1, UI_GRID_PADY), sticky="w")
         export_btn = ttk.Button(left_header, text="CSV出力", command=self._on_export_daily_forecast_csv)
-        export_btn.grid(row=1, column=3, padx=4, pady=(4, 2), sticky="w")
+        export_btn.grid(row=1, column=3, padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 1, UI_GRID_PADY), sticky="w")
         ttk.Button(
             left_header,
             text="TopDown RevPAR",
             command=self._open_topdown_revpar_popup,
-        ).grid(row=1, column=4, padx=4, pady=(4, 2), sticky="w")
+        ).grid(row=1, column=4, padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 1, UI_GRID_PADY), sticky="w")
 
         self.df_monthly_rounding_var = tk.BooleanVar(value=True)
         df_rounding_checkbox = ttk.Checkbutton(
@@ -2092,18 +2169,30 @@ class BookingCurveApp(tk.Tk):
             variable=self.df_monthly_rounding_var,
             command=self._reload_daily_forecast_table,
         )
-        df_rounding_checkbox.grid(row=1, column=5, padx=4, pady=(4, 2), sticky="w")
+        df_rounding_checkbox.grid(
+            row=1,
+            column=5,
+            padx=UI_GRID_PADX,
+            pady=(UI_GRID_PADY + 1, UI_GRID_PADY),
+            sticky="w",
+        )
 
-        ttk.Label(left_header, text="表示:").grid(row=1, column=6, sticky="w", padx=(8, 2))
+        ttk.Label(left_header, text="表示:").grid(row=1, column=6, sticky="w", padx=(UI_GRID_PADX, 1))
         self.df_display_mode_var = tk.StringVar(value="Standard")
         df_display_combo = ttk.Combobox(
             left_header,
             textvariable=self.df_display_mode_var,
             values=["Standard", "Detail"],
             state="readonly",
-            width=9,
+            width=8,
         )
-        df_display_combo.grid(row=1, column=7, padx=2, pady=(4, 2), sticky="w")
+        df_display_combo.grid(
+            row=1,
+            column=7,
+            padx=UI_GRID_PADX,
+            pady=(UI_GRID_PADY + 1, UI_GRID_PADY),
+            sticky="w",
+        )
         df_display_combo.bind("<<ComboboxSelected>>", self._on_df_display_mode_changed)
 
         # 予測キャップ / 稼働率キャパ
@@ -2113,46 +2202,71 @@ class BookingCurveApp(tk.Tk):
 
         ttk.Label(left_header, text="予測キャップ(Rm):").grid(row=2, column=0, sticky="w")
         self.df_forecast_cap_var = tk.StringVar(value=str(fc_cap))
-        ttk.Entry(left_header, textvariable=self.df_forecast_cap_var, width=6).grid(row=2, column=1, padx=4, pady=2, sticky="w")
+        ttk.Entry(left_header, textvariable=self.df_forecast_cap_var, width=6).grid(
+            row=2,
+            column=1,
+            padx=UI_GRID_PADX,
+            pady=UI_GRID_PADY,
+            sticky="w",
+        )
 
         ttk.Label(left_header, text="予測キャップ(Px):").grid(row=2, column=2, sticky="w")
         self.df_forecast_cap_pax_var = tk.StringVar(value="" if pax_cap is None else str(pax_cap))
-        ttk.Entry(left_header, textvariable=self.df_forecast_cap_pax_var, width=6).grid(row=2, column=3, padx=4, pady=2, sticky="w")
+        ttk.Entry(left_header, textvariable=self.df_forecast_cap_pax_var, width=6).grid(
+            row=2,
+            column=3,
+            padx=UI_GRID_PADX,
+            pady=UI_GRID_PADY,
+            sticky="w",
+        )
 
         ttk.Label(left_header, text="稼働率キャパ(Occ):").grid(row=2, column=4, sticky="w")
         self.df_occ_cap_var = tk.StringVar(value=str(occ_cap))
-        ttk.Entry(left_header, textvariable=self.df_occ_cap_var, width=6).grid(row=2, column=5, padx=4, pady=2, sticky="w")
+        ttk.Entry(left_header, textvariable=self.df_occ_cap_var, width=6).grid(
+            row=2,
+            column=5,
+            padx=UI_GRID_PADX,
+            pady=UI_GRID_PADY,
+            sticky="w",
+        )
 
         nav_frame = ttk.Frame(left_header)
-        nav_frame.grid(row=2, column=6, columnspan=3, sticky="w", padx=(6, 0), pady=(2, 2))
+        nav_frame.grid(
+            row=2,
+            column=6,
+            columnspan=3,
+            sticky="w",
+            padx=(UI_GRID_PADX * 2, 0),
+            pady=(UI_GRID_PADY, UI_GRID_PADY),
+        )
 
-        ttk.Label(nav_frame, text="月移動:").pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(nav_frame, text="月移動:").pack(side=tk.LEFT, padx=(0, UI_GRID_PADX))
         ttk.Button(
             nav_frame,
             text="-1Y",
             command=lambda: self._on_df_shift_month(-12),
-        ).pack(side=tk.LEFT, padx=2)
+        ).pack(side=tk.LEFT, padx=UI_GRID_PADX)
         ttk.Button(
             nav_frame,
             text="-1M",
             command=lambda: self._on_df_shift_month(-1),
-        ).pack(side=tk.LEFT, padx=2)
+        ).pack(side=tk.LEFT, padx=UI_GRID_PADX)
         ttk.Button(
             nav_frame,
             text="+1M",
             command=lambda: self._on_df_shift_month(+1),
-        ).pack(side=tk.LEFT, padx=2)
+        ).pack(side=tk.LEFT, padx=UI_GRID_PADX)
         ttk.Button(
             nav_frame,
             text="+1Y",
             command=lambda: self._on_df_shift_month(+12),
-        ).pack(side=tk.LEFT, padx=2)
+        ).pack(side=tk.LEFT, padx=UI_GRID_PADX)
 
         phase_frame = ttk.LabelFrame(right_header, text="フェーズ補正（売上）")
-        phase_frame.grid(row=0, column=0, sticky="ne", padx=4, pady=(2, 0))
+        phase_frame.grid(row=0, column=0, sticky="ne", padx=UI_GRID_PADX, pady=(UI_GRID_PADY, 0))
 
         clip_frame = ttk.Frame(phase_frame)
-        clip_frame.pack(side=tk.TOP, fill=tk.X, padx=4, pady=(2, 0))
+        clip_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_GRID_PADX, pady=(UI_GRID_PADY, 0))
         ttk.Label(clip_frame, text="補正幅（最大±）:").pack(side=tk.LEFT)
         self.df_phase_clip_var = tk.StringVar(value=self._format_phase_clip_pct(PHASE_CLIP_DEFAULT))
         clip_combo = ttk.Combobox(
@@ -2160,9 +2274,9 @@ class BookingCurveApp(tk.Tk):
             textvariable=self.df_phase_clip_var,
             values=[self._format_phase_clip_pct(value) for value in PHASE_CLIP_OPTIONS],
             state="readonly",
-            width=7,
+            width=6,
         )
-        clip_combo.pack(side=tk.LEFT, padx=(4, 0))
+        clip_combo.pack(side=tk.LEFT, padx=(UI_GRID_PADX, 0))
         clip_combo.bind("<<ComboboxSelected>>", self._on_phase_clip_changed)
 
         self.df_phase_entries = []
@@ -2170,10 +2284,10 @@ class BookingCurveApp(tk.Tk):
 
         for idx in range(3):
             row_frame = ttk.Frame(phase_frame)
-            row_frame.pack(side=tk.TOP, fill=tk.X, padx=4, pady=2)
+            row_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
 
             month_label = ttk.Label(row_frame, text="YYYYMM", width=8)
-            month_label.pack(side=tk.LEFT, padx=(0, 4))
+            month_label.pack(side=tk.LEFT, padx=(0, UI_GRID_PADX))
 
             phase_var = tk.StringVar(value="中立")
             phase_combo = ttk.Combobox(
@@ -2181,9 +2295,9 @@ class BookingCurveApp(tk.Tk):
                 textvariable=phase_var,
                 values=PHASE_OPTIONS,
                 state="readonly",
-                width=6,
+                width=5,
             )
-            phase_combo.pack(side=tk.LEFT, padx=(0, 4))
+            phase_combo.pack(side=tk.LEFT, padx=(0, UI_GRID_PADX))
 
             strength_var = tk.StringVar(value="中")
             strength_combo = ttk.Combobox(
@@ -2191,9 +2305,9 @@ class BookingCurveApp(tk.Tk):
                 textvariable=strength_var,
                 values=PHASE_STRENGTH_OPTIONS,
                 state="readonly",
-                width=4,
+                width=3,
             )
-            strength_combo.pack(side=tk.LEFT, padx=(0, 4))
+            strength_combo.pack(side=tk.LEFT, padx=(0, UI_GRID_PADX))
 
             phase_combo.bind("<<ComboboxSelected>>", self._on_phase_override_changed)
             strength_combo.bind("<<ComboboxSelected>>", self._on_phase_override_changed)
@@ -2208,7 +2322,7 @@ class BookingCurveApp(tk.Tk):
             self.df_phase_month_labels.append(month_label)
 
         summary_controls = ttk.Frame(frame)
-        summary_controls.pack(side=tk.TOP, fill=tk.X, padx=6, pady=(0, 2))
+        summary_controls.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, UI_GRID_PADY))
         self.df_summary_visible_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             summary_controls,
@@ -2218,7 +2332,7 @@ class BookingCurveApp(tk.Tk):
         ).pack(side=tk.LEFT)
 
         summary_frame = ttk.LabelFrame(frame, text="サマリ")
-        summary_frame.pack(side=tk.TOP, anchor="w", padx=6, pady=(0, 4))
+        summary_frame.pack(side=tk.TOP, anchor="w", padx=UI_SECTION_PADX, pady=(0, UI_GRID_PADY + 1))
         self.df_summary_frame = summary_frame
 
         metrics = ["Rooms", "Pax", "Rev", "OCC", "ADR", "DOR", "RevPAR"]
@@ -2251,7 +2365,7 @@ class BookingCurveApp(tk.Tk):
 
         # テーブル用コンテナ
         table_container = ttk.Frame(frame)
-        table_container.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+        table_container.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=UI_SECTION_PADX, pady=(0, UI_SECTION_PADY))
         self.df_table_container = table_container
 
         self.df_tree = ttk.Treeview(table_container, columns=[], show="headings", height=25)
@@ -2269,7 +2383,7 @@ class BookingCurveApp(tk.Tk):
         table_container.columnconfigure(0, weight=1)
 
         df_label_frame = ttk.Frame(frame)
-        df_label_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 4))
+        df_label_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, UI_GRID_PADY + 1))
         df_label_frame.grid_columnconfigure(0, weight=1)
         df_label_frame.grid_columnconfigure(1, weight=1)
 
@@ -3451,28 +3565,28 @@ class BookingCurveApp(tk.Tk):
         frame = self.tab_model_eval
 
         top = ttk.Frame(frame)
-        top.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
+        top.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=UI_SECTION_PADY)
 
         ttk.Label(top, text="ホテル:").grid(row=0, column=0, sticky="w")
         self.me_hotel_var = self.hotel_var
         hotel_combo = ttk.Combobox(top, textvariable=self.me_hotel_var, state="readonly")
         hotel_combo["values"] = sorted(HOTEL_CONFIG.keys())
-        hotel_combo.grid(row=0, column=1, padx=4, pady=2)
+        hotel_combo.grid(row=0, column=1, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
 
         run_btn = ttk.Button(top, text="評価読み込み", command=self._on_load_model_eval)
-        run_btn.grid(row=0, column=2, padx=4, pady=2)
+        run_btn.grid(row=0, column=2, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
 
-        ttk.Label(top, text="開始月(YYYYMM):").grid(row=0, column=3, sticky="w", padx=(8, 4))
-        ttk.Entry(top, textvariable=self.me_from_var, width=8).grid(row=0, column=4, padx=4, pady=2)
+        ttk.Label(top, text="開始月(YYYYMM):").grid(row=0, column=3, sticky="w", padx=(UI_GRID_PADX * 2, UI_GRID_PADX))
+        ttk.Entry(top, textvariable=self.me_from_var, width=8).grid(row=0, column=4, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
 
-        ttk.Label(top, text="終了月(YYYYMM):").grid(row=0, column=5, sticky="w", padx=(8, 4))
-        ttk.Entry(top, textvariable=self.me_to_var, width=8).grid(row=0, column=6, padx=4, pady=2)
+        ttk.Label(top, text="終了月(YYYYMM):").grid(row=0, column=5, sticky="w", padx=(UI_GRID_PADX * 2, UI_GRID_PADX))
+        ttk.Entry(top, textvariable=self.me_to_var, width=8).grid(row=0, column=6, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
 
-        ttk.Button(top, text="前月", command=self._on_me_prev_month_clicked).grid(row=0, column=7, padx=4, pady=2)
-        ttk.Button(top, text="直近3ヶ月", command=self._on_me_last3_clicked).grid(row=0, column=8, padx=4, pady=2)
-        ttk.Button(top, text="直近12ヶ月", command=self._on_me_last12_clicked).grid(row=0, column=9, padx=4, pady=2)
-        ttk.Button(top, text="CSV出力", command=self._on_export_model_eval_csv).grid(row=0, column=10, padx=4, pady=2)
-        ttk.Button(top, text="評価再計算", command=self._on_rebuild_evaluation_csv).grid(row=0, column=11, padx=4, pady=2)
+        ttk.Button(top, text="前月", command=self._on_me_prev_month_clicked).grid(row=0, column=7, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        ttk.Button(top, text="直近3ヶ月", command=self._on_me_last3_clicked).grid(row=0, column=8, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        ttk.Button(top, text="直近12ヶ月", command=self._on_me_last12_clicked).grid(row=0, column=9, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        ttk.Button(top, text="CSV出力", command=self._on_export_model_eval_csv).grid(row=0, column=10, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        ttk.Button(top, text="評価再計算", command=self._on_rebuild_evaluation_csv).grid(row=0, column=11, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
 
         columns = [
             "target_month",
@@ -3495,7 +3609,7 @@ class BookingCurveApp(tk.Tk):
         self.me_tree.tag_configure("me_odd", background="#f5f5f5")
         self.me_tree.tag_configure("me_total", background="#fff4d8")
         self.me_tree.tag_configure("me_best", background="#e0f2ff")
-        self.me_tree.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=8)
+        self.me_tree.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=UI_SECTION_PADX, pady=UI_SECTION_PADY)
 
         vsb = ttk.Scrollbar(frame, orient="vertical", command=self.me_tree.yview)
         self.me_tree.configure(yscrollcommand=vsb.set)
@@ -3719,32 +3833,32 @@ class BookingCurveApp(tk.Tk):
 
         # 上部フィルタフォーム
         top = ttk.Frame(frame)
-        top.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
+        top.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=UI_SECTION_PADY)
 
         self.asof_hotel_var = self.hotel_var
         ttk.Label(top, text="ホテル:").grid(row=0, column=0, sticky="w")
         hotel_combo = ttk.Combobox(top, textvariable=self.asof_hotel_var, state="readonly")
         hotel_combo["values"] = sorted(HOTEL_CONFIG.keys())
-        hotel_combo.grid(row=0, column=1, padx=4, pady=2)
+        hotel_combo.grid(row=0, column=1, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
 
         self.asof_from_ym_var = tk.StringVar()
         self.asof_to_ym_var = tk.StringVar()
         ttk.Label(top, text="期間From (YYYYMM):").grid(row=0, column=2, sticky="w")
-        ttk.Entry(top, textvariable=self.asof_from_ym_var, width=8).grid(row=0, column=3, padx=4, pady=2)
+        ttk.Entry(top, textvariable=self.asof_from_ym_var, width=8).grid(row=0, column=3, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
         ttk.Label(top, text="期間To (YYYYMM):").grid(row=0, column=4, sticky="w")
-        ttk.Entry(top, textvariable=self.asof_to_ym_var, width=8).grid(row=0, column=5, padx=4, pady=2)
+        ttk.Entry(top, textvariable=self.asof_to_ym_var, width=8).grid(row=0, column=5, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
 
         run_btn = ttk.Button(top, text="評価読み込み", command=self._on_load_asof_eval)
-        run_btn.grid(row=0, column=6, padx=4, pady=2)
+        run_btn.grid(row=0, column=6, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
 
         ttk.Checkbutton(
             top,
             text="最適モデルのみ表示",
             variable=self._asof_best_only_var,
             command=self._refresh_asof_eval_tables,
-        ).grid(row=0, column=7, padx=4, pady=2, sticky="w")
+        ).grid(row=0, column=7, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
 
-        ttk.Label(top, text="ASOFフィルタ:").grid(row=0, column=8, padx=(12, 0), pady=2, sticky="w")
+        ttk.Label(top, text="ASOFフィルタ:").grid(row=0, column=8, padx=(UI_GRID_PADX * 2, 0), pady=UI_GRID_PADY, sticky="w")
         asof_filter_combo = ttk.Combobox(
             top,
             textvariable=self._asof_filter_var,
@@ -3752,15 +3866,15 @@ class BookingCurveApp(tk.Tk):
             values=["(すべて)", "M-2_END", "M-1_END", "M10", "M20"],
             width=10,
         )
-        asof_filter_combo.grid(row=0, column=9, padx=4, pady=2, sticky="w")
+        asof_filter_combo.grid(row=0, column=9, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
         asof_filter_combo.bind("<<ComboboxSelected>>", lambda *_: self._refresh_asof_eval_tables())
 
-        ttk.Button(top, text="CSV出力(サマリ)", command=self._on_export_asof_overview_csv).grid(row=0, column=10, padx=4, pady=2)
-        ttk.Button(top, text="CSV出力(月別ログ)", command=self._on_export_asof_detail_csv).grid(row=0, column=11, padx=4, pady=2)
+        ttk.Button(top, text="CSV出力(サマリ)", command=self._on_export_asof_overview_csv).grid(row=0, column=10, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        ttk.Button(top, text="CSV出力(月別ログ)", command=self._on_export_asof_detail_csv).grid(row=0, column=11, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
 
         # ASOF別サマリテーブル
         overview_frame = ttk.LabelFrame(frame, text="ASOF別サマリ")
-        overview_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=(0, 4))
+        overview_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=UI_SECTION_PADX, pady=(0, UI_GRID_PADY + 1))
 
         columns = ["model", "asof_type", "mean_error_pct", "mae_pct", "rmse_pct", "n_samples"]
         self.asof_overview_tree = ttk.Treeview(overview_frame, columns=columns, show="headings", height=8)
@@ -3783,7 +3897,7 @@ class BookingCurveApp(tk.Tk):
 
         # 月別ログテーブル
         detail_frame = ttk.LabelFrame(frame, text="月別ログ")
-        detail_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+        detail_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=UI_SECTION_PADX, pady=(0, UI_SECTION_PADY))
 
         detail_columns = ["target_month", "asof_type", "model", "error_pct", "abs_error_pct"]
         self.asof_detail_tree = ttk.Treeview(detail_frame, columns=detail_columns, show="headings", height=12)
@@ -4018,23 +4132,23 @@ class BookingCurveApp(tk.Tk):
         frame = self.tab_booking_curve
 
         form = ttk.Frame(frame)
-        form.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
+        form.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=UI_SECTION_PADY)
 
         ttk.Label(form, text="ホテル:").grid(row=0, column=0, sticky="w")
         self.bc_hotel_var = self.hotel_var
         hotel_combo = ttk.Combobox(form, textvariable=self.bc_hotel_var, state="readonly")
         hotel_combo["values"] = sorted(HOTEL_CONFIG.keys())
-        hotel_combo.grid(row=0, column=1, padx=4, pady=2)
+        hotel_combo.grid(row=0, column=1, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
         hotel_combo.bind("<<ComboboxSelected>>", self._on_bc_hotel_changed)
 
         ttk.Label(form, text="対象月 (YYYYMM):").grid(row=0, column=2, sticky="w")
         current_month = date.today().strftime("%Y%m")
         self.bc_month_var = tk.StringVar(value=current_month)
-        ttk.Entry(form, textvariable=self.bc_month_var, width=8).grid(row=0, column=3, padx=4, pady=2)
+        ttk.Entry(form, textvariable=self.bc_month_var, width=8).grid(row=0, column=3, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
 
         ttk.Label(form, text="曜日:").grid(row=0, column=4, sticky="w")
         self.bc_weekday_var = tk.StringVar(value="5:Sat")
-        weekday_combo = ttk.Combobox(form, textvariable=self.bc_weekday_var, state="readonly", width=7)
+        weekday_combo = ttk.Combobox(form, textvariable=self.bc_weekday_var, state="readonly", width=6)
         weekday_combo["values"] = [
             "0:Mon",
             "1:Tue",
@@ -4044,10 +4158,10 @@ class BookingCurveApp(tk.Tk):
             "5:Sat",
             "6:Sun",
         ]
-        weekday_combo.grid(row=0, column=5, padx=4, pady=2)
+        weekday_combo.grid(row=0, column=5, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
 
         wd_btn_frame = ttk.Frame(form)
-        wd_btn_frame.grid(row=0, column=6, columnspan=7, padx=4, pady=2, sticky="w")
+        wd_btn_frame.grid(row=0, column=6, columnspan=7, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
 
         for text, value in [
             ("Sun", "6:Sun"),
@@ -4065,7 +4179,12 @@ class BookingCurveApp(tk.Tk):
                 command=lambda v=value: self._on_bc_quick_weekday(v),
             ).pack(side=tk.LEFT, padx=1)
 
-        ttk.Label(form, text="AS OF (YYYY-MM-DD):").grid(row=1, column=0, sticky="w", pady=(4, 2))
+        ttk.Label(form, text="AS OF (YYYY-MM-DD):").grid(
+            row=1,
+            column=0,
+            sticky="w",
+            pady=(UI_GRID_PADY + 1, UI_GRID_PADY),
+        )
         self.bc_asof_var = tk.StringVar(value="")  # 今日ではなく空で初期化
         if DateEntry is not None:
             self.bc_asof_entry = DateEntry(
@@ -4080,28 +4199,45 @@ class BookingCurveApp(tk.Tk):
                 textvariable=self.bc_asof_var,
                 width=12,
             )
-        self.bc_asof_entry.grid(row=1, column=1, padx=4, pady=(4, 2))
+        self.bc_asof_entry.grid(
+            row=1,
+            column=1,
+            padx=UI_GRID_PADX,
+            pady=(UI_GRID_PADY + 1, UI_GRID_PADY),
+        )
 
         self.bc_latest_asof_var = tk.StringVar(value="")
-        ttk.Label(form, text="最新ASOF:").grid(row=1, column=2, sticky="w", pady=(4, 2))
+        ttk.Label(form, text="最新ASOF:").grid(row=1, column=2, sticky="w", pady=(UI_GRID_PADY + 1, UI_GRID_PADY))
         self.bc_latest_asof_label = tk.Label(form, textvariable=self.bc_latest_asof_var, width=12, anchor="w")
         self._latest_asof_label_defaults[self.bc_latest_asof_label] = (
             self.bc_latest_asof_label.cget("background"),
             self.bc_latest_asof_label.cget("foreground"),
         )
-        self.bc_latest_asof_label.grid(row=1, column=3, padx=4, pady=(4, 2), sticky="w")
-        ttk.Button(form, text="最新に反映", command=self._on_bc_set_asof_to_latest).grid(row=1, column=4, padx=4, pady=(4, 2), sticky="w")
+        self.bc_latest_asof_label.grid(
+            row=1,
+            column=3,
+            padx=UI_GRID_PADX,
+            pady=(UI_GRID_PADY + 1, UI_GRID_PADY),
+            sticky="w",
+        )
+        ttk.Button(form, text="最新に反映", command=self._on_bc_set_asof_to_latest).grid(
+            row=1,
+            column=4,
+            padx=UI_GRID_PADX,
+            pady=(UI_GRID_PADY + 1, UI_GRID_PADY),
+            sticky="w",
+        )
 
-        ttk.Label(form, text="モデル:").grid(row=1, column=5, sticky="w", pady=(4, 2))
+        ttk.Label(form, text="モデル:").grid(row=1, column=5, sticky="w", pady=(UI_GRID_PADY + 1, UI_GRID_PADY))
         model_values = ["recent90", "recent90w", "pace14", "pace14_market"]
         general_settings = self._settings.get("general") or {}
         default_model = "recent90w"
         saved_model = general_settings.get("last_bc_model")
         initial_model = saved_model if saved_model in model_values else default_model
         self.bc_model_var = tk.StringVar(value=initial_model)
-        model_combo = ttk.Combobox(form, textvariable=self.bc_model_var, state="readonly", width=12)
+        model_combo = ttk.Combobox(form, textvariable=self.bc_model_var, state="readonly", width=11)
         model_combo["values"] = model_values
-        model_combo.grid(row=1, column=6, padx=4, pady=(4, 2))
+        model_combo.grid(row=1, column=6, padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 1, UI_GRID_PADY))
         self.bc_model_var.trace_add("write", lambda *_: self._on_bc_model_changed(model_values))
 
         self.bc_fill_missing_var = tk.BooleanVar(value=True)
@@ -4110,79 +4246,91 @@ class BookingCurveApp(tk.Tk):
             text="欠損補完(NOCB)",
             variable=self.bc_fill_missing_var,
         )
-        self.bc_fill_missing_chk.grid(row=1, column=8, padx=4, pady=(4, 2), sticky="w")
+        self.bc_fill_missing_chk.grid(
+            row=1,
+            column=8,
+            padx=UI_GRID_PADX,
+            pady=(UI_GRID_PADY + 1, UI_GRID_PADY),
+            sticky="w",
+        )
 
         # 現在選択されているホテルのキャパを取得
         current_hotel = self.hotel_var.get().strip() or DEFAULT_HOTEL
         fc_cap, _, _ = self._get_daily_caps_for_hotel(current_hotel)
         self.bc_forecast_cap_var = tk.StringVar(value=str(fc_cap))
 
-        ttk.Label(form, text="予測キャップ:").grid(row=1, column=11, sticky="w", pady=(4, 2))
-        ttk.Entry(form, textvariable=self.bc_forecast_cap_var, width=6).grid(row=1, column=12, padx=2, pady=(4, 2), sticky="w")
+        ttk.Label(form, text="予測キャップ:").grid(row=1, column=11, sticky="w", pady=(UI_GRID_PADY + 1, UI_GRID_PADY))
+        ttk.Entry(form, textvariable=self.bc_forecast_cap_var, width=6).grid(
+            row=1,
+            column=12,
+            padx=UI_GRID_PADX,
+            pady=(UI_GRID_PADY + 1, UI_GRID_PADY),
+            sticky="w",
+        )
 
         save_btn = ttk.Button(form, text="PNG保存", command=self._on_save_booking_curve_png)
-        save_btn.grid(row=1, column=7, padx=4, pady=(4, 2))
+        save_btn.grid(row=1, column=7, padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 1, UI_GRID_PADY))
 
         nav_frame = ttk.Frame(form)
-        nav_frame.grid(row=2, column=2, columnspan=8, sticky="w", pady=(4, 0))
+        nav_frame.grid(row=2, column=2, columnspan=8, sticky="w", pady=(UI_GRID_PADY + 1, 0))
 
         nav_left = ttk.Frame(nav_frame)
         nav_left.pack(side=tk.LEFT)
         nav_right = ttk.Frame(nav_frame)
-        nav_right.pack(side=tk.LEFT, padx=16, fill=tk.X, expand=True)
+        nav_right.pack(side=tk.LEFT, padx=UI_GRID_PADX * 3, fill=tk.X, expand=True)
 
         row1_frame = ttk.Frame(nav_right)
         row1_frame.pack(side=tk.TOP, fill=tk.X, anchor="w")
         row2_frame = ttk.Frame(nav_right)
-        row2_frame.pack(side=tk.TOP, fill=tk.X, anchor="e", pady=(4, 0))
+        row2_frame.pack(side=tk.TOP, fill=tk.X, anchor="e", pady=(UI_GRID_PADY + 1, 0))
 
-        ttk.Label(nav_left, text="月移動:").pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(nav_left, text="月移動:").pack(side=tk.LEFT, padx=(0, UI_GRID_PADX))
         ttk.Button(
             nav_left,
             text="-1Y",
             command=lambda: self._on_bc_shift_month(-12),
-        ).pack(side=tk.LEFT, padx=2)
+        ).pack(side=tk.LEFT, padx=UI_GRID_PADX)
         ttk.Button(
             nav_left,
             text="-1M",
             command=lambda: self._on_bc_shift_month(-1),
-        ).pack(side=tk.LEFT, padx=2)
+        ).pack(side=tk.LEFT, padx=UI_GRID_PADX)
         ttk.Button(
             nav_left,
             text="+1M",
             command=lambda: self._on_bc_shift_month(+1),
-        ).pack(side=tk.LEFT, padx=2)
+        ).pack(side=tk.LEFT, padx=UI_GRID_PADX)
         ttk.Button(
             nav_left,
             text="+1Y",
             command=lambda: self._on_bc_shift_month(+12),
-        ).pack(side=tk.LEFT, padx=2)
+        ).pack(side=tk.LEFT, padx=UI_GRID_PADX)
 
-        ttk.Label(row1_frame, text="LTソース:").pack(side=tk.LEFT, padx=(4, 2))
+        ttk.Label(row1_frame, text="LTソース:").pack(side=tk.LEFT, padx=(UI_GRID_PADX, 1))
         self.lt_source_combo = ttk.Combobox(
             row1_frame,
             textvariable=self.lt_source_var,
             state="readonly",
-            width=14,
+            width=13,
         )
         self.lt_source_combo["values"] = ("daily_snapshots", "timeseries")
-        self.lt_source_combo.pack(side=tk.LEFT, padx=2)
+        self.lt_source_combo.pack(side=tk.LEFT, padx=UI_GRID_PADX)
 
         self.chk_update_snapshots = ttk.Checkbutton(
             row1_frame,
             text="LT生成時にdaily snapshots更新",
             variable=self.update_daily_snapshots_var,
         )
-        self.chk_update_snapshots.pack(side=tk.LEFT, padx=4)
+        self.chk_update_snapshots.pack(side=tk.LEFT, padx=UI_GRID_PADX)
 
         self.btn_build_lt = ttk.Button(row2_frame, text="LT_DATA(4ヶ月)", command=self._on_build_lt_data)
-        self.btn_build_lt.pack(side=tk.LEFT, padx=4)
+        self.btn_build_lt.pack(side=tk.LEFT, padx=UI_GRID_PADX)
 
         self.btn_build_lt_range = ttk.Button(row2_frame, text="LT_DATA(期間指定)", command=self._on_build_lt_data_range)
-        self.btn_build_lt_range.pack(side=tk.LEFT, padx=4)
+        self.btn_build_lt_range.pack(side=tk.LEFT, padx=UI_GRID_PADX)
 
         draw_btn = ttk.Button(row2_frame, text="描画", command=self._on_draw_booking_curve)
-        draw_btn.pack(side=tk.LEFT, padx=8)
+        draw_btn.pack(side=tk.LEFT, padx=UI_GRID_PADX * 2)
 
         self.lt_source_var.trace_add("write", self._on_lt_source_changed)
         self.lt_source_combo.bind("<<ComboboxSelected>>", self._on_lt_source_changed)
@@ -4194,10 +4342,10 @@ class BookingCurveApp(tk.Tk):
             anchor="w",
             justify="left",
         )
-        self.bc_best_model_label.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 4))
+        self.bc_best_model_label.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, UI_GRID_PADY + 1))
 
         plot_frame = ttk.Frame(frame)
-        plot_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=8)
+        plot_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=UI_SECTION_PADX, pady=UI_SECTION_PADY)
 
         self.bc_fig = Figure(figsize=(10, 5))
         # 左余白は詰めたまま、凡例用に右側に少しスペースを残す
@@ -4211,7 +4359,7 @@ class BookingCurveApp(tk.Tk):
 
         # --- ブッキングカーブ用テーブル (stay_date × LT) ---
         table_frame = ttk.Frame(frame)
-        table_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=False, padx=8, pady=(0, 8))
+        table_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=False, padx=UI_SECTION_PADX, pady=(0, UI_SECTION_PADY))
 
         # 初期状態では列は空。データ取得時に動的に columns を設定する。
         self.bc_tree = ttk.Treeview(table_frame, columns=(), show="headings", height=8)
@@ -4917,64 +5065,70 @@ class BookingCurveApp(tk.Tk):
         frame = self.tab_monthly_curve
 
         form = ttk.Frame(frame)
-        form.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
+        form.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=UI_SECTION_PADY)
 
         ttk.Label(form, text="ホテル:").grid(row=0, column=0, sticky="w")
         self.mc_hotel_var = self.hotel_var
         mc_combo = ttk.Combobox(form, textvariable=self.mc_hotel_var, state="readonly")
         mc_combo["values"] = sorted(HOTEL_CONFIG.keys())
-        mc_combo.grid(row=0, column=1, padx=4, pady=2)
+        mc_combo.grid(row=0, column=1, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
 
         ttk.Label(form, text="対象月 (YYYYMM):").grid(row=0, column=2, sticky="w")
         current_month = date.today().strftime("%Y%m")
         self.mc_month_var = tk.StringVar(value=current_month)
-        ttk.Entry(form, textvariable=self.mc_month_var, width=8).grid(row=0, column=3, padx=4, pady=2)
+        ttk.Entry(form, textvariable=self.mc_month_var, width=8).grid(row=0, column=3, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
 
         self.mc_show_prev_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(form, text="前年同月を重ねる", variable=self.mc_show_prev_var).grid(row=0, column=4, padx=8, pady=2, sticky="w")
+        ttk.Checkbutton(form, text="前年同月を重ねる", variable=self.mc_show_prev_var).grid(
+            row=0,
+            column=4,
+            padx=UI_GRID_PADX * 2,
+            pady=UI_GRID_PADY,
+            sticky="w",
+        )
 
         self.mc_fill_missing_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(form, text="欠損補完（線形）", variable=self.mc_fill_missing_var).grid(
             row=0,
             column=5,
-            padx=8,
-            pady=2,
+            padx=UI_GRID_PADX * 2,
+            pady=UI_GRID_PADY,
             sticky="w",
         )
 
         save_btn = ttk.Button(form, text="PNG保存", command=self._on_save_monthly_curve_png)
-        save_btn.grid(row=0, column=6, padx=4, pady=2)
+        save_btn.grid(row=0, column=6, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
 
         draw_btn = ttk.Button(form, text="描画", command=self._on_draw_monthly_curve)
-        draw_btn.grid(row=0, column=7, padx=4, pady=2)
+        draw_btn.grid(row=0, column=7, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
 
         nav_frame = ttk.Frame(form)
-        nav_frame.grid(row=1, column=2, columnspan=5, sticky="w", pady=(4, 0))
+        nav_frame.grid(row=1, column=2, columnspan=5, sticky="w", pady=(UI_GRID_PADY + 1, 0))
 
-        ttk.Label(nav_frame, text="月移動:").pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(nav_frame, text="月移動:").pack(side=tk.LEFT, padx=(0, UI_GRID_PADX))
         ttk.Button(
             nav_frame,
             text="-1Y",
             command=lambda: self._shift_month_var(self.mc_month_var, -12),
-        ).pack(side=tk.LEFT, padx=2)
+        ).pack(side=tk.LEFT, padx=UI_GRID_PADX)
         ttk.Button(
             nav_frame,
             text="-1M",
             command=lambda: self._shift_month_var(self.mc_month_var, -1),
-        ).pack(side=tk.LEFT, padx=2)
+        ).pack(side=tk.LEFT, padx=UI_GRID_PADX)
         ttk.Button(
             nav_frame,
             text="+1M",
             command=lambda: self._shift_month_var(self.mc_month_var, +1),
-        ).pack(side=tk.LEFT, padx=2)
+        ).pack(side=tk.LEFT, padx=UI_GRID_PADX)
         ttk.Button(
             nav_frame,
             text="+1Y",
             command=lambda: self._shift_month_var(self.mc_month_var, +12),
-        ).pack(side=tk.LEFT, padx=2)
+        ).pack(side=tk.LEFT, padx=UI_GRID_PADX)
 
         plot_frame = ttk.Frame(frame)
-        plot_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=8)
+        plot_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=UI_SECTION_PADX, pady=UI_SECTION_PADY)
 
         self.mc_fig = Figure(figsize=(10, 5))
         self.mc_ax = self.mc_fig.add_subplot(111)

@@ -2483,7 +2483,9 @@ class BookingCurveApp(tk.Tk):
         control_frame.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
         control_frame.columnconfigure(2, weight=1)
 
-        ttk.Label(control_frame, text="予測範囲（月数）:").grid(row=0, column=0, sticky="w")
+        ttk.Label(control_frame, text="予測範囲（月数）: (最新ASOF+90日固定)").grid(
+            row=0, column=0, sticky="w"
+        )
         self._topdown_horizon_var = tk.StringVar(value="3")
         horizon_spin = ttk.Spinbox(
             control_frame,
@@ -2491,6 +2493,7 @@ class BookingCurveApp(tk.Tk):
             to=12,
             textvariable=self._topdown_horizon_var,
             width=5,
+            state="disabled",
         )
         horizon_spin.grid(row=0, column=1, padx=(4, 12), sticky="w")
 
@@ -2508,7 +2511,7 @@ class BookingCurveApp(tk.Tk):
             textvariable=self._topdown_view_mode_var,
             values=["年度固定", "回転（対象月を中央寄せ）"],
             state="readonly",
-            width=22,
+            width=26,
         )
         view_mode_combo.grid(row=1, column=1, padx=(4, 12), sticky="w", pady=(4, 0))
         view_mode_combo.bind("<<ComboboxSelected>>", lambda _event: self._on_topdown_revpar_update())
@@ -2748,31 +2751,40 @@ class BookingCurveApp(tk.Tk):
         )
         line_color = actual_line.get_color() if actual_line is not None else None
 
-        dashed_series = [np.nan] * 12
-        last_actual_idx = None
-        for idx, value in enumerate(current_actual):
-            if value is not None:
-                last_actual_idx = idx
-        first_forecast_idx = None
-        for idx, value in enumerate(current_forecast):
-            if value is not None:
-                if first_forecast_idx is None or idx < first_forecast_idx:
-                    first_forecast_idx = idx
-                dashed_series[idx] = value
-        if last_actual_idx is not None:
-            dashed_series[last_actual_idx] = current_actual[last_actual_idx]
-            if first_forecast_idx is not None and first_forecast_idx > last_actual_idx + 1:
-                start_value = current_actual[last_actual_idx]
-                end_value = current_forecast[first_forecast_idx]
-                if start_value is not None and end_value is not None:
-                    steps = first_forecast_idx - last_actual_idx
-                    for step in range(1, steps):
-                        interp = start_value + (end_value - start_value) * (step / steps)
-                        dashed_series[last_actual_idx + step] = interp
-        forecast_kwargs = {"linestyle": "--", "linewidth": 2.2, "label": f"{current_fy}年度(予測)"}
-        if line_color is not None:
-            forecast_kwargs["color"] = line_color
-        _plot_segmented_line(dashed_series, **forecast_kwargs)
+        has_forecast = any(value is not None for value in current_forecast)
+        if has_forecast:
+            dashed_series = [np.nan] * 12
+            last_actual_idx = None
+            for idx, value in enumerate(current_actual):
+                if value is not None:
+                    last_actual_idx = idx
+            first_forecast_idx = None
+            for idx, value in enumerate(current_forecast):
+                if value is not None:
+                    if first_forecast_idx is None or idx < first_forecast_idx:
+                        first_forecast_idx = idx
+                    dashed_series[idx] = value
+            if last_actual_idx is not None:
+                dashed_series[last_actual_idx] = current_actual[last_actual_idx]
+                can_interpolate = seam_idx in (None, 0)
+                if (
+                    can_interpolate
+                    and first_forecast_idx is not None
+                    and first_forecast_idx > last_actual_idx + 1
+                ):
+                    start_value = current_actual[last_actual_idx]
+                    end_value = current_forecast[first_forecast_idx]
+                    if start_value is not None and end_value is not None:
+                        steps = first_forecast_idx - last_actual_idx
+                        for step in range(1, steps):
+                            interp = start_value + (end_value - start_value) * (step / steps)
+                            dashed_series[last_actual_idx + step] = interp
+            y_dashed = np.array([np.nan if v is None else float(v) for v in dashed_series])
+            if np.isfinite(y_dashed).any():
+                forecast_kwargs = {"linestyle": "--", "linewidth": 2.2, "label": f"{current_fy}年度(予測)"}
+                if line_color is not None:
+                    forecast_kwargs["color"] = line_color
+                _plot_segmented_line(dashed_series, **forecast_kwargs)
 
         try:
             idx = int(target_idx)
@@ -2794,7 +2806,7 @@ class BookingCurveApp(tk.Tk):
         ax.grid(True, axis="y", linestyle=":", alpha=0.5)
         fig = getattr(self, "_topdown_fig", None)
         if fig is not None:
-            fig.subplots_adjust(left=0.08, right=0.78)
+            fig.subplots_adjust(left=0.08, right=0.72)
         ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), borderaxespad=0, frameon=False, fontsize=9)
         canvas.draw()
 

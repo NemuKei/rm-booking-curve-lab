@@ -2514,7 +2514,7 @@ class BookingCurveApp(tk.Tk):
             width=26,
         )
         view_mode_combo.grid(row=1, column=1, padx=(4, 12), sticky="w", pady=(4, 0))
-        view_mode_combo.bind("<<ComboboxSelected>>", lambda _event: self._on_topdown_revpar_update())
+        view_mode_combo.bind("<<ComboboxSelected>>", lambda _event: self._on_topdown_view_mode_changed())
 
         update_btn = ttk.Button(
             control_frame,
@@ -2557,6 +2557,13 @@ class BookingCurveApp(tk.Tk):
         self._topdown_diag_text.insert("1.0", "更新ボタンを押すと結果が表示されます。")
         self._topdown_diag_text.configure(state="disabled")
 
+        self._on_topdown_revpar_update()
+
+    def _on_topdown_view_mode_changed(self) -> None:
+        panel = getattr(self, "_topdown_last_panel", None)
+        if panel is not None:
+            self._render_topdown_revpar_panel(panel)
+            return
         self._on_topdown_revpar_update()
 
     def _on_topdown_revpar_update(self) -> None:
@@ -2619,7 +2626,7 @@ class BookingCurveApp(tk.Tk):
             except Exception:
                 latest_asof_ts = pd.to_datetime(date.today()).normalize()
 
-        end_ts = latest_asof_ts + timedelta(days=horizon * 30)
+        end_ts = latest_asof_ts + timedelta(days=90)
         start_period = pd.Period(latest_asof_ts, freq="M")
         end_period = pd.Period(end_ts, freq="M")
         if start_period > end_period:
@@ -2635,6 +2642,8 @@ class BookingCurveApp(tk.Tk):
 
         phase_factors, clip_pct = self._collect_phase_factors_for_months(hotel, forecast_months)
 
+        token = getattr(self, "_topdown_update_token", 0) + 1
+        self._topdown_update_token = token
         self._topdown_status_var.set("更新中...")
 
         def _worker() -> None:
@@ -2658,11 +2667,22 @@ class BookingCurveApp(tk.Tk):
                 error = exc
 
             def _finish() -> None:
-                if error is not None:
-                    self._topdown_status_var.set("")
-                    messagebox.showerror("エラー", f"TopDown RevPAR の更新に失敗しました。\n{error}")
+                if token != getattr(self, "_topdown_update_token", 0):
                     return
-                self._render_topdown_revpar_panel(panel)
+                try:
+                    if error is not None or panel is None:
+                        self._topdown_status_var.set("")
+                        messagebox.showerror("エラー", f"TopDown RevPAR の更新に失敗しました。\n{error}")
+                        return
+                    self._render_topdown_revpar_panel(panel)
+                except Exception as render_exc:  # noqa: BLE001
+                    self._topdown_status_var.set("")
+                    messagebox.showerror("エラー", f"TopDown RevPAR の描画に失敗しました。\n{render_exc}")
+                finally:
+                    if token == getattr(self, "_topdown_update_token", 0) and error is None:
+                        status = self._topdown_status_var.get()
+                        if status == "更新中...":
+                            self._topdown_status_var.set("更新完了")
 
             self.after(0, _finish)
 
@@ -2811,10 +2831,16 @@ class BookingCurveApp(tk.Tk):
         canvas.draw()
 
         diagnostics = panel.get("diagnostics", [])
-        self._update_topdown_diagnostics(diagnostics)
+        skipped = panel.get("skipped_months", {})
+        self._topdown_last_panel = panel
+        self._update_topdown_diagnostics(diagnostics, skipped)
         self._topdown_status_var.set("更新完了")
 
-    def _update_topdown_diagnostics(self, diagnostics: list[dict[str, object]] | object) -> None:
+    def _update_topdown_diagnostics(
+        self,
+        diagnostics: list[dict[str, object]] | object,
+        skipped_months: dict[str, str] | None = None,
+    ) -> None:
         text = getattr(self, "_topdown_diag_text", None)
         if text is None:
             return
@@ -2833,6 +2859,13 @@ class BookingCurveApp(tk.Tk):
                 else:
                     revpar_str = f"{revpar:,.0f}"
                     lines.append(f"{month}: FcRevPAR={revpar_str} / p10={p10_str} / p90={p90_str}{flag}")
+
+        if skipped_months:
+            for month, error_msg in skipped_months.items():
+                err = str(error_msg).splitlines()[0].strip()
+                if len(err) > 80:
+                    err = f"{err[:77]}..."
+                lines.append(f"SKIP: {month} ({err})")
 
         if not lines:
             lines = ["表示可能な診断情報がありません。"]

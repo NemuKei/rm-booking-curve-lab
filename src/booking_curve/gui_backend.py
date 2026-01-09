@@ -966,6 +966,60 @@ def _get_forecast_csv_prefix(gui_model: str) -> tuple[str, str]:
     return model_map[gui_model]
 
 
+def _check_forecast_csv_complete_for_month(
+    hotel_tag: str,
+    target_month: str,
+    as_of_date: str,
+    gui_model: str,
+) -> tuple[bool, str]:
+    prefix, _ = _get_forecast_csv_prefix(gui_model)
+    asof_ts = pd.to_datetime(as_of_date)
+    asof_tag = asof_ts.strftime("%Y%m%d")
+    csv_name = f"{prefix}_{target_month}_{hotel_tag}_asof_{asof_tag}.csv"
+    csv_path = OUTPUT_DIR / csv_name
+    if not csv_path.exists():
+        return False, "CSV not found"
+
+    try:
+        df = pd.read_csv(csv_path, index_col=0, parse_dates=True)
+    except Exception:
+        return False, "CSV read failed"
+
+    if df.empty:
+        return False, "CSV empty"
+    if "forecast_revenue" not in df.columns:
+        return False, "forecast_revenue missing"
+
+    try:
+        year = int(target_month[:4])
+        month = int(target_month[4:])
+    except Exception:
+        return False, "invalid target_month"
+    _, num_days = monthrange(year, month)
+    expected_dates = pd.date_range(
+        start=pd.Timestamp(year=year, month=month, day=1),
+        end=pd.Timestamp(year=year, month=month, day=num_days),
+        freq="D",
+    )
+
+    index_dates = pd.to_datetime(df.index, errors="coerce").normalize()
+    index_dates = index_dates[~pd.isna(index_dates)]
+    if index_dates.empty:
+        return False, "stay_date missing"
+
+    revenue_series = pd.to_numeric(df["forecast_revenue"], errors="coerce")
+    revenue_series.index = index_dates
+    revenue_series = revenue_series[~pd.isna(revenue_series.index)]
+    revenue_by_date = revenue_series.groupby(level=0).max()
+    revenue_by_date = revenue_by_date.reindex(expected_dates)
+    if revenue_by_date.isna().any():
+        return False, "forecast_revenue incomplete"
+
+    if len(expected_dates) != num_days:
+        return False, "unexpected days"
+    return True, "complete"
+
+
 def _get_projected_monthly_revpar(
     hotel_tag: str,
     target_month: str,
@@ -991,9 +1045,6 @@ def _get_projected_monthly_revpar(
         return None
 
     revenue = pd.to_numeric(df["forecast_revenue"], errors="coerce")
-    revenue_total = revenue.sum(min_count=1)
-    if pd.isna(revenue_total):
-        return None
 
     try:
         year = int(target_month[:4])
@@ -1001,6 +1052,27 @@ def _get_projected_monthly_revpar(
     except Exception:
         return None
     _, num_days = monthrange(year, month)
+    expected_dates = pd.date_range(
+        start=pd.Timestamp(year=year, month=month, day=1),
+        end=pd.Timestamp(year=year, month=month, day=num_days),
+        freq="D",
+    )
+
+    index_dates = pd.to_datetime(df.index, errors="coerce").normalize()
+    index_dates = index_dates[~pd.isna(index_dates)]
+    if index_dates.empty:
+        return None
+
+    revenue.index = index_dates
+    revenue = revenue[~pd.isna(revenue.index)]
+    revenue_by_date = revenue.groupby(level=0).max()
+    revenue_by_date = revenue_by_date.reindex(expected_dates)
+    if revenue_by_date.isna().any():
+        return None
+
+    revenue_total = revenue_by_date.sum(min_count=1)
+    if pd.isna(revenue_total):
+        return None
     denom = rooms_cap * num_days
     if denom <= 0:
         return None
@@ -1127,7 +1199,16 @@ def build_topdown_revpar_panel(
                 phase_factors=phase_factors,
                 phase_clip_pct=phase_clip_pct,
             )
-            computable_months.append(month_str)
+            is_complete, reason = _check_forecast_csv_complete_for_month(
+                hotel_tag=hotel_tag,
+                target_month=month_str,
+                as_of_date=as_of_date,
+                gui_model=model_key,
+            )
+            if is_complete:
+                computable_months.append(month_str)
+            else:
+                skipped_months[month_str] = f"INCOMPLETE: {reason}"
         except Exception as exc:  # noqa: BLE001
             logging.warning("Skipping forecast month %s due to error: %s", month_str, exc)
             skipped_months[month_str] = str(exc)

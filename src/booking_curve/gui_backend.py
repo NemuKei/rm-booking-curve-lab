@@ -1271,7 +1271,11 @@ def build_topdown_revpar_panel(
                 target_period = pd.Period(month_str, freq="M")
             except Exception:
                 continue
-            step = target_period - anchor_period
+            try:
+                step = int(target_period.ordinal - anchor_period.ordinal)
+            except Exception as exc:  # noqa: BLE001
+                logging.warning("Skipping band month %s due to step error: %s", month_str, exc)
+                continue
             if step <= 0:
                 continue
             ratios = []

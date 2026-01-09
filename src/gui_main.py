@@ -2716,6 +2716,7 @@ class BookingCurveApp(tk.Tk):
         band_p90 = panel.get("band_p90", [])
         current_actual = panel.get("current_fy_actual", [])
         current_forecast = panel.get("current_fy_forecast", [])
+        anchor_idx = panel.get("anchor_idx")
         show_band = getattr(self, "_topdown_show_band_var", tk.BooleanVar(value=True)).get()
         view_mode_label = getattr(self, "_topdown_view_mode_var", tk.StringVar(value="年度固定")).get()
 
@@ -2730,6 +2731,9 @@ class BookingCurveApp(tk.Tk):
         x = np.arange(12)
 
         seam_idx = None
+        shift = 0
+        orig_current_actual = list(current_actual)
+        orig_current_forecast = list(current_forecast)
         if view_mode_label == "回転（対象月を中央寄せ）":
             try:
                 target_idx = int(target_idx)
@@ -2768,6 +2772,18 @@ class BookingCurveApp(tk.Tk):
                 color=color,
                 **kwargs2,
             )
+            if 0 < seam_idx < len(y):
+                y_left = y[seam_idx - 1]
+                y_right = y[seam_idx]
+                if np.isfinite(y_left) and np.isfinite(y_right):
+                    ax.plot(
+                        [x[seam_idx - 1], x[seam_idx]],
+                        [y_left, y_right],
+                        color="lightgray",
+                        linewidth=1.2,
+                        linestyle="-",
+                        label="_nolegend_",
+                    )
             return first[0] if first else None
 
         for fy, values in lines_by_fy.items():
@@ -2785,43 +2801,44 @@ class BookingCurveApp(tk.Tk):
 
         has_forecast = any(value is not None for value in current_forecast)
         if has_forecast:
-            dashed_series = [np.nan] * 12
-            last_actual_idx = None
-            for idx, value in enumerate(current_actual):
+            dashed_orig = [None] * len(orig_current_actual)
+            first_forecast_idx_orig = None
+            for idx, value in enumerate(orig_current_forecast):
                 if value is not None:
-                    last_actual_idx = idx
-            first_forecast_idx = None
-            for idx, value in enumerate(current_forecast):
-                if value is not None:
-                    if first_forecast_idx is None or idx < first_forecast_idx:
-                        first_forecast_idx = idx
-                    dashed_series[idx] = value
-            if last_actual_idx is not None:
-                dashed_series[last_actual_idx] = current_actual[last_actual_idx]
-                can_interpolate = seam_idx in (None, 0)
-                if (
-                    not can_interpolate
-                    and seam_idx is not None
-                    and first_forecast_idx is not None
-                    and last_actual_idx is not None
-                ):
-                    same_side = (last_actual_idx < seam_idx and first_forecast_idx < seam_idx) or (
-                        last_actual_idx >= seam_idx and first_forecast_idx >= seam_idx
-                    )
-                    if same_side:
-                        can_interpolate = True
-                if (
-                    can_interpolate
-                    and first_forecast_idx is not None
-                    and first_forecast_idx > last_actual_idx + 1
-                ):
-                    start_value = current_actual[last_actual_idx]
-                    end_value = current_forecast[first_forecast_idx]
-                    if start_value is not None and end_value is not None:
-                        steps = first_forecast_idx - last_actual_idx
-                        for step in range(1, steps):
-                            interp = start_value + (end_value - start_value) * (step / steps)
-                            dashed_series[last_actual_idx + step] = interp
+                    if first_forecast_idx_orig is None or idx < first_forecast_idx_orig:
+                        first_forecast_idx_orig = idx
+                    dashed_orig[idx] = value
+            last_actual_idx_orig = None
+            if isinstance(anchor_idx, int) and 0 <= anchor_idx < len(orig_current_actual):
+                if orig_current_actual[anchor_idx] is not None:
+                    last_actual_idx_orig = anchor_idx
+            if last_actual_idx_orig is None:
+                if first_forecast_idx_orig is not None:
+                    for idx in range(first_forecast_idx_orig):
+                        if orig_current_actual[idx] is not None:
+                            last_actual_idx_orig = idx
+                else:
+                    for idx, value in enumerate(orig_current_actual):
+                        if value is not None:
+                            last_actual_idx_orig = idx
+            if last_actual_idx_orig is not None:
+                dashed_orig[last_actual_idx_orig] = orig_current_actual[last_actual_idx_orig]
+            if (
+                last_actual_idx_orig is not None
+                and first_forecast_idx_orig is not None
+                and first_forecast_idx_orig > last_actual_idx_orig + 1
+            ):
+                start_value = orig_current_actual[last_actual_idx_orig]
+                end_value = orig_current_forecast[first_forecast_idx_orig]
+                if start_value is not None and end_value is not None:
+                    steps = first_forecast_idx_orig - last_actual_idx_orig
+                    for step in range(1, steps):
+                        interp = start_value + (end_value - start_value) * (step / steps)
+                        dashed_orig[last_actual_idx_orig + step] = interp
+            if view_mode_label == "回転（対象月を中央寄せ）":
+                dashed_series = _rotate_sequence(dashed_orig, shift)
+            else:
+                dashed_series = dashed_orig
             y_dashed = np.array([np.nan if v is None else float(v) for v in dashed_series])
             if np.isfinite(y_dashed).any():
                 forecast_kwargs = {"linestyle": "--", "linewidth": 2.2, "label": f"{current_fy}年度(予測)"}
@@ -2839,6 +2856,8 @@ class BookingCurveApp(tk.Tk):
             band_low = np.array([np.nan if v is None else float(v) for v in band_p10])
             band_high = np.array([np.nan if v is None else float(v) for v in band_p90])
             mask = np.isfinite(band_low) & np.isfinite(band_high)
+            if view_mode_label == "年度固定" and isinstance(anchor_idx, int) and 0 <= anchor_idx < len(band_low):
+                mask &= np.arange(len(band_low)) > anchor_idx
             if mask.any():
                 if seam_idx in (None, 0):
                     ax.fill_between(

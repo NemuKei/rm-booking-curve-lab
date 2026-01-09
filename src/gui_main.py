@@ -2321,8 +2321,14 @@ class BookingCurveApp(tk.Tk):
             command=self._toggle_df_summary_visibility,
         ).pack(side=tk.LEFT)
 
-        summary_frame = ttk.LabelFrame(frame, text="サマリ")
-        summary_frame.pack(side=tk.TOP, anchor="w", padx=UI_SECTION_PADX, pady=(0, 1))
+        summary_container = ttk.Frame(frame)
+        summary_container.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, 1))
+        summary_container.grid_columnconfigure(0, weight=1)
+        summary_container.grid_columnconfigure(1, weight=1)
+        self.df_summary_container = summary_container
+
+        summary_frame = ttk.LabelFrame(summary_container, text="サマリ")
+        summary_frame.grid(row=0, column=0, sticky="nw", padx=(0, UI_GRID_PADX))
         self.df_summary_frame = summary_frame
 
         metrics = ["Rooms", "Pax", "Rev", "OCC", "ADR", "DOR", "RevPAR"]
@@ -2353,6 +2359,26 @@ class BookingCurveApp(tk.Tk):
                     padx=1,
                 )
 
+        eval_frame = ttk.LabelFrame(summary_container, text="評価")
+        eval_frame.grid(row=0, column=1, sticky="ne")
+        eval_frame.grid_columnconfigure(0, weight=1)
+
+        self.df_best_model_label = ttk.Label(
+            eval_frame,
+            text="最適モデル: 評価データなし",
+            anchor="w",
+            justify="left",
+        )
+        self.df_best_model_label.pack(side=tk.TOP, anchor="w", padx=UI_GRID_PADX, pady=(UI_GRID_PADY, 0))
+
+        self.df_scenario_label = ttk.Label(
+            eval_frame,
+            text="",
+            anchor="w",
+            justify="left",
+        )
+        self.df_scenario_label.pack(side=tk.TOP, anchor="w", padx=UI_GRID_PADX, pady=(0, UI_GRID_PADY))
+
         # テーブル用コンテナ
         table_container = ttk.Frame(frame)
         table_container.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=UI_SECTION_PADX, pady=(0, UI_SECTION_PADY))
@@ -2371,27 +2397,6 @@ class BookingCurveApp(tk.Tk):
         yscroll.grid(row=0, column=1, sticky="ns")
         table_container.rowconfigure(0, weight=1)
         table_container.columnconfigure(0, weight=1)
-
-        df_label_frame = ttk.Frame(frame)
-        df_label_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, UI_GRID_PADY + 1))
-        df_label_frame.grid_columnconfigure(0, weight=1)
-        df_label_frame.grid_columnconfigure(1, weight=1)
-
-        self.df_best_model_label = ttk.Label(
-            df_label_frame,
-            text="最適モデル: 評価データなし",
-            anchor="w",
-            justify="left",
-        )
-        self.df_best_model_label.grid(row=0, column=0, sticky="w")
-
-        self.df_scenario_label = ttk.Label(
-            df_label_frame,
-            text="",
-            anchor="e",
-            justify="right",
-        )
-        self.df_scenario_label.grid(row=0, column=1, sticky="e")
 
         # セル選択状態
         self._df_cell_anchor = None
@@ -2826,17 +2831,23 @@ class BookingCurveApp(tk.Tk):
         text.configure(state="disabled")
 
     def _toggle_df_summary_visibility(self) -> None:
-        frame = getattr(self, "df_summary_frame", None)
-        if frame is None:
+        container = getattr(self, "df_summary_container", None)
+        if container is None:
             return
         if self.df_summary_visible_var.get():
             before_widget = getattr(self, "df_table_container", None)
             if before_widget is not None:
-                frame.pack(side=tk.TOP, anchor="w", padx=6, pady=(0, 4), before=before_widget)
+                container.pack(
+                    side=tk.TOP,
+                    fill=tk.X,
+                    padx=UI_SECTION_PADX,
+                    pady=(0, 1),
+                    before=before_widget,
+                )
             else:
-                frame.pack(side=tk.TOP, anchor="w", padx=6, pady=(0, 4))
+                container.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, 1))
         else:
-            frame.pack_forget()
+            container.pack_forget()
 
     def _apply_latest_asof_freshness(self, label: tk.Label, latest_asof_str: str) -> None:
         default_bg, default_fg = self._latest_asof_label_defaults.get(
@@ -4148,6 +4159,8 @@ class BookingCurveApp(tk.Tk):
 
         right_row1 = ttk.Frame(right_zone)
         right_row1.pack(side=tk.TOP, anchor="e")
+        right_row2 = ttk.Frame(right_zone)
+        right_row2.pack(side=tk.TOP, anchor="e", fill=tk.X)
 
         ttk.Label(left_row1, text="ホテル:").pack(side=tk.LEFT)
         self.bc_hotel_var = self.hotel_var
@@ -4165,43 +4178,33 @@ class BookingCurveApp(tk.Tk):
             pady=UI_GRID_PADY,
         )
 
-        ttk.Label(left_row1, text="曜日:").pack(side=tk.LEFT)
-        self.bc_weekday_var = tk.StringVar(value="5:Sat")
-        weekday_combo = ttk.Combobox(left_row1, textvariable=self.bc_weekday_var, state="readonly", width=6)
-        weekday_combo["values"] = [
-            "0:Mon",
-            "1:Tue",
-            "2:Wed",
-            "3:Thu",
-            "4:Fri",
-            "5:Sat",
-            "6:Sun",
-        ]
-        weekday_combo.pack(side=tk.LEFT, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
-
         nav_frame = ttk.Frame(left_row1)
         nav_frame.pack(side=tk.LEFT, padx=(UI_GRID_PADX, 0), pady=UI_GRID_PADY)
         ttk.Label(nav_frame, text="月移動:").pack(side=tk.LEFT, padx=(0, UI_GRID_PADX))
         ttk.Button(
             nav_frame,
             text="-1Y",
+            width=4,
             command=lambda: self._on_bc_shift_month(-12),
-        ).pack(side=tk.LEFT, padx=UI_GRID_PADX)
+        ).pack(side=tk.LEFT, padx=1)
         ttk.Button(
             nav_frame,
             text="-1M",
+            width=4,
             command=lambda: self._on_bc_shift_month(-1),
-        ).pack(side=tk.LEFT, padx=UI_GRID_PADX)
+        ).pack(side=tk.LEFT, padx=1)
         ttk.Button(
             nav_frame,
             text="+1M",
+            width=4,
             command=lambda: self._on_bc_shift_month(+1),
-        ).pack(side=tk.LEFT, padx=UI_GRID_PADX)
+        ).pack(side=tk.LEFT, padx=1)
         ttk.Button(
             nav_frame,
             text="+1Y",
+            width=4,
             command=lambda: self._on_bc_shift_month(+12),
-        ).pack(side=tk.LEFT, padx=UI_GRID_PADX)
+        ).pack(side=tk.LEFT, padx=1)
 
         ttk.Label(left_row2, text="AS OF (YYYY-MM-DD):").pack(
             side=tk.LEFT,
@@ -4314,20 +4317,37 @@ class BookingCurveApp(tk.Tk):
         self._sync_daily_snapshots_checkbox_state()
 
         self.bc_best_model_label = ttk.Label(
-            frame,
+            right_row2,
             text="最適モデル: 評価データなし",
             anchor="w",
             justify="left",
         )
-        self.bc_best_model_label.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, UI_GRID_PADY + 1))
+        self.bc_best_model_label.pack(side=tk.LEFT, anchor="w", padx=UI_GRID_PADX, pady=(0, UI_GRID_PADY + 1))
 
         plot_toolbar = ttk.Frame(frame)
         plot_toolbar.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, UI_GRID_PADY))
         toolbar_spacer = ttk.Frame(plot_toolbar)
         toolbar_spacer.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        weekday_quick_frame = ttk.Frame(plot_toolbar)
-        weekday_quick_frame.pack(side=tk.RIGHT, anchor="e")
+        weekday_toolbar = ttk.Frame(plot_toolbar)
+        weekday_toolbar.pack(side=tk.RIGHT, anchor="e")
+
+        ttk.Label(weekday_toolbar, text="曜日:").pack(side=tk.LEFT, padx=(0, UI_GRID_PADX))
+        self.bc_weekday_var = tk.StringVar(value="5:Sat")
+        weekday_combo = ttk.Combobox(weekday_toolbar, textvariable=self.bc_weekday_var, state="readonly", width=6)
+        weekday_combo["values"] = [
+            "0:Mon",
+            "1:Tue",
+            "2:Wed",
+            "3:Thu",
+            "4:Fri",
+            "5:Sat",
+            "6:Sun",
+        ]
+        weekday_combo.pack(side=tk.LEFT, padx=(0, UI_GRID_PADX), pady=UI_GRID_PADY)
+
+        weekday_quick_frame = ttk.Frame(weekday_toolbar)
+        weekday_quick_frame.pack(side=tk.LEFT)
 
         for text, value in [
             ("Sun", "6:Sun"),
@@ -4341,7 +4361,7 @@ class BookingCurveApp(tk.Tk):
             ttk.Button(
                 weekday_quick_frame,
                 text=text,
-                width=3,
+                width=4,
                 command=lambda v=value: self._on_bc_quick_weekday(v),
             ).pack(side=tk.LEFT, padx=1)
 

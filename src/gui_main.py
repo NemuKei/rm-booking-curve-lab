@@ -2714,6 +2714,8 @@ class BookingCurveApp(tk.Tk):
         target_idx = panel.get("target_month_index", 0)
         band_p10 = panel.get("band_p10", [])
         band_p90 = panel.get("band_p90", [])
+        band_by_month = panel.get("band_by_month", {})
+        rotation_month_strs = panel.get("rotation_month_strs", [])
         current_actual = panel.get("current_fy_actual", [])
         current_forecast = panel.get("current_fy_forecast", [])
         anchor_idx = panel.get("anchor_idx")
@@ -2745,8 +2747,22 @@ class BookingCurveApp(tk.Tk):
             lines_by_fy = {fy: _rotate_sequence(list(values), shift) for fy, values in lines_by_fy.items()}
             current_actual = _rotate_sequence(list(current_actual), shift)
             current_forecast = _rotate_sequence(list(current_forecast), shift)
-            band_p10 = _rotate_sequence(list(band_p10), shift)
-            band_p90 = _rotate_sequence(list(band_p90), shift)
+            if isinstance(band_by_month, dict) and rotation_month_strs:
+                rotated_p10 = []
+                rotated_p90 = []
+                for month_str in rotation_month_strs:
+                    band_values = band_by_month.get(month_str)
+                    if band_values is None:
+                        rotated_p10.append(None)
+                        rotated_p90.append(None)
+                    else:
+                        rotated_p10.append(band_values[0])
+                        rotated_p90.append(band_values[1])
+                band_p10 = rotated_p10
+                band_p90 = rotated_p90
+            else:
+                band_p10 = _rotate_sequence(list(band_p10), shift)
+                band_p90 = _rotate_sequence(list(band_p90), shift)
             target_idx = (target_idx + shift) % 12
             if shift_mod != 0:
                 seam_idx = shift_mod

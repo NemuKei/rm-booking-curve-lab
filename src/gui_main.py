@@ -3869,8 +3869,12 @@ class BookingCurveApp(tk.Tk):
         asof_filter_combo.grid(row=0, column=9, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
         asof_filter_combo.bind("<<ComboboxSelected>>", lambda *_: self._refresh_asof_eval_tables())
 
-        ttk.Button(top, text="CSV出力(サマリ)", command=self._on_export_asof_overview_csv).grid(row=0, column=10, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
-        ttk.Button(top, text="CSV出力(月別ログ)", command=self._on_export_asof_detail_csv).grid(row=0, column=11, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        ttk.Button(top, text="CSV出力(サマリ)", command=self._on_export_asof_overview_csv).grid(
+            row=0, column=10, padx=UI_GRID_PADX, pady=UI_GRID_PADY
+        )
+        ttk.Button(top, text="CSV出力(月別ログ)", command=self._on_export_asof_detail_csv).grid(
+            row=0, column=11, padx=UI_GRID_PADX, pady=UI_GRID_PADY
+        )
 
         # ASOF別サマリテーブル
         overview_frame = ttk.LabelFrame(frame, text="ASOF別サマリ")

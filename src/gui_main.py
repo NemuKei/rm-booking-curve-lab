@@ -2056,190 +2056,47 @@ class BookingCurveApp(tk.Tk):
 
         # 上部入力フォーム
         header_frame = ttk.Frame(frame)
-        header_frame.pack(side=tk.TOP, anchor="w", padx=UI_SECTION_PADX, pady=(UI_GRID_PADY + 1, 1))
+        header_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(UI_GRID_PADY + 1, 1))
+        header_frame.grid_columnconfigure(0, weight=0)
+        header_frame.grid_columnconfigure(1, weight=1)
+        header_frame.grid_columnconfigure(2, weight=0)
 
-        left_header = ttk.Frame(header_frame)
-        left_header.pack(side=tk.LEFT, anchor="nw")
-        right_header = ttk.Frame(header_frame)
-        right_header.pack(side=tk.LEFT, anchor="ne", padx=(UI_GRID_PADX * 3, 0))
+        left_zone = ttk.Frame(header_frame)
+        left_zone.grid(row=0, column=0, sticky="nw")
+        ttk.Frame(header_frame).grid(row=0, column=1, sticky="nsew")
+        right_zone = ttk.Frame(header_frame)
+        right_zone.grid(row=0, column=2, sticky="ne", padx=(UI_GRID_PADX * 2, 0))
+
+        left_row1 = ttk.Frame(left_zone)
+        left_row1.pack(side=tk.TOP, anchor="w")
+        left_row2 = ttk.Frame(left_zone)
+        left_row2.pack(side=tk.TOP, anchor="w")
+        left_row3 = ttk.Frame(left_zone)
+        left_row3.pack(side=tk.TOP, anchor="w")
+        left_row4 = ttk.Frame(left_zone)
+        left_row4.pack(side=tk.TOP, anchor="w")
 
         # ホテル
-        ttk.Label(left_header, text="ホテル:").grid(row=0, column=0, sticky="w")
+        ttk.Label(left_row1, text="ホテル:").pack(side=tk.LEFT)
         self.df_hotel_var = self.hotel_var
-        hotel_combo = ttk.Combobox(left_header, textvariable=self.df_hotel_var, state="readonly", width=11)
+        hotel_combo = ttk.Combobox(left_row1, textvariable=self.df_hotel_var, state="readonly", width=11)
         hotel_combo["values"] = sorted(HOTEL_CONFIG.keys())
-        hotel_combo.grid(row=0, column=1, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
+        hotel_combo.pack(side=tk.LEFT, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
         hotel_combo.bind("<<ComboboxSelected>>", self._on_df_hotel_changed)
 
         # 対象月
-        ttk.Label(left_header, text="対象月 (YYYYMM):").grid(row=0, column=2, sticky="w")
+        ttk.Label(left_row1, text="対象月 (YYYYMM):").pack(side=tk.LEFT)
         current_month = date.today().strftime("%Y%m")
         self.df_month_var = tk.StringVar(value=current_month)
-        ttk.Entry(left_header, textvariable=self.df_month_var, width=8).grid(
-            row=0,
-            column=3,
+        ttk.Entry(left_row1, textvariable=self.df_month_var, width=8).pack(
+            side=tk.LEFT,
             padx=UI_GRID_PADX,
             pady=UI_GRID_PADY,
-            sticky="w",
         )
         self.df_month_var.trace_add("write", lambda *_: self._refresh_phase_overrides_ui())
 
-        # as_of
-        ttk.Label(left_header, text="AS OF (YYYY-MM-DD):").grid(row=0, column=4, sticky="w")
-        self.df_asof_var = tk.StringVar(value="")
-        if DateEntry is not None:
-            self.df_asof_entry = DateEntry(
-                left_header,
-                textvariable=self.df_asof_var,
-                date_pattern="yyyy-mm-dd",
-                width=12,
-            )
-        else:
-            self.df_asof_entry = ttk.Entry(
-                left_header,
-                textvariable=self.df_asof_var,
-                width=12,
-            )
-        self.df_asof_entry.grid(row=0, column=5, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
-
-        self.df_latest_asof_var = tk.StringVar(value="")
-        ttk.Label(left_header, text="最新ASOF:").grid(row=0, column=6, sticky="w")
-        self.df_latest_asof_label = tk.Label(left_header, textvariable=self.df_latest_asof_var, width=12, anchor="w")
-        self._latest_asof_label_defaults[self.df_latest_asof_label] = (
-            self.df_latest_asof_label.cget("background"),
-            self.df_latest_asof_label.cget("foreground"),
-        )
-        self.df_latest_asof_label.grid(row=0, column=7, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
-        ttk.Button(left_header, text="最新に反映", command=self._on_df_set_asof_to_latest).grid(
-            row=0,
-            column=8,
-            padx=UI_GRID_PADX,
-            pady=UI_GRID_PADY,
-            sticky="w",
-        )
-
-        # モデル
-        ttk.Label(left_header, text="モデル:").grid(row=1, column=0, sticky="w", pady=(UI_GRID_PADY + 1, UI_GRID_PADY))
-        model_values = [
-            "recent90",
-            "recent90w",
-            "pace14",
-            "pace14_market",
-        ]
-        general_settings = self._settings.get("general") or {}
-        default_model = "recent90w"
-        saved_model = general_settings.get("last_df_model")
-        initial_model = saved_model if saved_model in model_values else default_model
-        self.df_model_var = tk.StringVar(value=initial_model)
-        model_combo = ttk.Combobox(
-            left_header,
-            textvariable=self.df_model_var,
-            state="readonly",
-            width=16,
-        )
-        model_combo["values"] = model_values
-        model_combo.grid(
-            row=1,
-            column=1,
-            padx=UI_GRID_PADX,
-            pady=(UI_GRID_PADY + 1, UI_GRID_PADY),
-            sticky="w",
-        )
-        self.df_model_var.trace_add("write", lambda *_: self._on_df_model_changed(model_values))
-
-        # 実行ボタン
-        forecast_btn = ttk.Button(
-            left_header,
-            text="Forecast実行",
-            command=self._on_run_daily_forecast,
-        )
-        forecast_btn.grid(row=1, column=2, padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 1, UI_GRID_PADY), sticky="w")
-        export_btn = ttk.Button(left_header, text="CSV出力", command=self._on_export_daily_forecast_csv)
-        export_btn.grid(row=1, column=3, padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 1, UI_GRID_PADY), sticky="w")
-        ttk.Button(
-            left_header,
-            text="TopDown RevPAR",
-            command=self._open_topdown_revpar_popup,
-        ).grid(row=1, column=4, padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 1, UI_GRID_PADY), sticky="w")
-
-        self.df_monthly_rounding_var = tk.BooleanVar(value=True)
-        df_rounding_checkbox = ttk.Checkbutton(
-            left_header,
-            text="月次丸め（Forecast整合）",
-            variable=self.df_monthly_rounding_var,
-            command=self._reload_daily_forecast_table,
-        )
-        df_rounding_checkbox.grid(
-            row=1,
-            column=5,
-            padx=UI_GRID_PADX,
-            pady=(UI_GRID_PADY + 1, UI_GRID_PADY),
-            sticky="w",
-        )
-
-        ttk.Label(left_header, text="表示:").grid(row=1, column=6, sticky="w", padx=(UI_GRID_PADX, 1))
-        self.df_display_mode_var = tk.StringVar(value="Standard")
-        df_display_combo = ttk.Combobox(
-            left_header,
-            textvariable=self.df_display_mode_var,
-            values=["Standard", "Detail"],
-            state="readonly",
-            width=8,
-        )
-        df_display_combo.grid(
-            row=1,
-            column=7,
-            padx=UI_GRID_PADX,
-            pady=(UI_GRID_PADY + 1, UI_GRID_PADY),
-            sticky="w",
-        )
-        df_display_combo.bind("<<ComboboxSelected>>", self._on_df_display_mode_changed)
-
-        # 予測キャップ / 稼働率キャパ
-        # 現在選択されているホテルのキャパを取得
-        current_hotel = self.hotel_var.get().strip() or DEFAULT_HOTEL
-        fc_cap, pax_cap, occ_cap = self._get_daily_caps_for_hotel(current_hotel)
-
-        ttk.Label(left_header, text="予測キャップ(Rm):").grid(row=2, column=0, sticky="w")
-        self.df_forecast_cap_var = tk.StringVar(value=str(fc_cap))
-        ttk.Entry(left_header, textvariable=self.df_forecast_cap_var, width=6).grid(
-            row=2,
-            column=1,
-            padx=UI_GRID_PADX,
-            pady=UI_GRID_PADY,
-            sticky="w",
-        )
-
-        ttk.Label(left_header, text="予測キャップ(Px):").grid(row=2, column=2, sticky="w")
-        self.df_forecast_cap_pax_var = tk.StringVar(value="" if pax_cap is None else str(pax_cap))
-        ttk.Entry(left_header, textvariable=self.df_forecast_cap_pax_var, width=6).grid(
-            row=2,
-            column=3,
-            padx=UI_GRID_PADX,
-            pady=UI_GRID_PADY,
-            sticky="w",
-        )
-
-        ttk.Label(left_header, text="稼働率キャパ(Occ):").grid(row=2, column=4, sticky="w")
-        self.df_occ_cap_var = tk.StringVar(value=str(occ_cap))
-        ttk.Entry(left_header, textvariable=self.df_occ_cap_var, width=6).grid(
-            row=2,
-            column=5,
-            padx=UI_GRID_PADX,
-            pady=UI_GRID_PADY,
-            sticky="w",
-        )
-
-        nav_frame = ttk.Frame(left_header)
-        nav_frame.grid(
-            row=2,
-            column=6,
-            columnspan=3,
-            sticky="w",
-            padx=(UI_GRID_PADX, 0),
-            pady=(UI_GRID_PADY, UI_GRID_PADY),
-        )
-
+        nav_frame = ttk.Frame(left_row1)
+        nav_frame.pack(side=tk.LEFT, padx=(UI_GRID_PADX, 0), pady=UI_GRID_PADY)
         ttk.Label(nav_frame, text="月移動:").pack(side=tk.LEFT, padx=(0, UI_GRID_PADX))
         ttk.Button(
             nav_frame,
@@ -2266,8 +2123,134 @@ class BookingCurveApp(tk.Tk):
             command=lambda: self._on_df_shift_month(+12),
         ).pack(side=tk.LEFT, padx=1)
 
-        phase_frame = ttk.LabelFrame(right_header, text="フェーズ補正（売上）")
-        phase_frame.grid(row=0, column=0, sticky="ne", padx=UI_GRID_PADX, pady=(UI_GRID_PADY, 0))
+        # as_of
+        ttk.Label(left_row2, text="AS OF (YYYY-MM-DD):").pack(side=tk.LEFT)
+        self.df_asof_var = tk.StringVar(value="")
+        if DateEntry is not None:
+            self.df_asof_entry = DateEntry(
+                left_row2,
+                textvariable=self.df_asof_var,
+                date_pattern="yyyy-mm-dd",
+                width=12,
+            )
+        else:
+            self.df_asof_entry = ttk.Entry(
+                left_row2,
+                textvariable=self.df_asof_var,
+                width=12,
+            )
+        self.df_asof_entry.pack(side=tk.LEFT, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+
+        self.df_latest_asof_var = tk.StringVar(value="")
+        ttk.Label(left_row2, text="最新ASOF:").pack(side=tk.LEFT)
+        self.df_latest_asof_label = tk.Label(left_row2, textvariable=self.df_latest_asof_var, width=12, anchor="w")
+        self._latest_asof_label_defaults[self.df_latest_asof_label] = (
+            self.df_latest_asof_label.cget("background"),
+            self.df_latest_asof_label.cget("foreground"),
+        )
+        self.df_latest_asof_label.pack(side=tk.LEFT, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        ttk.Button(left_row2, text="最新に反映", command=self._on_df_set_asof_to_latest).pack(
+            side=tk.LEFT,
+            padx=UI_GRID_PADX,
+            pady=UI_GRID_PADY,
+        )
+
+        # モデル
+        ttk.Label(left_row3, text="モデル:").pack(side=tk.LEFT, pady=(UI_GRID_PADY + 1, UI_GRID_PADY))
+        model_values = [
+            "recent90",
+            "recent90w",
+            "pace14",
+            "pace14_market",
+        ]
+        general_settings = self._settings.get("general") or {}
+        default_model = "recent90w"
+        saved_model = general_settings.get("last_df_model")
+        initial_model = saved_model if saved_model in model_values else default_model
+        self.df_model_var = tk.StringVar(value=initial_model)
+        model_combo = ttk.Combobox(
+            left_row3,
+            textvariable=self.df_model_var,
+            state="readonly",
+            width=16,
+        )
+        model_combo["values"] = model_values
+        model_combo.pack(side=tk.LEFT, padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 1, UI_GRID_PADY))
+        self.df_model_var.trace_add("write", lambda *_: self._on_df_model_changed(model_values))
+
+        # 実行ボタン
+        forecast_btn = ttk.Button(
+            left_row3,
+            text="Forecast実行",
+            command=self._on_run_daily_forecast,
+        )
+        forecast_btn.pack(side=tk.LEFT, padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 1, UI_GRID_PADY))
+        ttk.Button(
+            left_row3,
+            text="TopDown RevPAR",
+            command=self._open_topdown_revpar_popup,
+        ).pack(side=tk.LEFT, padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 1, UI_GRID_PADY))
+        export_btn = ttk.Button(left_row3, text="CSV出力", command=self._on_export_daily_forecast_csv)
+        export_btn.pack(side=tk.LEFT, padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 1, UI_GRID_PADY))
+
+        self.df_monthly_rounding_var = tk.BooleanVar(value=True)
+        df_rounding_checkbox = ttk.Checkbutton(
+            left_row4,
+            text="月次丸め（Forecast整合）",
+            variable=self.df_monthly_rounding_var,
+            command=self._reload_daily_forecast_table,
+        )
+        df_rounding_checkbox.pack(side=tk.LEFT, padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 1, UI_GRID_PADY))
+
+        ttk.Label(left_row4, text="表示:").pack(side=tk.LEFT, padx=(UI_GRID_PADX, 1))
+        self.df_display_mode_var = tk.StringVar(value="Standard")
+        df_display_combo = ttk.Combobox(
+            left_row4,
+            textvariable=self.df_display_mode_var,
+            values=["Standard", "Detail"],
+            state="readonly",
+            width=8,
+        )
+        df_display_combo.pack(side=tk.LEFT, padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 1, UI_GRID_PADY))
+        df_display_combo.bind("<<ComboboxSelected>>", self._on_df_display_mode_changed)
+
+        # 予測キャップ / 稼働率キャパ
+        # 現在選択されているホテルのキャパを取得
+        current_hotel = self.hotel_var.get().strip() or DEFAULT_HOTEL
+        fc_cap, pax_cap, occ_cap = self._get_daily_caps_for_hotel(current_hotel)
+
+        caps_frame = ttk.LabelFrame(right_zone, text="キャップ設定")
+        caps_frame.pack(side=tk.TOP, anchor="e", fill=tk.X, padx=0, pady=(UI_GRID_PADY, 0))
+
+        rm_cap_row = ttk.Frame(caps_frame)
+        rm_cap_row.pack(side=tk.TOP, fill=tk.X, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        ttk.Label(rm_cap_row, text="予測キャップ(Rm):").pack(side=tk.LEFT)
+        self.df_forecast_cap_var = tk.StringVar(value=str(fc_cap))
+        ttk.Entry(rm_cap_row, textvariable=self.df_forecast_cap_var, width=6).pack(
+            side=tk.LEFT,
+            padx=UI_GRID_PADX,
+        )
+
+        pax_cap_row = ttk.Frame(caps_frame)
+        pax_cap_row.pack(side=tk.TOP, fill=tk.X, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        ttk.Label(pax_cap_row, text="予測キャップ(Px):").pack(side=tk.LEFT)
+        self.df_forecast_cap_pax_var = tk.StringVar(value="" if pax_cap is None else str(pax_cap))
+        ttk.Entry(pax_cap_row, textvariable=self.df_forecast_cap_pax_var, width=6).pack(
+            side=tk.LEFT,
+            padx=UI_GRID_PADX,
+        )
+
+        occ_cap_row = ttk.Frame(caps_frame)
+        occ_cap_row.pack(side=tk.TOP, fill=tk.X, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        ttk.Label(occ_cap_row, text="稼働率キャパ(Occ):").pack(side=tk.LEFT)
+        self.df_occ_cap_var = tk.StringVar(value=str(occ_cap))
+        ttk.Entry(occ_cap_row, textvariable=self.df_occ_cap_var, width=6).pack(
+            side=tk.LEFT,
+            padx=UI_GRID_PADX,
+        )
+
+        phase_frame = ttk.LabelFrame(right_zone, text="フェーズ補正（売上）")
+        phase_frame.pack(side=tk.TOP, anchor="e", fill=tk.X, padx=0, pady=(UI_GRID_PADY, 0))
 
         clip_frame = ttk.Frame(phase_frame)
         clip_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_GRID_PADX, pady=(UI_GRID_PADY, 0))

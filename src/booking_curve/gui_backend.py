@@ -1130,14 +1130,19 @@ def build_topdown_revpar_panel(
     target_month_idx = months_order.index(target_period.month)
 
     monthly_actual = _get_topdown_actual_monthly_revenue(hotel_tag)
+    revpar_by_period: dict[pd.Period, float] = {}
     month_revpar_map: dict[tuple[int, int], float] = {}
     if not monthly_actual.empty:
         for _, row in monthly_actual.iterrows():
             stay_month = row["stay_month"]
             if pd.isna(stay_month):
                 continue
-            year = int(stay_month.year)
-            month = int(stay_month.month)
+            if isinstance(stay_month, pd.Period):
+                stay_period = stay_month.asfreq("M")
+            else:
+                stay_period = pd.Period(stay_month, freq="M")
+            year = int(stay_period.year)
+            month = int(stay_period.month)
             fy = _get_fiscal_year(year, month)
             if month >= fiscal_year_start_month:
                 fiscal_index = month - fiscal_year_start_month
@@ -1147,7 +1152,9 @@ def build_topdown_revpar_panel(
             if days <= 0 or rooms_cap <= 0:
                 continue
             revenue_total = float(row.get("revenue_total") or 0)
-            month_revpar_map[(fy, fiscal_index)] = revenue_total / (rooms_cap * days)
+            revpar = revenue_total / (rooms_cap * days)
+            revpar_by_period[stay_period] = revpar
+            month_revpar_map[(fy, fiscal_index)] = revpar
 
     lines_by_fy: dict[int, list[float | None]] = {}
     for fy in show_years:
@@ -1255,21 +1262,28 @@ def build_topdown_revpar_panel(
     band_p10: list[float | None] = [None] * 12
     band_p90: list[float | None] = [None] * 12
     reference_years = [fy for fy in show_years if fy != current_fy]
-    if anchor_idx is not None and anchor_value is not None:
-        for idx in range(anchor_idx + 1, 12):
+    if anchor_idx is not None and anchor_value is not None and anchor_month_end is not None:
+        anchor_period = pd.Period(anchor_month_end, freq="M")
+        month_num_anchor = months_order[anchor_idx]
+        for step in range(1, 12):
+            target_period = anchor_period + step
             ratios = []
             for fy in reference_years:
-                anchor_ref = month_revpar_map.get((fy, anchor_idx))
-                value = month_revpar_map.get((fy, idx))
-                if anchor_ref in (None, 0) or value is None:
+                year_anchor_ref = fy if month_num_anchor >= fiscal_year_start_month else fy + 1
+                anchor_ref_period = pd.Period(f"{year_anchor_ref}{month_num_anchor:02d}", freq="M")
+                target_ref_period = anchor_ref_period + step
+                anchor_ref_val = revpar_by_period.get(anchor_ref_period)
+                target_ref_val = revpar_by_period.get(target_ref_period)
+                if anchor_ref_val in (None, 0) or target_ref_val is None:
                     continue
-                ratios.append(float(value) / float(anchor_ref))
+                ratios.append(float(target_ref_val) / float(anchor_ref_val))
             if not ratios:
                 continue
             p10_ratio = float(np.percentile(ratios, 10))
             p90_ratio = float(np.percentile(ratios, 90))
-            band_p10[idx] = anchor_value * p10_ratio
-            band_p90[idx] = anchor_value * p90_ratio
+            idx_disp = months_order.index(target_period.month)
+            band_p10[idx_disp] = anchor_value * p10_ratio
+            band_p90[idx_disp] = anchor_value * p90_ratio
 
     forecast_indices = {
         months_order.index(pd.Period(month_str, freq="M").month)
@@ -1326,6 +1340,7 @@ def build_topdown_revpar_panel(
         "target_month_index": target_month_idx,
         "forecast_months": effective_forecast_months,
         "skipped_months": skipped_months,
+        "anchor_idx": anchor_idx,
     }
 
 

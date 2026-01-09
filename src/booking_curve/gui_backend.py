@@ -1183,18 +1183,18 @@ def build_topdown_revpar_panel(
     end_period = pd.Period(end_ts, freq="M")
     if start_period > end_period:
         end_period = start_period
-    forecast_month_strs_all = generate_month_range(
+    forecast_month_strs_range = generate_month_range(
         start_period.strftime("%Y%m"),
         end_period.strftime("%Y%m"),
     )
     forecast_month_strs_current_fy = [
         month_str
-        for month_str in forecast_month_strs_all
+        for month_str in forecast_month_strs_range
         if _get_fiscal_year(int(month_str[:4]), int(month_str[4:])) == current_fy
     ]
     computable_months: list[str] = []
     skipped_months: dict[str, str] = {}
-    for month_str in forecast_month_strs_current_fy:
+    for month_str in forecast_month_strs_range:
         try:
             run_forecast_for_gui(
                 hotel_tag=hotel_tag,
@@ -1261,12 +1261,19 @@ def build_topdown_revpar_panel(
 
     band_p10: list[float | None] = [None] * 12
     band_p90: list[float | None] = [None] * 12
+    band_by_month: dict[str, tuple[float, float]] = {}
     reference_years = [fy for fy in show_years if fy != current_fy]
     if anchor_idx is not None and anchor_value is not None and anchor_month_end is not None:
         anchor_period = pd.Period(anchor_month_end, freq="M")
         month_num_anchor = months_order[anchor_idx]
-        for step in range(1, 12):
-            target_period = anchor_period + step
+        for month_str in forecast_month_strs_range:
+            try:
+                target_period = pd.Period(month_str, freq="M")
+            except Exception:
+                continue
+            step = target_period - anchor_period
+            if step <= 0:
+                continue
             ratios = []
             for fy in reference_years:
                 year_anchor_ref = fy if month_num_anchor >= fiscal_year_start_month else fy + 1
@@ -1281,6 +1288,7 @@ def build_topdown_revpar_panel(
                 continue
             p10_ratio = float(np.percentile(ratios, 10))
             p90_ratio = float(np.percentile(ratios, 90))
+            band_by_month[month_str] = (anchor_value * p10_ratio, anchor_value * p90_ratio)
             idx_disp = months_order.index(target_period.month)
             band_p10[idx_disp] = anchor_value * p10_ratio
             band_p90[idx_disp] = anchor_value * p90_ratio
@@ -1288,30 +1296,19 @@ def build_topdown_revpar_panel(
     forecast_indices = {
         months_order.index(pd.Period(month_str, freq="M").month)
         for month_str in effective_forecast_months
+        if _get_fiscal_year(int(month_str[:4]), int(month_str[4:])) == current_fy
     }
     band_start_idx = months_order.index(asof_period.month)
     forecast_end_idx = max(forecast_indices) if forecast_indices else band_start_idx - 1
 
-    display_months = set(forecast_month_strs_current_fy)
-    for idx in range(12):
-        p10 = band_p10[idx]
-        p90 = band_p90[idx]
-        if p10 is None or p90 is None:
-            continue
-        month_num = months_order[idx]
-        year = current_fy if month_num >= fiscal_year_start_month else current_fy + 1
-        display_months.add(f"{year}{month_num:02d}")
-
     diagnostics: list[dict[str, object]] = []
-    for month_str in sorted(display_months, key=lambda m: pd.Period(m, freq="M")):
-        try:
-            month_period = pd.Period(month_str, freq="M")
-        except Exception:
-            continue
-        idx = months_order.index(month_period.month)
+    for month_str in forecast_month_strs_range:
         revpar_value = forecast_revpar_map.get(month_str)
-        p10 = band_p10[idx]
-        p90 = band_p90[idx]
+        band_values = band_by_month.get(month_str)
+        p10 = band_values[0] if band_values else None
+        p90 = band_values[1] if band_values else None
+        if revpar_value is None and p10 is None and p90 is None:
+            continue
         out_of_range = False
         if revpar_value is not None and p10 is not None and p90 is not None:
             out_of_range = revpar_value < p10 or revpar_value > p90
@@ -1334,10 +1331,12 @@ def build_topdown_revpar_panel(
         "current_fy_forecast": current_fy_forecast,
         "band_p10": band_p10,
         "band_p90": band_p90,
+        "band_by_month": band_by_month,
         "band_start_idx": band_start_idx,
         "forecast_end_idx": forecast_end_idx,
         "diagnostics": diagnostics,
         "target_month_index": target_month_idx,
+        "forecast_months_range": forecast_month_strs_range,
         "forecast_months": effective_forecast_months,
         "skipped_months": skipped_months,
         "anchor_idx": anchor_idx,

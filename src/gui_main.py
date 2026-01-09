@@ -4258,7 +4258,7 @@ class BookingCurveApp(tk.Tk):
         saved_model = general_settings.get("last_bc_model")
         initial_model = saved_model if saved_model in model_values else default_model
         self.bc_model_var = tk.StringVar(value=initial_model)
-        model_combo = ttk.Combobox(left_row3, textvariable=self.bc_model_var, state="readonly", width=11)
+        model_combo = ttk.Combobox(left_row3, textvariable=self.bc_model_var, state="readonly", width=16)
         model_combo["values"] = model_values
         model_combo.pack(side=tk.LEFT, padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 1, UI_GRID_PADY))
         self.bc_model_var.trace_add("write", lambda *_: self._on_bc_model_changed(model_values))

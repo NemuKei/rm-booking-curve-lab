@@ -1192,6 +1192,11 @@ def build_topdown_revpar_panel(
         for month_str in forecast_month_strs_range
         if _get_fiscal_year(int(month_str[:4]), int(month_str[4:])) == current_fy
     ]
+    rotation_month_strs = [
+        (target_period + offset).strftime("%Y%m") for offset in range(-5, 7)
+    ]
+    band_month_candidates = set(forecast_month_strs_range)
+    band_month_candidates.update(rotation_month_strs)
     computable_months: list[str] = []
     skipped_months: dict[str, str] = {}
     for month_str in forecast_month_strs_range:
@@ -1266,16 +1271,25 @@ def build_topdown_revpar_panel(
     if anchor_idx is not None and anchor_value is not None and anchor_month_end is not None:
         anchor_period = pd.Period(anchor_month_end, freq="M")
         month_num_anchor = months_order[anchor_idx]
-        for month_str in forecast_month_strs_range:
+        end_month = fiscal_year_start_month - 1 or 12
+        end_year = current_fy + 1 if end_month < fiscal_year_start_month else current_fy
+        fy_end_period = pd.Period(f"{end_year}{end_month:02d}", freq="M")
+        if anchor_period + 1 <= fy_end_period:
+            for period in generate_month_range(
+                (anchor_period + 1).strftime("%Y%m"),
+                fy_end_period.strftime("%Y%m"),
+            ):
+                band_month_candidates.add(period)
+        band_months_sorted = sorted(
+            band_month_candidates,
+            key=lambda value: pd.Period(value, freq="M").ordinal,
+        )
+        for month_str in band_months_sorted:
             try:
                 target_period = pd.Period(month_str, freq="M")
             except Exception:
                 continue
-            try:
-                step = int(target_period.ordinal - anchor_period.ordinal)
-            except Exception as exc:  # noqa: BLE001
-                logging.warning("Skipping band month %s due to step error: %s", month_str, exc)
-                continue
+            step = int(target_period.ordinal - anchor_period.ordinal)
             if step <= 0:
                 continue
             ratios = []
@@ -1293,9 +1307,15 @@ def build_topdown_revpar_panel(
             p10_ratio = float(np.percentile(ratios, 10))
             p90_ratio = float(np.percentile(ratios, 90))
             band_by_month[month_str] = (anchor_value * p10_ratio, anchor_value * p90_ratio)
-            idx_disp = months_order.index(target_period.month)
-            band_p10[idx_disp] = anchor_value * p10_ratio
-            band_p90[idx_disp] = anchor_value * p90_ratio
+
+        for idx in range(12):
+            month_num = months_order[idx]
+            year = current_fy if month_num >= fiscal_year_start_month else current_fy + 1
+            month_str = f"{year}{month_num:02d}"
+            band_values = band_by_month.get(month_str)
+            if band_values is not None:
+                band_p10[idx] = band_values[0]
+                band_p90[idx] = band_values[1]
 
     forecast_indices = {
         months_order.index(pd.Period(month_str, freq="M").month)
@@ -1306,7 +1326,11 @@ def build_topdown_revpar_panel(
     forecast_end_idx = max(forecast_indices) if forecast_indices else band_start_idx - 1
 
     diagnostics: list[dict[str, object]] = []
-    for month_str in forecast_month_strs_range:
+    diagnostics_months = sorted(
+        band_month_candidates,
+        key=lambda value: pd.Period(value, freq="M").ordinal,
+    )
+    for month_str in diagnostics_months:
         revpar_value = forecast_revpar_map.get(month_str)
         band_values = band_by_month.get(month_str)
         p10 = band_values[0] if band_values else None
@@ -1336,6 +1360,7 @@ def build_topdown_revpar_panel(
         "band_p10": band_p10,
         "band_p90": band_p90,
         "band_by_month": band_by_month,
+        "rotation_month_strs": rotation_month_strs,
         "band_start_idx": band_start_idx,
         "forecast_end_idx": forecast_end_idx,
         "diagnostics": diagnostics,

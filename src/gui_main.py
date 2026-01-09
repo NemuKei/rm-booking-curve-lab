@@ -2772,18 +2772,6 @@ class BookingCurveApp(tk.Tk):
                 color=color,
                 **kwargs2,
             )
-            if 0 < seam_idx < len(y):
-                y_left = y[seam_idx - 1]
-                y_right = y[seam_idx]
-                if np.isfinite(y_left) and np.isfinite(y_right):
-                    ax.plot(
-                        [x[seam_idx - 1], x[seam_idx]],
-                        [y_left, y_right],
-                        color="lightgray",
-                        linewidth=1.2,
-                        linestyle="-",
-                        label="_nolegend_",
-                    )
             return first[0] if first else None
 
         for fy, values in lines_by_fy.items():
@@ -2901,6 +2889,68 @@ class BookingCurveApp(tk.Tk):
                             facecolor=facecolor,
                             edgecolor=facecolor,
                         )
+
+        if view_mode_label == "回転（対象月を中央寄せ）":
+            def _month_from_label(label_value: object) -> int | None:
+                if not isinstance(label_value, str):
+                    return None
+                match = re.search(r"(\d+)", label_value)
+                if not match:
+                    return None
+                try:
+                    return int(match.group(1))
+                except ValueError:
+                    return None
+
+            month_positions: dict[int, int] = {}
+            for idx, label in enumerate(labels):
+                month_number = _month_from_label(label)
+                if month_number is not None and month_number not in month_positions:
+                    month_positions[month_number] = idx
+
+            may_idx = month_positions.get(5)
+            jun_idx = month_positions.get(6)
+            if may_idx is not None and jun_idx is not None:
+                series_by_fy = {fy: list(values) for fy, values in lines_by_fy.items()}
+                if current_fy is not None:
+                    combined_current = []
+                    for actual_value, forecast_value in zip(current_actual, current_forecast):
+                        combined_current.append(actual_value if actual_value is not None else forecast_value)
+                    series_by_fy[current_fy] = combined_current
+
+                series_by_fy_numeric: dict[int, list[float | None]] = {}
+                for fy, series in series_by_fy.items():
+                    try:
+                        fy_int = int(fy)
+                    except (TypeError, ValueError):
+                        continue
+                    series_by_fy_numeric[fy_int] = series
+
+                fy_list = sorted(series_by_fy_numeric)
+                if fy_list:
+                    x_may = x[may_idx]
+                    x_jun = x[jun_idx]
+                    for fy in fy_list:
+                        next_fy = fy + 1
+                        if next_fy not in series_by_fy_numeric:
+                            continue
+                        series = series_by_fy_numeric[fy]
+                        next_series = series_by_fy_numeric[next_fy]
+                        if may_idx >= len(series) or jun_idx >= len(next_series):
+                            continue
+                        y_may = series[may_idx]
+                        y_jun = next_series[jun_idx]
+                        y_may_val = np.nan if y_may is None else float(y_may)
+                        y_jun_val = np.nan if y_jun is None else float(y_jun)
+                        if np.isfinite(y_may_val) and np.isfinite(y_jun_val):
+                            ax.plot(
+                                [x_may, x_jun],
+                                [y_may_val, y_jun_val],
+                                color="lightgray",
+                                linewidth=1.2,
+                                linestyle="-",
+                                label="_nolegend_",
+                            )
 
         ax.set_xticks(x)
         ax.set_xticklabels(labels)

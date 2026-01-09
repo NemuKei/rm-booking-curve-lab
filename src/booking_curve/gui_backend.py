@@ -1113,22 +1113,29 @@ def build_topdown_revpar_panel(
         for month_str in forecast_month_strs_all
         if _get_fiscal_year(int(month_str[:4]), int(month_str[4:])) == current_fy
     ]
-    if forecast_month_strs_current_fy:
-        run_forecast_for_gui(
-            hotel_tag=hotel_tag,
-            target_months=forecast_month_strs_current_fy,
-            as_of_date=as_of_date,
-            gui_model=model_key,
-            capacity=None,
-            pax_capacity=None,
-            phase_factors=phase_factors,
-            phase_clip_pct=phase_clip_pct,
-        )
+    computable_months: list[str] = []
+    skipped_months: dict[str, str] = {}
+    for month_str in forecast_month_strs_current_fy:
+        try:
+            run_forecast_for_gui(
+                hotel_tag=hotel_tag,
+                target_months=[month_str],
+                as_of_date=as_of_date,
+                gui_model=model_key,
+                capacity=None,
+                pax_capacity=None,
+                phase_factors=phase_factors,
+                phase_clip_pct=phase_clip_pct,
+            )
+            computable_months.append(month_str)
+        except Exception as exc:  # noqa: BLE001
+            logging.warning("Skipping forecast month %s due to error: %s", month_str, exc)
+            skipped_months[month_str] = str(exc)
 
     current_fy_forecast: list[float | None] = [None] * 12
     forecast_revpar_map: dict[str, float | None] = {}
     effective_forecast_months: list[str] = []
-    for month_str in forecast_month_strs_current_fy:
+    for month_str in computable_months:
         revpar_value = _get_projected_monthly_revpar(
             hotel_tag=hotel_tag,
             target_month=month_str,
@@ -1229,6 +1236,7 @@ def build_topdown_revpar_panel(
         "diagnostics": diagnostics,
         "target_month_index": target_month_idx,
         "forecast_months": effective_forecast_months,
+        "skipped_months": skipped_months,
     }
 
 

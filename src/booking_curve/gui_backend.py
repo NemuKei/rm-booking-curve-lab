@@ -1278,15 +1278,23 @@ def build_topdown_revpar_panel(
     band_start_idx = months_order.index(asof_period.month)
     forecast_end_idx = max(forecast_indices) if forecast_indices else band_start_idx - 1
 
+    display_months = set(forecast_month_strs_current_fy)
+    for idx in range(12):
+        p10 = band_p10[idx]
+        p90 = band_p90[idx]
+        if p10 is None or p90 is None:
+            continue
+        month_num = months_order[idx]
+        year = current_fy if month_num >= fiscal_year_start_month else current_fy + 1
+        display_months.add(f"{year}{month_num:02d}")
+
     diagnostics: list[dict[str, object]] = []
-    for month_str in effective_forecast_months:
+    for month_str in sorted(display_months, key=lambda m: pd.Period(m, freq="M")):
         try:
             month_period = pd.Period(month_str, freq="M")
         except Exception:
             continue
         idx = months_order.index(month_period.month)
-        if idx < band_start_idx:
-            continue
         revpar_value = forecast_revpar_map.get(month_str)
         p10 = band_p10[idx]
         p90 = band_p90[idx]

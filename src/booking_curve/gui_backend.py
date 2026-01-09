@@ -1100,7 +1100,7 @@ def build_topdown_revpar_panel(
             current_fy_actual[idx] = float(value)
 
     start_period = pd.Period(latest_asof_ts, freq="M")
-    end_ts = latest_asof_ts + timedelta(days=forecast_horizon_months * 30)
+    end_ts = latest_asof_ts + timedelta(days=90)
     end_period = pd.Period(end_ts, freq="M")
     if start_period > end_period:
         end_period = start_period
@@ -1108,15 +1108,15 @@ def build_topdown_revpar_panel(
         start_period.strftime("%Y%m"),
         end_period.strftime("%Y%m"),
     )
-    forecast_month_strs = [
+    forecast_month_strs_current_fy = [
         month_str
         for month_str in forecast_month_strs_all
         if _get_fiscal_year(int(month_str[:4]), int(month_str[4:])) == current_fy
     ]
-    if forecast_month_strs:
+    if forecast_month_strs_current_fy:
         run_forecast_for_gui(
             hotel_tag=hotel_tag,
-            target_months=forecast_month_strs,
+            target_months=forecast_month_strs_current_fy,
             as_of_date=as_of_date,
             gui_model=model_key,
             capacity=None,
@@ -1127,7 +1127,8 @@ def build_topdown_revpar_panel(
 
     current_fy_forecast: list[float | None] = [None] * 12
     forecast_revpar_map: dict[str, float | None] = {}
-    for month_str in forecast_month_strs:
+    effective_forecast_months: list[str] = []
+    for month_str in forecast_month_strs_current_fy:
         revpar_value = _get_projected_monthly_revpar(
             hotel_tag=hotel_tag,
             target_month=month_str,
@@ -1136,7 +1137,10 @@ def build_topdown_revpar_panel(
             rooms_cap=rooms_cap,
             missing_ok=True,
         )
+        if revpar_value is None:
+            continue
         forecast_revpar_map[month_str] = revpar_value
+        effective_forecast_months.append(month_str)
         try:
             month_period = pd.Period(month_str, freq="M")
         except Exception:
@@ -1180,17 +1184,22 @@ def build_topdown_revpar_panel(
             band_p90[idx] = anchor_value * p90_ratio
 
     forecast_indices = {
-        months_order.index(pd.Period(month_str, freq="M").month) for month_str in forecast_month_strs
+        months_order.index(pd.Period(month_str, freq="M").month)
+        for month_str in effective_forecast_months
     }
     band_start_idx = months_order.index(asof_period.month)
     forecast_end_idx = max(forecast_indices) if forecast_indices else band_start_idx - 1
 
     diagnostics: list[dict[str, object]] = []
-    for idx in range(band_start_idx, 12):
-        month_num = months_order[idx]
-        year = current_fy if month_num >= fiscal_year_start_month else current_fy + 1
-        month_str = f"{year}{month_num:02d}"
-        revpar_value = forecast_revpar_map.get(month_str) if idx in forecast_indices else None
+    for month_str in effective_forecast_months:
+        try:
+            month_period = pd.Period(month_str, freq="M")
+        except Exception:
+            continue
+        idx = months_order.index(month_period.month)
+        if idx < band_start_idx:
+            continue
+        revpar_value = forecast_revpar_map.get(month_str)
         p10 = band_p10[idx]
         p90 = band_p90[idx]
         out_of_range = False
@@ -1219,7 +1228,7 @@ def build_topdown_revpar_panel(
         "forecast_end_idx": forecast_end_idx,
         "diagnostics": diagnostics,
         "target_month_index": target_month_idx,
-        "forecast_months": forecast_month_strs,
+        "forecast_months": effective_forecast_months,
     }
 
 

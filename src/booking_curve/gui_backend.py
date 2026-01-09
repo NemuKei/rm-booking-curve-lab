@@ -1023,6 +1023,11 @@ def build_topdown_revpar_panel(
     except Exception as exc:
         raise ValueError(f"Invalid target_month: {target_month}") from exc
 
+    try:
+        asof_period = pd.Period(as_of_date, freq="M")
+    except Exception as exc:
+        raise ValueError(f"Invalid as_of_date: {as_of_date}") from exc
+
     asof_ts = pd.to_datetime(as_of_date).normalize()
 
     def _get_fiscal_year(year: int, month: int) -> int:
@@ -1060,6 +1065,8 @@ def build_topdown_revpar_panel(
 
     lines_by_fy: dict[int, list[float | None]] = {}
     for fy in show_years:
+        if fy == current_fy:
+            continue
         values: list[float | None] = [None] * 12
         for idx in range(12):
             value = month_revpar_map.get((fy, idx))
@@ -1078,23 +1085,24 @@ def build_topdown_revpar_panel(
         if month_end <= asof_ts:
             current_fy_actual[idx] = float(value)
 
-    forecast_months_all = [target_period + offset for offset in range(forecast_horizon_months)]
+    forecast_months_all = [asof_period + offset for offset in range(forecast_horizon_months)]
     forecast_months = [
         month
         for month in forecast_months_all
         if _get_fiscal_year(month.year, month.month) == current_fy
     ]
     forecast_month_strs = [m.strftime("%Y%m") for m in forecast_months]
-    run_forecast_for_gui(
-        hotel_tag=hotel_tag,
-        target_months=forecast_month_strs,
-        as_of_date=as_of_date,
-        gui_model=model_key,
-        capacity=None,
-        pax_capacity=None,
-        phase_factors=phase_factors,
-        phase_clip_pct=phase_clip_pct,
-    )
+    if forecast_month_strs:
+        run_forecast_for_gui(
+            hotel_tag=hotel_tag,
+            target_months=forecast_month_strs,
+            as_of_date=as_of_date,
+            gui_model=model_key,
+            capacity=None,
+            pax_capacity=None,
+            phase_factors=phase_factors,
+            phase_clip_pct=phase_clip_pct,
+        )
 
     current_fy_forecast: list[float | None] = [None] * 12
     forecast_revpar_map: dict[str, float | None] = {}
@@ -1118,12 +1126,7 @@ def build_topdown_revpar_panel(
     band_p10: list[float | None] = [None] * 12
     band_p90: list[float | None] = [None] * 12
     reference_years = [fy for fy in show_years if fy != current_fy]
-    forecast_indices = {
-        months_order.index(pd.Period(month_str, freq="M").month) for month_str in forecast_month_strs
-    }
     for idx in range(12):
-        if idx not in forecast_indices:
-            continue
         candidates = []
         for fy in reference_years:
             value = lines_by_fy.get(fy, [None] * 12)[idx]
@@ -1134,10 +1137,18 @@ def build_topdown_revpar_panel(
         band_p10[idx] = float(np.percentile(candidates, 10))
         band_p90[idx] = float(np.percentile(candidates, 90))
 
+    forecast_indices = {
+        months_order.index(pd.Period(month_str, freq="M").month) for month_str in forecast_month_strs
+    }
+    band_start_idx = months_order.index(asof_period.month)
+    forecast_end_idx = max(forecast_indices) if forecast_indices else band_start_idx - 1
+
     diagnostics: list[dict[str, object]] = []
-    for month_str in forecast_month_strs:
-        revpar_value = forecast_revpar_map.get(month_str)
-        idx = months_order.index(pd.Period(month_str, freq="M").month)
+    for idx in range(band_start_idx, 12):
+        month_num = months_order[idx]
+        year = current_fy if month_num >= fiscal_year_start_month else current_fy + 1
+        month_str = f"{year}{month_num:02d}"
+        revpar_value = forecast_revpar_map.get(month_str) if idx in forecast_indices else None
         p10 = band_p10[idx]
         p90 = band_p90[idx]
         out_of_range = False
@@ -1155,12 +1166,15 @@ def build_topdown_revpar_panel(
 
     return {
         "fiscal_month_labels": fiscal_month_labels,
+        "month_labels": fiscal_month_labels,
         "lines_by_fy": lines_by_fy,
         "current_fy": current_fy,
         "current_fy_actual": current_fy_actual,
         "current_fy_forecast": current_fy_forecast,
         "band_p10": band_p10,
         "band_p90": band_p90,
+        "band_start_idx": band_start_idx,
+        "forecast_end_idx": forecast_end_idx,
         "diagnostics": diagnostics,
         "target_month_index": target_month_idx,
         "forecast_months": forecast_month_strs,

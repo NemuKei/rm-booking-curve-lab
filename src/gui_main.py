@@ -135,6 +135,12 @@ PHASE_CLIP_DEFAULT = 0.05
 PHASE_CLIP_OPTIONS = [0.05, 0.1, 0.15]
 
 
+def _safe_ratio(num: float | None, denom: float | None) -> float | None:
+    if num is None or denom is None or denom == 0:
+        return None
+    return num / denom
+
+
 def open_file(path: str | Path) -> None:
     path_obj = Path(path)
     path_str = str(path_obj)
@@ -795,11 +801,6 @@ class BookingCurveApp(tk.Tk):
                 return float(value)
             except Exception:
                 return None
-
-        def _safe_ratio(num: float | None, denom: float | None) -> float | None:
-            if num is None or denom is None or denom == 0:
-                return None
-            return num / denom
 
         rooms_oh = _safe_float(daily_rows.get("asof_oh_rooms_display", daily_rows.get("asof_oh_rooms")).sum())
         pax_oh = _safe_float(daily_rows.get("asof_oh_pax_display", daily_rows.get("asof_oh_pax")).sum())
@@ -2063,7 +2064,7 @@ class BookingCurveApp(tk.Tk):
             left_header,
             textvariable=self.df_model_var,
             state="readonly",
-            width=14,
+            width=18,
         )
         model_combo["values"] = model_values
         model_combo.grid(row=1, column=1, padx=4, pady=(4, 2), sticky="w")
@@ -2391,6 +2392,18 @@ class BookingCurveApp(tk.Tk):
             variable=self._topdown_show_band_var,
         ).grid(row=0, column=2, sticky="w")
 
+        ttk.Label(control_frame, text="表示モード:").grid(row=1, column=0, sticky="w", pady=(4, 0))
+        self._topdown_view_mode_var = tk.StringVar(value="年度固定")
+        view_mode_combo = ttk.Combobox(
+            control_frame,
+            textvariable=self._topdown_view_mode_var,
+            values=["年度固定", "回転（対象月を中央寄せ）"],
+            state="readonly",
+            width=14,
+        )
+        view_mode_combo.grid(row=1, column=1, padx=(4, 12), sticky="w", pady=(4, 0))
+        view_mode_combo.bind("<<ComboboxSelected>>", lambda _event: self._on_topdown_revpar_update())
+
         update_btn = ttk.Button(
             control_frame,
             text="更新",
@@ -2481,7 +2494,7 @@ class BookingCurveApp(tk.Tk):
 
         forecast_months = []
         try:
-            base_period = pd.Period(month, freq="M")
+            base_period = pd.Period(asof, freq="M")
         except Exception:
             base_period = pd.Period(date.today().strftime("%Y%m"), freq="M")
         for offset in range(horizon):
@@ -2539,21 +2552,62 @@ class BookingCurveApp(tk.Tk):
         target_idx = panel.get("target_month_index", 0)
         band_p10 = panel.get("band_p10", [])
         band_p90 = panel.get("band_p90", [])
+        current_actual = panel.get("current_fy_actual", [])
+        current_forecast = panel.get("current_fy_forecast", [])
         show_band = getattr(self, "_topdown_show_band_var", tk.BooleanVar(value=True)).get()
+        view_mode_label = getattr(self, "_topdown_view_mode_var", tk.StringVar(value="年度固定")).get()
+
+        def _rotate_sequence(seq: list[object], shift: int) -> list[object]:
+            if not seq:
+                return seq
+            shift = shift % len(seq)
+            if shift == 0:
+                return list(seq)
+            return list(seq[-shift:] + seq[:-shift])
 
         x = np.arange(12)
+
+        if view_mode_label == "回転（対象月を中央寄せ）":
+            try:
+                target_idx = int(target_idx)
+            except Exception:
+                target_idx = 0
+            shift = 5 - target_idx
+            labels = _rotate_sequence(list(labels), shift)
+            lines_by_fy = {fy: _rotate_sequence(list(values), shift) for fy, values in lines_by_fy.items()}
+            current_actual = _rotate_sequence(list(current_actual), shift)
+            current_forecast = _rotate_sequence(list(current_forecast), shift)
+            band_p10 = _rotate_sequence(list(band_p10), shift)
+            band_p90 = _rotate_sequence(list(band_p90), shift)
+            target_idx = (target_idx + shift) % 12
 
         for fy, values in lines_by_fy.items():
             y = [np.nan if v is None else float(v) for v in values]
             ax.plot(x, y, label=f"{fy}年度")
 
-        current_actual = panel.get("current_fy_actual", [])
-        current_forecast = panel.get("current_fy_forecast", [])
-        if current_fy in lines_by_fy:
-            y_actual = [np.nan if v is None else float(v) for v in current_actual]
-            y_forecast = [np.nan if v is None else float(v) for v in current_forecast]
-            ax.plot(x, y_actual, linestyle="-", linewidth=2.2, label=f"{current_fy}年度(確定)")
-            ax.plot(x, y_forecast, linestyle="--", linewidth=2.2, label=f"{current_fy}年度(予測)")
+        y_actual = [np.nan if v is None else float(v) for v in current_actual]
+        actual_line = ax.plot(x, y_actual, linestyle="-", linewidth=2.2, label=f"{current_fy}年度(確定)")
+        line_color = actual_line[0].get_color() if actual_line else None
+
+        dashed_series = [np.nan] * 12
+        last_actual_idx = None
+        for idx, value in enumerate(current_actual):
+            if value is not None:
+                last_actual_idx = idx
+        if last_actual_idx is not None:
+            dashed_series[last_actual_idx] = current_actual[last_actual_idx]
+        for idx, value in enumerate(current_forecast):
+            if value is not None:
+                dashed_series[idx] = value
+        y_forecast = [np.nan if v is None else float(v) for v in dashed_series]
+        ax.plot(
+            x,
+            y_forecast,
+            linestyle="--",
+            linewidth=2.2,
+            color=line_color,
+            label=f"{current_fy}年度(予測)",
+        )
 
         try:
             idx = int(target_idx)
@@ -2573,7 +2627,7 @@ class BookingCurveApp(tk.Tk):
         ax.set_ylabel("RevPAR")
         ax.set_title("RevPAR 月次推移（TopDown）")
         ax.grid(True, axis="y", linestyle=":", alpha=0.5)
-        ax.legend(loc="best", fontsize=9)
+        ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0), borderaxespad=0, frameon=False, fontsize=9)
         canvas.draw()
 
         diagnostics = panel.get("diagnostics", [])
@@ -2592,13 +2646,13 @@ class BookingCurveApp(tk.Tk):
                 p10 = row.get("p10")
                 p90 = row.get("p90")
                 flag = " ⚠" if row.get("out_of_range") else ""
-                if revpar is None:
-                    revpar_str = "-"
-                else:
-                    revpar_str = f"{revpar:,.0f}"
                 p10_str = "-" if p10 is None else f"{p10:,.0f}"
                 p90_str = "-" if p90 is None else f"{p90:,.0f}"
-                lines.append(f"{month}: FcRevPAR={revpar_str} / p10={p10_str} / p90={p90_str}{flag}")
+                if revpar is None:
+                    lines.append(f"{month}: p10={p10_str} / p90={p90_str}{flag}")
+                else:
+                    revpar_str = f"{revpar:,.0f}"
+                    lines.append(f"{month}: FcRevPAR={revpar_str} / p10={p10_str} / p90={p90_str}{flag}")
 
         if not lines:
             lines = ["表示可能な診断情報がありません。"]

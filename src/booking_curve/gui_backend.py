@@ -1007,6 +1007,7 @@ def build_topdown_revpar_panel(
     hotel_tag: str,
     target_month: str,
     as_of_date: str,
+    latest_asof_date: str | None = None,
     model_key: str,
     rooms_cap: float,
     phase_factors: dict[str, float] | None,
@@ -1029,6 +1030,14 @@ def build_topdown_revpar_panel(
         raise ValueError(f"Invalid as_of_date: {as_of_date}") from exc
 
     asof_ts = pd.to_datetime(as_of_date).normalize()
+    latest_asof_ts = asof_ts
+    if latest_asof_date:
+        try:
+            parsed_latest = pd.to_datetime(latest_asof_date).normalize()
+        except Exception:
+            parsed_latest = None
+        if parsed_latest is not None and not pd.isna(parsed_latest):
+            latest_asof_ts = parsed_latest
 
     def _get_fiscal_year(year: int, month: int) -> int:
         if month >= fiscal_year_start_month:
@@ -1085,13 +1094,19 @@ def build_topdown_revpar_panel(
         if month_end <= asof_ts:
             current_fy_actual[idx] = float(value)
 
-    forecast_months_all = [asof_period + offset for offset in range(forecast_horizon_months)]
-    forecast_months = [
-        month
-        for month in forecast_months_all
-        if _get_fiscal_year(month.year, month.month) == current_fy
+    end_ts = latest_asof_ts + timedelta(days=90)
+    end_period = pd.Period(end_ts, freq="M")
+    if target_period > end_period:
+        end_period = target_period
+    forecast_month_strs_all = generate_month_range(
+        target_period.strftime("%Y%m"),
+        end_period.strftime("%Y%m"),
+    )
+    forecast_month_strs = [
+        month_str
+        for month_str in forecast_month_strs_all
+        if _get_fiscal_year(int(month_str[:4]), int(month_str[4:])) == current_fy
     ]
-    forecast_month_strs = [m.strftime("%Y%m") for m in forecast_months]
     if forecast_month_strs:
         run_forecast_for_gui(
             hotel_tag=hotel_tag,
@@ -1123,19 +1138,39 @@ def build_topdown_revpar_panel(
         if _get_fiscal_year(month_period.year, month_period.month) == current_fy:
             current_fy_forecast[idx] = revpar_value
 
+    anchor_idx = None
+    anchor_value = None
+    anchor_month_end = None
+    for idx in range(12):
+        value = month_revpar_map.get((current_fy, idx))
+        if value is None:
+            continue
+        month_num = months_order[idx]
+        year = current_fy if month_num >= fiscal_year_start_month else current_fy + 1
+        month_end = pd.Timestamp(year=year, month=month_num, day=1) + pd.offsets.MonthEnd(0)
+        if month_end <= asof_ts and (anchor_month_end is None or month_end > anchor_month_end):
+            anchor_idx = idx
+            anchor_value = float(value)
+            anchor_month_end = month_end
+
     band_p10: list[float | None] = [None] * 12
     band_p90: list[float | None] = [None] * 12
     reference_years = [fy for fy in show_years if fy != current_fy]
-    for idx in range(12):
-        candidates = []
-        for fy in reference_years:
-            value = lines_by_fy.get(fy, [None] * 12)[idx]
-            if value is not None:
-                candidates.append(float(value))
-        if not candidates:
-            continue
-        band_p10[idx] = float(np.percentile(candidates, 10))
-        band_p90[idx] = float(np.percentile(candidates, 90))
+    if anchor_idx is not None and anchor_value is not None:
+        for idx in range(anchor_idx + 1, 12):
+            ratios = []
+            for fy in reference_years:
+                anchor_ref = month_revpar_map.get((fy, anchor_idx))
+                value = month_revpar_map.get((fy, idx))
+                if anchor_ref in (None, 0) or value is None:
+                    continue
+                ratios.append(float(value) / float(anchor_ref))
+            if not ratios:
+                continue
+            p10_ratio = float(np.percentile(ratios, 10))
+            p90_ratio = float(np.percentile(ratios, 90))
+            band_p10[idx] = anchor_value * p10_ratio
+            band_p90[idx] = anchor_value * p90_ratio
 
     forecast_indices = {
         months_order.index(pd.Period(month_str, freq="M").month) for month_str in forecast_month_strs

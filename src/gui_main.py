@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 import tkinter as tk
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Optional
@@ -2124,7 +2124,7 @@ class BookingCurveApp(tk.Tk):
         ttk.Entry(left_header, textvariable=self.df_occ_cap_var, width=6).grid(row=2, column=5, padx=4, pady=2, sticky="w")
 
         nav_frame = ttk.Frame(left_header)
-        nav_frame.grid(row=3, column=0, columnspan=6, sticky="w", pady=(4, 0))
+        nav_frame.grid(row=2, column=6, columnspan=3, sticky="w", padx=(6, 0), pady=(2, 2))
 
         ttk.Label(nav_frame, text="月移動:").pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(
@@ -2492,15 +2492,37 @@ class BookingCurveApp(tk.Tk):
             messagebox.showerror("エラー", "RevPAR計算用キャパシティが取得できません。")
             return
 
-        forecast_months = []
+        latest_asof_raw = (self.df_latest_asof_var.get() or "").strip()
+        latest_asof_ts = None
+        latest_asof_for_panel = None
+        if latest_asof_raw and latest_asof_raw not in {"なし", "(未取得)"}:
+            try:
+                latest_asof_ts = pd.to_datetime(latest_asof_raw).normalize()
+                latest_asof_for_panel = latest_asof_raw
+            except Exception:
+                latest_asof_ts = None
+        if latest_asof_ts is None:
+            try:
+                latest_asof_ts = pd.to_datetime(asof).normalize()
+            except Exception:
+                latest_asof_ts = pd.to_datetime(date.today()).normalize()
+
+        end_ts = latest_asof_ts + timedelta(days=90)
         try:
-            base_period = pd.Period(asof, freq="M")
+            start_period = pd.Period(month, freq="M")
         except Exception:
-            base_period = pd.Period(date.today().strftime("%Y%m"), freq="M")
-        for offset in range(horizon):
-            candidate = (base_period + offset).strftime("%Y%m")
+            start_period = pd.Period(date.today().strftime("%Y%m"), freq="M")
+        end_period = pd.Period(end_ts, freq="M")
+        if start_period > end_period:
+            end_period = start_period
+
+        forecast_months = []
+        cursor = start_period
+        while cursor <= end_period:
+            candidate = cursor.strftime("%Y%m")
             if self._get_fiscal_year_for_month(candidate) == fiscal_year:
                 forecast_months.append(candidate)
+            cursor += 1
 
         phase_factors, clip_pct = self._collect_phase_factors_for_months(hotel, forecast_months)
 
@@ -2517,6 +2539,7 @@ class BookingCurveApp(tk.Tk):
                     phase_factors=phase_factors,
                     phase_clip_pct=clip_pct,
                     forecast_horizon_months=horizon,
+                    latest_asof_date=latest_asof_for_panel,
                     show_years=selected_years,
                     fiscal_year_start_month=6,
                 )
@@ -2582,6 +2605,8 @@ class BookingCurveApp(tk.Tk):
             target_idx = (target_idx + shift) % 12
 
         for fy, values in lines_by_fy.items():
+            if fy == current_fy:
+                continue
             y = [np.nan if v is None else float(v) for v in values]
             ax.plot(x, y, label=f"{fy}年度")
 
@@ -2594,11 +2619,22 @@ class BookingCurveApp(tk.Tk):
         for idx, value in enumerate(current_actual):
             if value is not None:
                 last_actual_idx = idx
-        if last_actual_idx is not None:
-            dashed_series[last_actual_idx] = current_actual[last_actual_idx]
+        first_forecast_idx = None
         for idx, value in enumerate(current_forecast):
             if value is not None:
+                if first_forecast_idx is None or idx < first_forecast_idx:
+                    first_forecast_idx = idx
                 dashed_series[idx] = value
+        if last_actual_idx is not None:
+            dashed_series[last_actual_idx] = current_actual[last_actual_idx]
+            if first_forecast_idx is not None and first_forecast_idx > last_actual_idx + 1:
+                start_value = current_actual[last_actual_idx]
+                end_value = current_forecast[first_forecast_idx]
+                if start_value is not None and end_value is not None:
+                    steps = first_forecast_idx - last_actual_idx
+                    for step in range(1, steps):
+                        interp = start_value + (end_value - start_value) * (step / steps)
+                        dashed_series[last_actual_idx + step] = interp
         y_forecast = [np.nan if v is None else float(v) for v in dashed_series]
         ax.plot(
             x,

@@ -2863,7 +2863,8 @@ class BookingCurveApp(tk.Tk):
             if view_mode_label == "年度固定" and isinstance(anchor_idx, int) and 0 <= anchor_idx < len(band_low):
                 mask &= np.arange(len(band_low)) > anchor_idx
             if mask.any():
-                if seam_idx in (None, 0):
+                seam_idx_for_band = None if view_mode_label == "回転（対象月を中央寄せ）" else seam_idx
+                if seam_idx_for_band in (None, 0):
                     ax.fill_between(
                         x,
                         band_low,
@@ -2874,14 +2875,14 @@ class BookingCurveApp(tk.Tk):
                         label="p10–p90",
                     )
                 else:
-                    left_mask = mask[:seam_idx]
-                    right_mask = mask[seam_idx:]
+                    left_mask = mask[:seam_idx_for_band]
+                    right_mask = mask[seam_idx_for_band:]
                     left_collection = None
                     if left_mask.any():
                         left_collection = ax.fill_between(
-                            x[:seam_idx],
-                            band_low[:seam_idx],
-                            band_high[:seam_idx],
+                            x[:seam_idx_for_band],
+                            band_low[:seam_idx_for_band],
+                            band_high[:seam_idx_for_band],
                             where=left_mask,
                             interpolate=True,
                             alpha=0.18,
@@ -2895,9 +2896,9 @@ class BookingCurveApp(tk.Tk):
                                 facecolor = colors[0]
                         right_label = "_nolegend_" if left_mask.any() else "p10–p90"
                         ax.fill_between(
-                            x[seam_idx:],
-                            band_low[seam_idx:],
-                            band_high[seam_idx:],
+                            x[seam_idx_for_band:],
+                            band_low[seam_idx_for_band:],
+                            band_high[seam_idx_for_band:],
                             where=right_mask,
                             interpolate=True,
                             alpha=0.18,

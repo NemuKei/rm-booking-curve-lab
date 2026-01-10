@@ -1344,14 +1344,15 @@ def build_topdown_revpar_panel(
     min_actual_period = min(revpar_by_period) if revpar_by_period else None
 
     def _find_anchor_period(target_period: pd.Period) -> tuple[pd.Period | None, float | None]:
-        candidate = target_period - 1
+        candidate_ordinal = int(target_period.ordinal) - 1
         for _ in range(120):
+            candidate = pd.Period(candidate_ordinal, freq="M")
             if min_actual_period is not None and candidate < min_actual_period:
                 return None, None
             anchor_val = _get_current_revpar(candidate)
             if anchor_val is not None:
                 return candidate, anchor_val
-            candidate -= 1
+            candidate_ordinal -= 1
         return None, None
 
     band_months_sorted = sorted(
@@ -1431,6 +1432,8 @@ def build_topdown_revpar_panel(
         except Exception:
             month_period = None
         if month_period is not None and month_period < asof_period:
+            continue
+        if anchor_period_latest is not None and month_period is not None and month_period <= anchor_period_latest:
             continue
         revpar_value = forecast_revpar_map.get(month_str)
         band_values = band_by_month.get(month_str)
@@ -1706,6 +1709,10 @@ def get_daily_forecast_table(
     adr_oh_total = revenue_oh_total / denom_asof_total
     forecast_adr_total = forecast_revenue_total / denom_forecast_total
     forecast_revpar_total = forecast_revenue_total / denom_cap_total
+    if pickup_total_from_asof > 0:
+        adr_pickup_total = (forecast_revenue_total - revenue_oh_total) / pickup_total_from_asof
+    else:
+        adr_pickup_total = pd.NA
 
     def _round_display(series: pd.Series, unit: float) -> pd.Series:
         values = pd.to_numeric(series, errors="coerce")
@@ -1854,7 +1861,7 @@ def get_daily_forecast_table(
         "projected_pax": pd.NA,
         "revenue_oh_now": revenue_oh_total,
         "adr_oh_now": adr_oh_total,
-        "adr_pickup_est": pd.NA,
+        "adr_pickup_est": adr_pickup_total,
         "forecast_revenue": forecast_revenue_total,
         "forecast_adr": forecast_adr_total,
         "forecast_revpar": forecast_revpar_total,

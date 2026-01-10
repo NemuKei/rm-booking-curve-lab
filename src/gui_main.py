@@ -2502,12 +2502,14 @@ class BookingCurveApp(tk.Tk):
             control_frame,
             text="p10–p90帯(A): 直近着地月アンカー",
             variable=self._topdown_show_band_latest_var,
+            command=self._rerender_topdown_if_panel_exists,
         ).grid(row=0, column=2, sticky="w")
-        self._topdown_show_band_prev_var = tk.BooleanVar(value=False)
+        self._topdown_show_band_prev_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             control_frame,
             text="p10–p90帯(C): 前月アンカー",
             variable=self._topdown_show_band_prev_var,
+            command=self._rerender_topdown_if_panel_exists,
         ).grid(row=0, column=3, sticky="w")
 
         ttk.Label(control_frame, text="表示モード:").grid(row=1, column=0, sticky="w", pady=(4, 0))
@@ -2567,7 +2569,7 @@ class BookingCurveApp(tk.Tk):
         diag_frame.rowconfigure(0, weight=1)
         diag_frame.columnconfigure(0, weight=1)
 
-        self._topdown_diag_text = tk.Text(diag_frame, height=6, wrap="word")
+        self._topdown_diag_text = tk.Text(diag_frame, height=6, wrap="none", font=("Courier New", 9))
         self._topdown_diag_text.grid(row=0, column=0, sticky="nsew")
         diag_scroll = ttk.Scrollbar(diag_frame, orient="vertical", command=self._topdown_diag_text.yview)
         diag_scroll.grid(row=0, column=1, sticky="ns")
@@ -2576,6 +2578,12 @@ class BookingCurveApp(tk.Tk):
         self._topdown_diag_text.configure(state="disabled")
 
         self._on_topdown_revpar_update()
+
+    def _rerender_topdown_if_panel_exists(self) -> None:
+        panel = getattr(self, "_topdown_panel", None)
+        if panel is None:
+            return
+        self._render_topdown_revpar_panel(panel, skip_forecast_update=True)
 
     def _on_topdown_view_mode_changed(self) -> None:
         panel = getattr(self, "_topdown_last_panel", None)
@@ -2706,7 +2714,12 @@ class BookingCurveApp(tk.Tk):
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _render_topdown_revpar_panel(self, panel: dict[str, object] | None) -> None:
+    def _render_topdown_revpar_panel(
+        self,
+        panel: dict[str, object] | None,
+        *,
+        skip_forecast_update: bool = False,
+    ) -> None:
         if panel is None:
             return
 
@@ -3043,8 +3056,10 @@ class BookingCurveApp(tk.Tk):
         diagnostics = panel.get("diagnostics", [])
         skipped = panel.get("skipped_months", {})
         self._topdown_last_panel = panel
+        self._topdown_panel = panel
         self._update_topdown_diagnostics(diagnostics, skipped)
-        self._topdown_status_var.set("更新完了")
+        if not skip_forecast_update:
+            self._topdown_status_var.set("更新完了")
 
     def _update_topdown_diagnostics(
         self,
@@ -3055,6 +3070,19 @@ class BookingCurveApp(tk.Tk):
         if text is None:
             return
         lines = []
+        header = " ".join(
+            [
+                f"{'YYYYMM':<8}",
+                f"{'FcRevPAR':>10}",
+                f"{'A:p10':>10}",
+                f"{'A:p90':>10}",
+                f"{'C:p10':>10}",
+                f"{'C:p90':>10}",
+                "notes",
+            ]
+        )
+        lines.append(header)
+        lines.append("-" * len(header))
         if isinstance(diagnostics, list):
             for row in diagnostics:
                 month = row.get("month")
@@ -3068,28 +3096,34 @@ class BookingCurveApp(tk.Tk):
                 out_prev = row.get("out_of_range_prev")
                 flags = []
                 if out_latest:
-                    flags.append("⚠(A)")
+                    flags.append("⚠A")
                 if out_prev:
-                    flags.append("⚠(C)")
-                flag = f" {' '.join(flags)}" if flags else ""
-                note_text = ""
+                    flags.append("⚠C")
+                note_items = []
                 if isinstance(notes, list) and notes:
-                    note_text = f" {' '.join(str(note) for note in notes if note)}"
+                    note_items.extend(str(note) for note in notes if note)
+                if flags:
+                    note_items.extend(flags)
+                note_text = " ".join(note_items)
                 p10_latest_str = "-" if p10_latest is None else f"{p10_latest:,.0f}"
                 p90_latest_str = "-" if p90_latest is None else f"{p90_latest:,.0f}"
                 p10_prev_str = "-" if p10_prev is None else f"{p10_prev:,.0f}"
                 p90_prev_str = "-" if p90_prev is None else f"{p90_prev:,.0f}"
-                band_parts = []
-                if p10_latest is not None or p90_latest is not None:
-                    band_parts.append(f"A:p10={p10_latest_str}/p90={p90_latest_str}")
-                if p10_prev is not None or p90_prev is not None:
-                    band_parts.append(f"C:p10={p10_prev_str}/p90={p90_prev_str}")
-                band_text = " / ".join(band_parts) if band_parts else "p10=- / p90=-"
-                if revpar is None:
-                    lines.append(f"{month}: {band_text}{note_text}{flag}")
-                else:
-                    revpar_str = f"{revpar:,.0f}"
-                    lines.append(f"{month}: FcRevPAR={revpar_str} / {band_text}{note_text}{flag}")
+                revpar_str = "-" if revpar is None else f"{revpar:,.0f}"
+                month_str = "-" if month is None else str(month)
+                lines.append(
+                    " ".join(
+                        [
+                            f"{month_str:<8}",
+                            f"{revpar_str:>10}",
+                            f"{p10_latest_str:>10}",
+                            f"{p90_latest_str:>10}",
+                            f"{p10_prev_str:>10}",
+                            f"{p90_prev_str:>10}",
+                            note_text,
+                        ]
+                    )
+                )
 
         if skipped_months:
             for month, error_msg in skipped_months.items():

@@ -1360,6 +1360,7 @@ def build_topdown_revpar_panel(
     )
     ratio_fallback_months: set[str] = set()
     last_ratio_band: tuple[float, float] | None = None
+    min_ratio_samples = 3
     for month_str in band_months_sorted:
         try:
             target_period = pd.Period(month_str, freq="M")
@@ -1390,7 +1391,7 @@ def build_topdown_revpar_panel(
             if anchor_ref_val in (None, 0) or target_ref_val is None:
                 continue
             ratios.append(float(target_ref_val) / float(anchor_ref_val))
-        if ratios:
+        if len(ratios) >= min_ratio_samples:
             p10_ratio = float(np.percentile(ratios, 10))
             p90_ratio = float(np.percentile(ratios, 90))
             last_ratio_band = (p10_ratio, p90_ratio)
@@ -1425,13 +1426,15 @@ def build_topdown_revpar_panel(
 
     diagnostics: list[dict[str, object]] = []
     for month_str in band_months_sorted:
+        try:
+            month_period = pd.Period(month_str, freq="M")
+        except Exception:
+            month_period = None
+        if month_period is not None and month_period < asof_period:
+            continue
         revpar_value = forecast_revpar_map.get(month_str)
         band_values = band_by_month.get(month_str)
         if anchor_period_latest is not None:
-            try:
-                month_period = pd.Period(month_str, freq="M")
-            except Exception:
-                month_period = None
             if month_period is not None and month_period < anchor_period_latest:
                 band_prev_values = None
             else:

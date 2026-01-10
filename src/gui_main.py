@@ -2900,7 +2900,7 @@ class BookingCurveApp(tk.Tk):
                 and isinstance(anchor_idx, int)
                 and 0 <= anchor_idx < len(band_low)
             ):
-                mask &= np.arange(len(band_low)) > anchor_idx
+                mask &= np.arange(len(band_low)) >= anchor_idx
             if not mask.any():
                 return
             seam_idx_for_band = None if view_mode_label == "回転（対象月を中央寄せ）" else seam_idx
@@ -3063,6 +3063,7 @@ class BookingCurveApp(tk.Tk):
                 p90_latest = row.get("p90_latest")
                 p10_prev = row.get("p10_prev")
                 p90_prev = row.get("p90_prev")
+                notes = row.get("notes")
                 out_latest = row.get("out_of_range_latest")
                 out_prev = row.get("out_of_range_prev")
                 flags = []
@@ -3071,6 +3072,9 @@ class BookingCurveApp(tk.Tk):
                 if out_prev:
                     flags.append("⚠(C)")
                 flag = f" {' '.join(flags)}" if flags else ""
+                note_text = ""
+                if isinstance(notes, list) and notes:
+                    note_text = f" {' '.join(str(note) for note in notes if note)}"
                 p10_latest_str = "-" if p10_latest is None else f"{p10_latest:,.0f}"
                 p90_latest_str = "-" if p90_latest is None else f"{p90_latest:,.0f}"
                 p10_prev_str = "-" if p10_prev is None else f"{p10_prev:,.0f}"
@@ -3082,10 +3086,10 @@ class BookingCurveApp(tk.Tk):
                     band_parts.append(f"C:p10={p10_prev_str}/p90={p90_prev_str}")
                 band_text = " / ".join(band_parts) if band_parts else "p10=- / p90=-"
                 if revpar is None:
-                    lines.append(f"{month}: {band_text}{flag}")
+                    lines.append(f"{month}: {band_text}{note_text}{flag}")
                 else:
                     revpar_str = f"{revpar:,.0f}"
-                    lines.append(f"{month}: FcRevPAR={revpar_str} / {band_text}{flag}")
+                    lines.append(f"{month}: FcRevPAR={revpar_str} / {band_text}{note_text}{flag}")
 
         if skipped_months:
             for month, error_msg in skipped_months.items():

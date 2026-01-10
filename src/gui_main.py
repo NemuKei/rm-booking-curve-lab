@@ -2497,12 +2497,18 @@ class BookingCurveApp(tk.Tk):
         )
         horizon_spin.grid(row=0, column=1, padx=(4, 12), sticky="w")
 
-        self._topdown_show_band_var = tk.BooleanVar(value=True)
+        self._topdown_show_band_latest_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             control_frame,
-            text="p10–p90帯を表示",
-            variable=self._topdown_show_band_var,
+            text="p10–p90帯(A): 直近着地月アンカー",
+            variable=self._topdown_show_band_latest_var,
         ).grid(row=0, column=2, sticky="w")
+        self._topdown_show_band_prev_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            control_frame,
+            text="p10–p90帯(C): 前月アンカー",
+            variable=self._topdown_show_band_prev_var,
+        ).grid(row=0, column=3, sticky="w")
 
         ttk.Label(control_frame, text="表示モード:").grid(row=1, column=0, sticky="w", pady=(4, 0))
         self._topdown_view_mode_var = tk.StringVar(value="年度固定")
@@ -2519,8 +2525,10 @@ class BookingCurveApp(tk.Tk):
         ttk.Label(
             control_frame,
             text=(
-                "p10–p90帯: 直近着地月を基準に、過去年(表示年度)の"
-                "月次比率分布(10–90%)を掛けた参考レンジ"
+                "p10–p90帯(A): 直近着地月を基準に、過去年(表示年度)の"
+                "月次比率分布(10–90%)を掛けた参考レンジ。"
+                "p10–p90帯(C): 前月→当月の比率分布を使う前月アンカー帯。"
+                "⚠は FcRevPAR が帯の範囲外 (A/C別) を示す。"
             ),
             wraplength=700,
             justify="left",
@@ -2531,10 +2539,10 @@ class BookingCurveApp(tk.Tk):
             text="更新",
             command=self._on_topdown_revpar_update,
         )
-        update_btn.grid(row=0, column=3, padx=(12, 0), sticky="e")
+        update_btn.grid(row=0, column=4, padx=(12, 0), sticky="e")
 
         self._topdown_status_var = tk.StringVar(value="")
-        ttk.Label(control_frame, textvariable=self._topdown_status_var).grid(row=0, column=4, padx=(12, 0), sticky="e")
+        ttk.Label(control_frame, textvariable=self._topdown_status_var).grid(row=0, column=5, padx=(12, 0), sticky="e")
 
         year_frame = ttk.LabelFrame(popup, text="表示年度")
         year_frame.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 6))
@@ -2554,7 +2562,7 @@ class BookingCurveApp(tk.Tk):
         self._topdown_canvas = FigureCanvasTkAgg(self._topdown_fig, master=fig_frame)
         self._topdown_canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew")
 
-        diag_frame = ttk.LabelFrame(popup, text="Forecast RevPAR と p10–p90 比較")
+        diag_frame = ttk.LabelFrame(popup, text="Forecast RevPAR と p10–p90 比較 (A/C)")
         diag_frame.grid(row=3, column=0, sticky="nsew", padx=8, pady=(0, 8))
         diag_frame.rowconfigure(0, weight=1)
         diag_frame.columnconfigure(0, weight=1)
@@ -2715,11 +2723,15 @@ class BookingCurveApp(tk.Tk):
         band_p10 = panel.get("band_p10", [])
         band_p90 = panel.get("band_p90", [])
         band_by_month = panel.get("band_by_month", {})
+        band_p10_prev_anchor = panel.get("band_p10_prev_anchor", [])
+        band_p90_prev_anchor = panel.get("band_p90_prev_anchor", [])
+        band_by_month_prev_anchor = panel.get("band_by_month_prev_anchor", {})
         rotation_month_strs = panel.get("rotation_month_strs", [])
         current_actual = panel.get("current_fy_actual", [])
         current_forecast = panel.get("current_fy_forecast", [])
         anchor_idx = panel.get("anchor_idx")
-        show_band = getattr(self, "_topdown_show_band_var", tk.BooleanVar(value=True)).get()
+        show_band_latest = getattr(self, "_topdown_show_band_latest_var", tk.BooleanVar(value=True)).get()
+        show_band_prev = getattr(self, "_topdown_show_band_prev_var", tk.BooleanVar(value=False)).get()
         view_mode_label = getattr(self, "_topdown_view_mode_var", tk.StringVar(value="年度固定")).get()
 
         def _rotate_sequence(seq: list[object], shift: int) -> list[object]:
@@ -2747,22 +2759,36 @@ class BookingCurveApp(tk.Tk):
             lines_by_fy = {fy: _rotate_sequence(list(values), shift) for fy, values in lines_by_fy.items()}
             current_actual = _rotate_sequence(list(current_actual), shift)
             current_forecast = _rotate_sequence(list(current_forecast), shift)
-            if isinstance(band_by_month, dict) and rotation_month_strs:
-                rotated_p10 = []
-                rotated_p90 = []
-                for month_str in rotation_month_strs:
-                    band_values = band_by_month.get(month_str)
+            def _band_from_month_map(
+                months: list[str],
+                band_map: dict[str, tuple[float, float]],
+            ) -> tuple[list[float | None], list[float | None]]:
+                p10_values: list[float | None] = []
+                p90_values: list[float | None] = []
+                for month_str in months:
+                    band_values = band_map.get(month_str)
                     if band_values is None:
-                        rotated_p10.append(None)
-                        rotated_p90.append(None)
+                        p10_values.append(None)
+                        p90_values.append(None)
                     else:
-                        rotated_p10.append(band_values[0])
-                        rotated_p90.append(band_values[1])
-                band_p10 = rotated_p10
-                band_p90 = rotated_p90
+                        p10_values.append(band_values[0])
+                        p90_values.append(band_values[1])
+                return p10_values, p90_values
+
+            if isinstance(band_by_month, dict) and rotation_month_strs:
+                band_p10, band_p90 = _band_from_month_map(rotation_month_strs, band_by_month)
             else:
                 band_p10 = _rotate_sequence(list(band_p10), shift)
                 band_p90 = _rotate_sequence(list(band_p90), shift)
+
+            if isinstance(band_by_month_prev_anchor, dict) and rotation_month_strs:
+                band_p10_prev_anchor, band_p90_prev_anchor = _band_from_month_map(
+                    rotation_month_strs,
+                    band_by_month_prev_anchor,
+                )
+            else:
+                band_p10_prev_anchor = _rotate_sequence(list(band_p10_prev_anchor), shift)
+                band_p90_prev_anchor = _rotate_sequence(list(band_p90_prev_anchor), shift)
             target_idx = (target_idx + shift) % 12
             if shift_mod != 0:
                 seam_idx = shift_mod
@@ -2856,56 +2882,90 @@ class BookingCurveApp(tk.Tk):
             idx = 0
         ax.axvspan(idx - 0.5, idx + 0.5, color="gold", alpha=0.15, label="対象月")
 
-        if show_band:
-            band_low = np.array([np.nan if v is None else float(v) for v in band_p10])
-            band_high = np.array([np.nan if v is None else float(v) for v in band_p90])
+        def _plot_band(
+            low: list[float | None],
+            high: list[float | None],
+            *,
+            label: str,
+            alpha: float,
+            color: str | None = None,
+            apply_anchor_mask: bool = False,
+        ) -> None:
+            band_low = np.array([np.nan if v is None else float(v) for v in low])
+            band_high = np.array([np.nan if v is None else float(v) for v in high])
             mask = np.isfinite(band_low) & np.isfinite(band_high)
-            if view_mode_label == "年度固定" and isinstance(anchor_idx, int) and 0 <= anchor_idx < len(band_low):
+            if (
+                apply_anchor_mask
+                and view_mode_label == "年度固定"
+                and isinstance(anchor_idx, int)
+                and 0 <= anchor_idx < len(band_low)
+            ):
                 mask &= np.arange(len(band_low)) > anchor_idx
-            if mask.any():
-                seam_idx_for_band = None if view_mode_label == "回転（対象月を中央寄せ）" else seam_idx
-                if seam_idx_for_band in (None, 0):
-                    ax.fill_between(
-                        x,
-                        band_low,
-                        band_high,
-                        where=mask,
-                        interpolate=True,
-                        alpha=0.18,
-                        label="p10–p90",
-                    )
-                else:
-                    left_mask = mask[:seam_idx_for_band]
-                    right_mask = mask[seam_idx_for_band:]
-                    left_collection = None
-                    if left_mask.any():
-                        left_collection = ax.fill_between(
-                            x[:seam_idx_for_band],
-                            band_low[:seam_idx_for_band],
-                            band_high[:seam_idx_for_band],
-                            where=left_mask,
-                            interpolate=True,
-                            alpha=0.18,
-                            label="p10–p90",
-                        )
-                    if right_mask.any():
-                        facecolor = None
-                        if left_collection is not None:
-                            colors = left_collection.get_facecolor()
-                            if len(colors):
-                                facecolor = colors[0]
-                        right_label = "_nolegend_" if left_mask.any() else "p10–p90"
-                        ax.fill_between(
-                            x[seam_idx_for_band:],
-                            band_low[seam_idx_for_band:],
-                            band_high[seam_idx_for_band:],
-                            where=right_mask,
-                            interpolate=True,
-                            alpha=0.18,
-                            label=right_label,
-                            facecolor=facecolor,
-                            edgecolor=facecolor,
-                        )
+            if not mask.any():
+                return
+            seam_idx_for_band = None if view_mode_label == "回転（対象月を中央寄せ）" else seam_idx
+            if seam_idx_for_band in (None, 0):
+                ax.fill_between(
+                    x,
+                    band_low,
+                    band_high,
+                    where=mask,
+                    interpolate=True,
+                    alpha=alpha,
+                    label=label,
+                    color=color,
+                )
+                return
+            left_mask = mask[:seam_idx_for_band]
+            right_mask = mask[seam_idx_for_band:]
+            left_collection = None
+            if left_mask.any():
+                left_collection = ax.fill_between(
+                    x[:seam_idx_for_band],
+                    band_low[:seam_idx_for_band],
+                    band_high[:seam_idx_for_band],
+                    where=left_mask,
+                    interpolate=True,
+                    alpha=alpha,
+                    label=label,
+                    color=color,
+                )
+            if right_mask.any():
+                facecolor = color
+                if left_collection is not None and color is None:
+                    colors = left_collection.get_facecolor()
+                    if len(colors):
+                        facecolor = colors[0]
+                right_label = "_nolegend_" if left_mask.any() else label
+                ax.fill_between(
+                    x[seam_idx_for_band:],
+                    band_low[seam_idx_for_band:],
+                    band_high[seam_idx_for_band:],
+                    where=right_mask,
+                    interpolate=True,
+                    alpha=alpha,
+                    label=right_label,
+                    facecolor=facecolor,
+                    edgecolor=facecolor,
+                )
+
+        if show_band_latest:
+            _plot_band(
+                list(band_p10),
+                list(band_p90),
+                label="p10–p90(直近着地)",
+                alpha=0.18,
+                apply_anchor_mask=True,
+            )
+
+        if show_band_prev:
+            _plot_band(
+                list(band_p10_prev_anchor),
+                list(band_p90_prev_anchor),
+                label="p10–p90(前月アンカー)",
+                alpha=0.12,
+                color="tab:orange",
+            )
 
         if view_mode_label == "回転（対象月を中央寄せ）":
             def _month_from_label(label_value: object) -> int | None:
@@ -2999,16 +3059,33 @@ class BookingCurveApp(tk.Tk):
             for row in diagnostics:
                 month = row.get("month")
                 revpar = row.get("revpar")
-                p10 = row.get("p10")
-                p90 = row.get("p90")
-                flag = " ⚠" if row.get("out_of_range") else ""
-                p10_str = "-" if p10 is None else f"{p10:,.0f}"
-                p90_str = "-" if p90 is None else f"{p90:,.0f}"
+                p10_latest = row.get("p10_latest")
+                p90_latest = row.get("p90_latest")
+                p10_prev = row.get("p10_prev")
+                p90_prev = row.get("p90_prev")
+                out_latest = row.get("out_of_range_latest")
+                out_prev = row.get("out_of_range_prev")
+                flags = []
+                if out_latest:
+                    flags.append("⚠(A)")
+                if out_prev:
+                    flags.append("⚠(C)")
+                flag = f" {' '.join(flags)}" if flags else ""
+                p10_latest_str = "-" if p10_latest is None else f"{p10_latest:,.0f}"
+                p90_latest_str = "-" if p90_latest is None else f"{p90_latest:,.0f}"
+                p10_prev_str = "-" if p10_prev is None else f"{p10_prev:,.0f}"
+                p90_prev_str = "-" if p90_prev is None else f"{p90_prev:,.0f}"
+                band_parts = []
+                if p10_latest is not None or p90_latest is not None:
+                    band_parts.append(f"A:p10={p10_latest_str}/p90={p90_latest_str}")
+                if p10_prev is not None or p90_prev is not None:
+                    band_parts.append(f"C:p10={p10_prev_str}/p90={p90_prev_str}")
+                band_text = " / ".join(band_parts) if band_parts else "p10=- / p90=-"
                 if revpar is None:
-                    lines.append(f"{month}: p10={p10_str} / p90={p90_str}{flag}")
+                    lines.append(f"{month}: {band_text}{flag}")
                 else:
                     revpar_str = f"{revpar:,.0f}"
-                    lines.append(f"{month}: FcRevPAR={revpar_str} / p10={p10_str} / p90={p90_str}{flag}")
+                    lines.append(f"{month}: FcRevPAR={revpar_str} / {band_text}{flag}")
 
         if skipped_months:
             for month, error_msg in skipped_months.items():

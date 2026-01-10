@@ -966,6 +966,54 @@ def _get_forecast_csv_prefix(gui_model: str) -> tuple[str, str]:
     return model_map[gui_model]
 
 
+def _read_forecast_csv_safely(csv_path: Path) -> tuple[pd.DataFrame | None, str | None]:
+    try:
+        df = pd.read_csv(csv_path, index_col=0)
+    except Exception as exc:  # noqa: BLE001
+        return None, f"read failed: {exc}"
+
+    index_str = df.index.astype(str)
+    parsed_index = pd.to_datetime(index_str, errors="coerce")
+
+    if parsed_index.isna().any():
+        numeric_index = pd.to_numeric(index_str, errors="coerce")
+        if numeric_index.notna().all():
+            in_range = numeric_index.between(30000, 60000)
+            if in_range.all():
+                parsed_index = pd.to_datetime(
+                    numeric_index,
+                    unit="D",
+                    origin="1899-12-30",
+                    errors="coerce",
+                )
+
+    invalid_mask = parsed_index.isna()
+    if invalid_mask.any():
+        invalid_values = list(dict.fromkeys(index_str[invalid_mask].tolist()))[:5]
+        sample_text = ", ".join(invalid_values) if invalid_values else "unknown"
+        return None, f"INVALID stay_date index in {csv_path}: {sample_text}"
+
+    df = df.copy()
+    df.index = parsed_index.normalize()
+    return df, None
+
+
+def _summarize_forecast_error(err_msg: str, max_len: int = 120) -> str:
+    err_msg = err_msg.strip()
+    if len(err_msg) <= max_len:
+        return err_msg
+
+    if "INVALID stay_date index" in err_msg:
+        if " in " in err_msg and ":" in err_msg:
+            prefix, _, tail = err_msg.partition(" in ")
+            path_part, _, sample_part = tail.partition(":")
+            file_name = Path(path_part.strip()).name
+            summarized = f"{prefix} in {file_name}: {sample_part.strip()}"
+            if len(summarized) <= max_len:
+                return summarized
+    return f"{err_msg[: max_len - 3]}..."
+
+
 def _check_forecast_csv_complete_for_month(
     hotel_tag: str,
     target_month: str,
@@ -980,10 +1028,9 @@ def _check_forecast_csv_complete_for_month(
     if not csv_path.exists():
         return False, "CSV not found"
 
-    try:
-        df = pd.read_csv(csv_path, index_col=0, parse_dates=True)
-    except Exception:
-        return False, "CSV read failed"
+    df, err_msg = _read_forecast_csv_safely(csv_path)
+    if df is None:
+        return False, f"CSV read failed: {err_msg}"
 
     if df.empty:
         return False, "CSV empty"
@@ -1002,8 +1049,7 @@ def _check_forecast_csv_complete_for_month(
         freq="D",
     )
 
-    index_dates = pd.to_datetime(df.index, errors="coerce").normalize()
-    index_dates = index_dates[~pd.isna(index_dates)]
+    index_dates = df.index.normalize()
     if index_dates.empty:
         return False, "stay_date missing"
 
@@ -1027,7 +1073,7 @@ def _get_projected_monthly_revpar(
     gui_model: str,
     rooms_cap: float,
     missing_ok: bool = False,
-) -> float | None:
+) -> tuple[float | None, str | None]:
     prefix, _ = _get_forecast_csv_prefix(gui_model)
     asof_ts = pd.to_datetime(as_of_date)
     asof_tag = asof_ts.strftime("%Y%m%d")
@@ -1035,14 +1081,16 @@ def _get_projected_monthly_revpar(
     csv_path = OUTPUT_DIR / csv_name
     if not csv_path.exists():
         if missing_ok:
-            return None
+            return None, f"CSV not found: {csv_path}"
         raise FileNotFoundError(f"forecast csv not found: {csv_path}")
 
-    df = pd.read_csv(csv_path, index_col=0, parse_dates=True)
+    df, err_msg = _read_forecast_csv_safely(csv_path)
+    if df is None:
+        return None, err_msg
     if "forecast_revenue" not in df.columns:
         if missing_ok:
-            return None
-        return None
+            return None, "forecast_revenue missing"
+        return None, "forecast_revenue missing"
 
     revenue = pd.to_numeric(df["forecast_revenue"], errors="coerce")
 
@@ -1050,7 +1098,7 @@ def _get_projected_monthly_revpar(
         year = int(target_month[:4])
         month = int(target_month[4:])
     except Exception:
-        return None
+        return None, "invalid target_month"
     _, num_days = monthrange(year, month)
     expected_dates = pd.date_range(
         start=pd.Timestamp(year=year, month=month, day=1),
@@ -1058,25 +1106,24 @@ def _get_projected_monthly_revpar(
         freq="D",
     )
 
-    index_dates = pd.to_datetime(df.index, errors="coerce").normalize()
-    index_dates = index_dates[~pd.isna(index_dates)]
+    index_dates = df.index.normalize()
     if index_dates.empty:
-        return None
+        return None, "stay_date missing"
 
     revenue.index = index_dates
     revenue = revenue[~pd.isna(revenue.index)]
     revenue_by_date = revenue.groupby(level=0).max()
     revenue_by_date = revenue_by_date.reindex(expected_dates)
     if revenue_by_date.isna().any():
-        return None
+        return None, "forecast_revenue incomplete"
 
     revenue_total = revenue_by_date.sum(min_count=1)
     if pd.isna(revenue_total):
-        return None
+        return None, "forecast_revenue missing"
     denom = rooms_cap * num_days
     if denom <= 0:
-        return None
-    return float(revenue_total / denom)
+        return None, "rooms capacity missing"
+    return float(revenue_total / denom), None
 
 
 def build_topdown_revpar_panel(
@@ -1220,7 +1267,9 @@ def build_topdown_revpar_panel(
             if is_complete:
                 computable_months.append(month_str)
             else:
-                skipped_months[month_str] = f"INCOMPLETE: {reason}"
+                skipped_months[month_str] = (
+                    f"INCOMPLETE: {_summarize_forecast_error(reason)}"
+                )
         except Exception as exc:  # noqa: BLE001
             logging.warning("Skipping forecast month %s due to error: %s", month_str, exc)
             skipped_months[month_str] = str(exc)
@@ -1229,7 +1278,7 @@ def build_topdown_revpar_panel(
     forecast_revpar_map: dict[str, float | None] = {}
     effective_forecast_months: list[str] = []
     for month_str in computable_months:
-        revpar_value = _get_projected_monthly_revpar(
+        revpar_value, err_msg = _get_projected_monthly_revpar(
             hotel_tag=hotel_tag,
             target_month=month_str,
             as_of_date=as_of_date,
@@ -1237,6 +1286,11 @@ def build_topdown_revpar_panel(
             rooms_cap=rooms_cap,
             missing_ok=True,
         )
+        if err_msg:
+            skipped_months.setdefault(
+                month_str,
+                f"INCOMPLETE: {_summarize_forecast_error(err_msg)}",
+            )
         if revpar_value is None:
             continue
         forecast_revpar_map[month_str] = revpar_value

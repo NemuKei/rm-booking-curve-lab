@@ -866,6 +866,27 @@ class BookingCurveApp(tk.Tk):
         if rev_fc is not None and occ_capacity > 0 and num_days > 0:
             revpar_fc = rev_fc / (occ_capacity * num_days)
 
+        pickup_rooms = None
+        pickup_pax = None
+        pickup_rev = None
+        if rooms_fc is not None and rooms_oh is not None:
+            pickup_rooms = rooms_fc - rooms_oh
+        if pax_fc is not None and pax_oh is not None:
+            pickup_pax = pax_fc - pax_oh
+        if rev_fc is not None and rev_oh is not None:
+            pickup_rev = rev_fc - rev_oh
+
+        pickup_adr = _safe_ratio(pickup_rev, pickup_rooms)
+        pickup_dor = _safe_ratio(pickup_pax, pickup_rooms)
+        if pickup_rooms is not None and occ_capacity > 0 and num_days > 0:
+            pickup_occ = pickup_rooms / (occ_capacity * num_days) * 100.0
+        else:
+            pickup_occ = None
+        if pickup_rev is not None and occ_capacity > 0 and num_days > 0:
+            pickup_revpar = pickup_rev / (occ_capacity * num_days)
+        else:
+            pickup_revpar = None
+
         ly = get_daily_forecast_ly_summary(hotel_tag=hotel, target_month=target_month, capacity=occ_capacity)
         ly_occ = None
         if ly.get("rooms") is not None and occ_capacity > 0 and num_days > 0:
@@ -886,30 +907,37 @@ class BookingCurveApp(tk.Tk):
 
         self.df_summary_vars["oh"]["Rooms"].set(_fmt_metric("Rooms", rooms_oh))
         self.df_summary_vars["forecast"]["Rooms"].set(_fmt_metric("Rooms", rooms_fc))
+        self.df_summary_vars["pickup"]["Rooms"].set(_fmt_metric("Rooms", pickup_rooms, empty_label="-"))
         self.df_summary_vars["ly"]["Rooms"].set(_fmt_metric("Rooms", ly.get("rooms"), empty_label="-"))
 
         self.df_summary_vars["oh"]["Pax"].set(_fmt_metric("Pax", pax_oh))
         self.df_summary_vars["forecast"]["Pax"].set(_fmt_metric("Pax", pax_fc))
+        self.df_summary_vars["pickup"]["Pax"].set(_fmt_metric("Pax", pickup_pax, empty_label="-"))
         self.df_summary_vars["ly"]["Pax"].set(_fmt_metric("Pax", ly.get("pax"), empty_label="-"))
 
         self.df_summary_vars["oh"]["Rev"].set(_fmt_metric("Rev", rev_oh))
         self.df_summary_vars["forecast"]["Rev"].set(_fmt_metric("Rev", rev_fc))
+        self.df_summary_vars["pickup"]["Rev"].set(_fmt_metric("Rev", pickup_rev, empty_label="-"))
         self.df_summary_vars["ly"]["Rev"].set(_fmt_metric("Rev", ly.get("revenue"), empty_label="-"))
 
         self.df_summary_vars["oh"]["OCC"].set(_fmt_metric("OCC", occ_oh))
         self.df_summary_vars["forecast"]["OCC"].set(_fmt_metric("OCC", occ_fc))
+        self.df_summary_vars["pickup"]["OCC"].set(_fmt_metric("OCC", pickup_occ, empty_label="-"))
         self.df_summary_vars["ly"]["OCC"].set(_fmt_metric("OCC", ly_occ, empty_label="-"))
 
         self.df_summary_vars["oh"]["ADR"].set(_fmt_metric("ADR", adr_oh))
         self.df_summary_vars["forecast"]["ADR"].set(_fmt_metric("ADR", adr_fc))
+        self.df_summary_vars["pickup"]["ADR"].set(_fmt_metric("ADR", pickup_adr, empty_label="-"))
         self.df_summary_vars["ly"]["ADR"].set(_fmt_metric("ADR", ly.get("adr"), empty_label="-"))
 
         self.df_summary_vars["oh"]["DOR"].set(_fmt_metric("DOR", dor_oh))
         self.df_summary_vars["forecast"]["DOR"].set(_fmt_metric("DOR", dor_fc))
+        self.df_summary_vars["pickup"]["DOR"].set(_fmt_metric("DOR", pickup_dor, empty_label="-"))
         self.df_summary_vars["ly"]["DOR"].set(_fmt_metric("DOR", ly.get("dor"), empty_label="-"))
 
         self.df_summary_vars["oh"]["RevPAR"].set(_fmt_metric("RevPAR", revpar_oh))
         self.df_summary_vars["forecast"]["RevPAR"].set(_fmt_metric("RevPAR", revpar_fc))
+        self.df_summary_vars["pickup"]["RevPAR"].set(_fmt_metric("RevPAR", pickup_revpar, empty_label="-"))
         self.df_summary_vars["ly"]["RevPAR"].set(_fmt_metric("RevPAR", ly.get("revpar"), empty_label="-"))
 
         if hasattr(self, "df_status_var"):
@@ -2345,8 +2373,8 @@ class BookingCurveApp(tk.Tk):
         for col_idx, metric in enumerate(metrics, start=1):
             ttk.Label(summary_frame, text=metric, width=8).grid(row=1, column=col_idx, sticky="e", padx=1)
 
-        self.df_summary_vars = {"oh": {}, "forecast": {}, "ly": {}}
-        row_labels = [("oh", "OH"), ("forecast", "Forecast"), ("ly", "LY ACT")]
+        self.df_summary_vars = {"oh": {}, "forecast": {}, "pickup": {}, "ly": {}}
+        row_labels = [("oh", "OH"), ("forecast", "Forecast"), ("pickup", "Pickup"), ("ly", "LY ACT")]
         for row_idx, (row_key, label) in enumerate(row_labels, start=2):
             ttk.Label(summary_frame, text=label, width=8).grid(row=row_idx, column=0, sticky="w", padx=2)
             for col_idx, metric in enumerate(metrics, start=1):

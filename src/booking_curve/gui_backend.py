@@ -1400,7 +1400,7 @@ def build_topdown_revpar_panel(
     def _find_anchor_period(target_period: pd.Period) -> tuple[pd.Period | None, float | None]:
         candidate_ordinal = int(target_period.ordinal) - 1
         for _ in range(120):
-            candidate = pd.Period(candidate_ordinal, freq="M")
+            candidate = pd.Period(ordinal=candidate_ordinal, freq="M")
             if min_actual_period is not None and candidate < min_actual_period:
                 return None, None
             anchor_val = _get_current_revpar(candidate)

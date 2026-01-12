@@ -1688,7 +1688,7 @@ def get_daily_forecast_table(
 
     out = pd.DataFrame(index=df.index.copy())
     out["stay_date"] = out.index
-    out["weekday"] = out["stay_date"].dt.weekday
+    out["weekday"] = out["stay_date"].dt.weekday.astype("Int64")
     out["actual_rooms"] = _round_int_series(df["actual_rooms"])
     out["forecast_rooms"] = _round_int_series(df[col_name])
     if "actual_pax" in df.columns:
@@ -1708,19 +1708,19 @@ def get_daily_forecast_table(
     if "revenue_oh_now" in df.columns:
         out["revenue_oh_now"] = pd.to_numeric(df["revenue_oh_now"], errors="coerce").astype(float)
     else:
-        out["revenue_oh_now"] = pd.NA
+        out["revenue_oh_now"] = pd.Series(np.nan, index=out.index, dtype="float")
     if "adr_oh_now" in df.columns:
         out["adr_oh_now"] = pd.to_numeric(df["adr_oh_now"], errors="coerce").astype(float)
     else:
-        out["adr_oh_now"] = pd.NA
+        out["adr_oh_now"] = pd.Series(np.nan, index=out.index, dtype="float")
     if "adr_pickup_est" in df.columns:
         out["adr_pickup_est"] = pd.to_numeric(df["adr_pickup_est"], errors="coerce").astype(float)
     else:
-        out["adr_pickup_est"] = pd.NA
+        out["adr_pickup_est"] = pd.Series(np.nan, index=out.index, dtype="float")
     if "forecast_revenue" in df.columns:
         out["forecast_revenue"] = pd.to_numeric(df["forecast_revenue"], errors="coerce").astype(float)
     else:
-        out["forecast_revenue"] = pd.NA
+        out["forecast_revenue"] = pd.Series(np.nan, index=out.index, dtype="float")
 
     snap_all = read_daily_snapshots_for_month(hotel_id=hotel_tag, target_month=target_month)
     if snap_all is None or snap_all.empty or not {"stay_date", "as_of_date", "rooms_oh"}.issubset(snap_all.columns):
@@ -1967,7 +1967,7 @@ def get_daily_forecast_table(
 
     total_row = {
         "stay_date": pd.NaT,
-        "weekday": "",
+        "weekday": pd.NA,
         "actual_rooms": actual_total,
         "asof_oh_rooms": asof_total,
         "forecast_rooms": forecast_total,
@@ -2003,9 +2003,23 @@ def get_daily_forecast_table(
     }
 
     out = out.reset_index(drop=True)
-    total_row_full = {col: pd.NA for col in out.columns}
-    total_row_full.update(total_row)
-    out.loc[len(out)] = total_row_full
+
+    def _missing_value_for_dtype(dtype: pd.api.extensions.ExtensionDtype | np.dtype) -> object:
+        if pd.api.types.is_datetime64_any_dtype(dtype):
+            return pd.NaT
+        if pd.api.types.is_float_dtype(dtype):
+            return np.nan
+        if pd.api.types.is_integer_dtype(dtype) or pd.api.types.is_boolean_dtype(dtype):
+            return pd.NA
+        if pd.api.types.is_string_dtype(dtype):
+            return ""
+        return pd.NA
+
+    missing_row = {col: _missing_value_for_dtype(out[col].dtype) for col in out.columns}
+    missing_row.update(total_row)
+    total_row_df = out.iloc[0:0].copy()
+    total_row_df.loc[0] = missing_row
+    out = pd.concat([out, total_row_df], ignore_index=True)
 
     column_order = [
         "stay_date",

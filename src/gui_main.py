@@ -2509,14 +2509,20 @@ class BookingCurveApp(tk.Tk):
 
         control_frame = ttk.Frame(popup)
         control_frame.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
-        control_frame.columnconfigure(2, weight=1)
+        control_frame.columnconfigure(0, weight=1)
 
-        ttk.Label(control_frame, text="予測範囲（月数）: (最新ASOF+90日固定)").grid(
+        left_controls = ttk.Frame(control_frame)
+        left_controls.grid(row=0, column=0, sticky="w")
+
+        right_controls = ttk.Frame(control_frame)
+        right_controls.grid(row=0, column=1, sticky="e")
+
+        ttk.Label(left_controls, text="予測範囲（月数）: (最新ASOF+90日固定)").grid(
             row=0, column=0, sticky="w"
         )
         self._topdown_horizon_var = tk.StringVar(value="3")
         horizon_spin = ttk.Spinbox(
-            control_frame,
+            left_controls,
             from_=1,
             to=12,
             textvariable=self._topdown_horizon_var,
@@ -2527,33 +2533,35 @@ class BookingCurveApp(tk.Tk):
 
         self._topdown_show_band_latest_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
-            control_frame,
+            right_controls,
             text="p10–p90帯(A): 直近着地月アンカー",
             variable=self._topdown_show_band_latest_var,
             command=self._rerender_topdown_if_panel_exists,
-        ).grid(row=0, column=2, sticky="w")
+        ).grid(row=1, column=0, sticky="e")
         self._topdown_show_band_prev_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
-            control_frame,
+            right_controls,
             text="p10–p90帯(C): 前月アンカー",
             variable=self._topdown_show_band_prev_var,
             command=self._rerender_topdown_if_panel_exists,
-        ).grid(row=0, column=3, sticky="w")
+        ).grid(row=2, column=0, sticky="e")
 
-        ttk.Label(control_frame, text="表示モード:").grid(row=1, column=0, sticky="w", pady=(4, 0))
+        ttk.Label(left_controls, text="表示モード:").grid(
+            row=1, column=0, sticky="w", pady=(4, 0)
+        )
         self._topdown_view_mode_var = tk.StringVar(value="年度固定")
         view_mode_combo = ttk.Combobox(
-            control_frame,
+            left_controls,
             textvariable=self._topdown_view_mode_var,
             values=["年度固定", "回転（対象月を中央寄せ）"],
             state="readonly",
             width=26,
         )
-        view_mode_combo.grid(row=1, column=1, padx=(4, 12), sticky="w", pady=(4, 0))
+        view_mode_combo.grid(row=1, column=1, padx=(4, 8), sticky="w", pady=(4, 0))
         view_mode_combo.bind("<<ComboboxSelected>>", lambda _event: self._on_topdown_view_mode_changed())
 
         ttk.Label(
-            control_frame,
+            left_controls,
             text=(
                 "p10–p90帯(A): 直近着地月を基準に、過去年(表示年度)の"
                 "月次比率分布(10–90%)を掛けた参考レンジ。"
@@ -2562,17 +2570,17 @@ class BookingCurveApp(tk.Tk):
             ),
             wraplength=700,
             justify="left",
-        ).grid(row=2, column=0, columnspan=4, sticky="w", pady=(6, 0))
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
         update_btn = ttk.Button(
-            control_frame,
+            right_controls,
             text="更新",
             command=self._on_topdown_revpar_update,
         )
-        update_btn.grid(row=0, column=4, padx=(12, 0), sticky="e")
+        update_btn.grid(row=0, column=0, padx=(0, 8), sticky="e")
 
         self._topdown_status_var = tk.StringVar(value="")
-        ttk.Label(control_frame, textvariable=self._topdown_status_var).grid(row=0, column=5, padx=(12, 0), sticky="e")
+        ttk.Label(right_controls, textvariable=self._topdown_status_var).grid(row=0, column=1, sticky="e")
 
         year_frame = ttk.LabelFrame(popup, text="表示年度")
         year_frame.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 6))

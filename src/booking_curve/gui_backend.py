@@ -1431,7 +1431,10 @@ def build_topdown_revpar_panel(
         if anchor_period_candidate is None or anchor_value_prev is None:
             continue
         anchor_month_str = anchor_period_candidate.strftime("%Y%m")
-        band_by_month_prev_anchor[anchor_month_str] = (anchor_value_prev, anchor_value_prev)
+        band_by_month_prev_anchor.setdefault(
+            anchor_month_str,
+            (anchor_value_prev, anchor_value_prev),
+        )
         step = int(target_period.ordinal - anchor_period_candidate.ordinal)
         if step <= 0:
             continue

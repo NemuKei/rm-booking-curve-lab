@@ -222,11 +222,7 @@ def _get_topdown_actual_monthly_revenue(hotel_tag: str) -> pd.DataFrame:
         return empty_df.copy()
 
     latest["stay_month"] = latest["stay_date"].dt.to_period("M")
-    monthly = (
-        latest.groupby("stay_month", as_index=False)["revenue_oh"]
-        .sum()
-        .rename(columns={"revenue_oh": "revenue_total"})
-    )
+    monthly = latest.groupby("stay_month", as_index=False)["revenue_oh"].sum().rename(columns={"revenue_oh": "revenue_total"})
     monthly["days_in_month"] = monthly["stay_month"].dt.days_in_month
     _TOPDOWN_ACT_CACHE[hotel_tag] = (mtime, monthly)
     return monthly.copy()
@@ -1235,13 +1231,9 @@ def build_topdown_revpar_panel(
         end_period.strftime("%Y%m"),
     )
     forecast_month_strs_current_fy = [
-        month_str
-        for month_str in forecast_month_strs_range
-        if _get_fiscal_year(int(month_str[:4]), int(month_str[4:])) == current_fy
+        month_str for month_str in forecast_month_strs_range if _get_fiscal_year(int(month_str[:4]), int(month_str[4:])) == current_fy
     ]
-    rotation_month_strs = [
-        (target_period + offset).strftime("%Y%m") for offset in range(-5, 7)
-    ]
+    rotation_month_strs = [(target_period + offset).strftime("%Y%m") for offset in range(-5, 7)]
     band_month_candidates = set(forecast_month_strs_range)
     band_month_candidates.update(rotation_month_strs)
     computable_months: list[str] = []
@@ -1267,9 +1259,7 @@ def build_topdown_revpar_panel(
             if is_complete:
                 computable_months.append(month_str)
             else:
-                skipped_months[month_str] = (
-                    f"INCOMPLETE: {_summarize_forecast_error(reason)}"
-                )
+                skipped_months[month_str] = f"INCOMPLETE: {_summarize_forecast_error(reason)}"
         except Exception as exc:  # noqa: BLE001
             logging.warning("Skipping forecast month %s due to error: %s", month_str, exc)
             skipped_months[month_str] = str(exc)
@@ -1325,12 +1315,8 @@ def build_topdown_revpar_panel(
     band_p90_prev_anchor: list[float | None] = [None] * 12
     band_by_month_prev_anchor: dict[str, tuple[float, float]] = {}
     reference_years = [fy for fy in show_years if fy != current_fy]
-    anchor_period_latest = (
-        pd.Period(anchor_month_end, freq="M") if anchor_month_end is not None else None
-    )
-    anchor_month_str = (
-        anchor_period_latest.strftime("%Y%m") if anchor_period_latest is not None else None
-    )
+    anchor_period_latest = pd.Period(anchor_month_end, freq="M") if anchor_month_end is not None else None
+    anchor_month_str = anchor_period_latest.strftime("%Y%m") if anchor_period_latest is not None else None
     if anchor_month_str is not None:
         band_month_candidates.add(anchor_month_str)
     if anchor_period_latest is not None and anchor_value is not None and anchor_idx is not None:
@@ -1505,13 +1491,7 @@ def build_topdown_revpar_panel(
         p90_latest = band_values[1] if band_values else None
         p10_prev = band_prev_values[0] if band_prev_values else None
         p90_prev = band_prev_values[1] if band_prev_values else None
-        if (
-            revpar_value is None
-            and p10_latest is None
-            and p90_latest is None
-            and p10_prev is None
-            and p90_prev is None
-        ):
+        if revpar_value is None and p10_latest is None and p90_latest is None and p10_prev is None and p90_prev is None:
             continue
         out_of_range_latest = False
         out_of_range_prev = False

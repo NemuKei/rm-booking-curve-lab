@@ -1691,7 +1691,9 @@ def get_daily_forecast_table(
         out["actual_pax"] = _round_int_series(df["actual_pax"])
     else:
         out["actual_pax"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
-    if "forecast_pax" in df.columns:
+    if "projected_pax" in df.columns:
+        out["forecast_pax"] = _round_int_series(df["projected_pax"])
+    elif "forecast_pax" in df.columns:
         out["forecast_pax"] = _round_int_series(df["forecast_pax"])
     else:
         out["forecast_pax"] = pd.Series(pd.NA, index=out.index, dtype="Int64")

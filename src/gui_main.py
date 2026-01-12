@@ -2769,12 +2769,17 @@ class BookingCurveApp(tk.Tk):
         band_by_month_prev_anchor = panel.get("band_by_month_prev_anchor", {})
         band_prev_segments = panel.get("band_prev_segments")
         rotation_month_strs = panel.get("rotation_month_strs", [])
+        fiscal_month_strs = panel.get("fiscal_month_strs", [])
         current_actual = panel.get("current_fy_actual", [])
         current_forecast = panel.get("current_fy_forecast", [])
         anchor_idx = panel.get("anchor_idx")
         show_band_latest = getattr(self, "_topdown_show_band_latest_var", tk.BooleanVar(value=True)).get()
         show_band_prev = getattr(self, "_topdown_show_band_prev_var", tk.BooleanVar(value=False)).get()
         view_mode_label = getattr(self, "_topdown_view_mode_var", tk.StringVar(value="年度固定")).get()
+        if view_mode_label == "回転（対象月を中央寄せ）":
+            view_month_strs = list(rotation_month_strs)
+        else:
+            view_month_strs = list(fiscal_month_strs) if fiscal_month_strs else list(rotation_month_strs)
 
         def _rotate_sequence(seq: list[object], shift: int) -> list[object]:
             if not seq:
@@ -3006,17 +3011,34 @@ class BookingCurveApp(tk.Tk):
                 for segment in band_prev_segments:
                     if not isinstance(segment, dict):
                         continue
-                    segment_x = np.array(segment.get("x", []), dtype=float)
-                    segment_low = np.array(segment.get("low", []), dtype=float)
-                    segment_high = np.array(segment.get("high", []), dtype=float)
+                    if "months" in segment and view_month_strs:
+                        months = segment.get("months", [])
+                        segment_low = segment.get("low", [])
+                        segment_high = segment.get("high", [])
+                        if not (
+                            isinstance(months, list)
+                            and isinstance(segment_low, list)
+                            and isinstance(segment_high, list)
+                        ):
+                            continue
+                        mapped_points = []
+                        for month_str, low_value, high_value in zip(months, segment_low, segment_high):
+                            if month_str in view_month_strs:
+                                mapped_points.append((view_month_strs.index(month_str), low_value, high_value))
+                        if len(mapped_points) < 2:
+                            continue
+                        mapped_points.sort(key=lambda item: item[0])
+                        segment_x = np.array([item[0] for item in mapped_points], dtype=float)
+                        segment_low = np.array([item[1] for item in mapped_points], dtype=float)
+                        segment_high = np.array([item[2] for item in mapped_points], dtype=float)
+                    else:
+                        segment_x = np.array(segment.get("x", []), dtype=float)
+                        segment_low = np.array(segment.get("low", []), dtype=float)
+                        segment_high = np.array(segment.get("high", []), dtype=float)
                     if segment_x.size == 0:
                         continue
-                    mask = (
-                        np.isfinite(segment_x)
-                        & np.isfinite(segment_low)
-                        & np.isfinite(segment_high)
-                    )
-                    if not mask.any():
+                    mask = np.isfinite(segment_x) & np.isfinite(segment_low) & np.isfinite(segment_high)
+                    if mask.sum() < 2:
                         continue
                     ax.fill_between(
                         segment_x[mask],

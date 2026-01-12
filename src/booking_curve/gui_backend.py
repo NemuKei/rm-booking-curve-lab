@@ -1230,9 +1230,6 @@ def build_topdown_revpar_panel(
         start_period.strftime("%Y%m"),
         end_period.strftime("%Y%m"),
     )
-    forecast_month_strs_current_fy = [
-        month_str for month_str in forecast_month_strs_range if _get_fiscal_year(int(month_str[:4]), int(month_str[4:])) == current_fy
-    ]
     rotation_month_strs = [(target_period + offset).strftime("%Y%m") for offset in range(-5, 7)]
     band_month_candidates = set(forecast_month_strs_range)
     band_month_candidates.update(rotation_month_strs)
@@ -1460,6 +1457,66 @@ def build_topdown_revpar_panel(
             band_p10_prev_anchor[idx] = band_values[0]
             band_p90_prev_anchor[idx] = band_values[1]
 
+    band_prev_segments: list[dict[str, list[float]]] = []
+    if anchor_period_latest is not None:
+        for month_str in band_months_sorted:
+            try:
+                target_period = pd.Period(month_str, freq="M")
+            except Exception:
+                continue
+            if target_period <= anchor_period_latest:
+                continue
+            band_values = band_by_month_prev_anchor.get(month_str)
+            if band_values is None:
+                continue
+            anchor_period_candidate, anchor_value_prev = _find_anchor_period(target_period)
+            if anchor_period_candidate is None or anchor_value_prev is None:
+                continue
+            anchor_idx = months_order.index(anchor_period_candidate.month)
+            target_idx = months_order.index(target_period.month)
+            band_prev_segments.append(
+                {
+                    "x": [anchor_idx, target_idx],
+                    "low": [float(anchor_value_prev), float(band_values[0])],
+                    "high": [float(anchor_value_prev), float(band_values[1])],
+                }
+            )
+
+        if effective_forecast_months:
+            last_forecast_period = max(
+                (pd.Period(month_str, freq="M") for month_str in effective_forecast_months),
+                key=lambda period: period.ordinal,
+            )
+            last_forecast_month = last_forecast_period.strftime("%Y%m")
+            anchor_value_forecast = forecast_revpar_map.get(last_forecast_month)
+            if anchor_value_forecast is not None:
+                future_months = [
+                    pd.Period(month_str, freq="M")
+                    for month_str in band_months_sorted
+                    if pd.Period(month_str, freq="M") > last_forecast_period
+                    and month_str in band_by_month_prev_anchor
+                ]
+                if len(future_months) >= 2:
+                    anchor_idx = months_order.index(last_forecast_period.month)
+                    x_values = [anchor_idx]
+                    low_values = [float(anchor_value_forecast)]
+                    high_values = [float(anchor_value_forecast)]
+                    for period in sorted(future_months, key=lambda p: p.ordinal):
+                        band_values = band_by_month_prev_anchor.get(period.strftime("%Y%m"))
+                        if band_values is None:
+                            continue
+                        x_values.append(months_order.index(period.month))
+                        low_values.append(float(band_values[0]))
+                        high_values.append(float(band_values[1]))
+                    if len(x_values) >= 3:
+                        band_prev_segments.append(
+                            {
+                                "x": x_values,
+                                "low": low_values,
+                                "high": high_values,
+                            }
+                        )
+
     forecast_indices = {
         months_order.index(pd.Period(month_str, freq="M").month)
         for month_str in effective_forecast_months
@@ -1529,6 +1586,7 @@ def build_topdown_revpar_panel(
         "band_p10_prev_anchor": band_p10_prev_anchor,
         "band_p90_prev_anchor": band_p90_prev_anchor,
         "band_by_month_prev_anchor": band_by_month_prev_anchor,
+        "band_prev_segments": band_prev_segments,
         "rotation_month_strs": rotation_month_strs,
         "band_start_idx": band_start_idx,
         "forecast_end_idx": forecast_end_idx,

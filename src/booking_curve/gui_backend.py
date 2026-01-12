@@ -46,6 +46,10 @@ _EVALUATION_DETAIL_CACHE: dict[str, tuple[float, pd.DataFrame]] = {}
 _TOPDOWN_ACT_CACHE: dict[str, tuple[float, pd.DataFrame]] = {}
 
 
+def _drop_all_na_columns(df: pd.DataFrame) -> pd.DataFrame:
+    return df.dropna(axis=1, how="all")
+
+
 def generate_month_range(start_yyyymm: str, end_yyyymm: str) -> list[str]:
     """
     開始月・終了月 (YYYYMM) から、両端を含む月リストを生成する。
@@ -2019,6 +2023,7 @@ def get_daily_forecast_table(
     missing_row.update(total_row)
     total_row_df = out.iloc[0:0].copy()
     total_row_df.loc[0] = missing_row
+    total_row_df = _drop_all_na_columns(total_row_df)
     out = pd.concat([out, total_row_df], ignore_index=True)
 
     column_order = [
@@ -2248,6 +2253,7 @@ def get_model_evaluation_table(hotel_tag: str) -> pd.DataFrame:
             ],
         )
 
+        df_total = _drop_all_na_columns(df_total)
         out = pd.concat([df_merged, df_total], ignore_index=True)
 
     else:

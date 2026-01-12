@@ -2767,6 +2767,7 @@ class BookingCurveApp(tk.Tk):
         band_p10_prev_anchor = panel.get("band_p10_prev_anchor", [])
         band_p90_prev_anchor = panel.get("band_p90_prev_anchor", [])
         band_by_month_prev_anchor = panel.get("band_by_month_prev_anchor", {})
+        band_prev_segments = panel.get("band_prev_segments")
         rotation_month_strs = panel.get("rotation_month_strs", [])
         current_actual = panel.get("current_fy_actual", [])
         current_forecast = panel.get("current_fy_forecast", [])
@@ -3000,13 +3001,40 @@ class BookingCurveApp(tk.Tk):
             )
 
         if show_band_prev:
-            _plot_band(
-                list(band_p10_prev_anchor),
-                list(band_p90_prev_anchor),
-                label="p10–p90(前月アンカー)",
-                alpha=0.12,
-                color="tab:orange",
-            )
+            if isinstance(band_prev_segments, list) and band_prev_segments:
+                band_label = "p10–p90(前月アンカー)"
+                for segment in band_prev_segments:
+                    if not isinstance(segment, dict):
+                        continue
+                    segment_x = np.array(segment.get("x", []), dtype=float)
+                    segment_low = np.array(segment.get("low", []), dtype=float)
+                    segment_high = np.array(segment.get("high", []), dtype=float)
+                    if segment_x.size == 0:
+                        continue
+                    mask = (
+                        np.isfinite(segment_x)
+                        & np.isfinite(segment_low)
+                        & np.isfinite(segment_high)
+                    )
+                    if not mask.any():
+                        continue
+                    ax.fill_between(
+                        segment_x[mask],
+                        segment_low[mask],
+                        segment_high[mask],
+                        alpha=0.12,
+                        color="tab:orange",
+                        label=band_label,
+                    )
+                    band_label = None
+            else:
+                _plot_band(
+                    list(band_p10_prev_anchor),
+                    list(band_p90_prev_anchor),
+                    label="p10–p90(前月アンカー)",
+                    alpha=0.12,
+                    color="tab:orange",
+                )
 
         if view_mode_label == "回転（対象月を中央寄せ）":
             def _month_from_label(label_value: object) -> int | None:

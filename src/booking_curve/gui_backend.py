@@ -1170,6 +1170,10 @@ def build_topdown_revpar_panel(
 
     months_order = [(fiscal_year_start_month + offset - 1) % 12 + 1 for offset in range(12)]
     fiscal_month_labels = [f"{month}月" for month in months_order]
+    fiscal_month_strs = [
+        f"{current_fy if month >= fiscal_year_start_month else current_fy + 1}{month:02d}"
+        for month in months_order
+    ]
     target_month_idx = months_order.index(target_period.month)
 
     monthly_actual = _get_topdown_actual_monthly_revenue(hotel_tag)
@@ -1231,6 +1235,7 @@ def build_topdown_revpar_panel(
         end_period.strftime("%Y%m"),
     )
     rotation_month_strs = [(target_period + offset).strftime("%Y%m") for offset in range(-5, 7)]
+    view_months_set = set(fiscal_month_strs) | set(rotation_month_strs)
     band_month_candidates = set(forecast_month_strs_range)
     band_month_candidates.update(rotation_month_strs)
     computable_months: list[str] = []
@@ -1457,14 +1462,17 @@ def build_topdown_revpar_panel(
             band_p10_prev_anchor[idx] = band_values[0]
             band_p90_prev_anchor[idx] = band_values[1]
 
-    band_prev_segments: list[dict[str, list[float]]] = []
+    band_prev_segments: list[dict[str, list[float] | list[str]]] = []
     if anchor_period_latest is not None:
-        for month_str in band_months_sorted:
+        for month_str in sorted(
+            effective_forecast_months,
+            key=lambda value: pd.Period(value, freq="M").ordinal,
+        ):
+            if month_str not in view_months_set:
+                continue
             try:
                 target_period = pd.Period(month_str, freq="M")
             except Exception:
-                continue
-            if target_period <= anchor_period_latest:
                 continue
             band_values = band_by_month_prev_anchor.get(month_str)
             if band_values is None:
@@ -1472,11 +1480,12 @@ def build_topdown_revpar_panel(
             anchor_period_candidate, anchor_value_prev = _find_anchor_period(target_period)
             if anchor_period_candidate is None or anchor_value_prev is None:
                 continue
-            anchor_idx = months_order.index(anchor_period_candidate.month)
-            target_idx = months_order.index(target_period.month)
+            anchor_month_str = anchor_period_candidate.strftime("%Y%m")
+            if anchor_month_str not in view_months_set:
+                continue
             band_prev_segments.append(
                 {
-                    "x": [anchor_idx, target_idx],
+                    "months": [anchor_month_str, month_str],
                     "low": [float(anchor_value_prev), float(band_values[0])],
                     "high": [float(anchor_value_prev), float(band_values[1])],
                 }
@@ -1491,27 +1500,29 @@ def build_topdown_revpar_panel(
             anchor_value_forecast = forecast_revpar_map.get(last_forecast_month)
             if anchor_value_forecast is not None:
                 future_months = [
-                    pd.Period(month_str, freq="M")
-                    for month_str in band_months_sorted
+                    month_str
+                    for month_str in (fiscal_month_strs + rotation_month_strs)
                     if pd.Period(month_str, freq="M") > last_forecast_period
                     and month_str in band_by_month_prev_anchor
                 ]
+                future_months = sorted(
+                    future_months,
+                    key=lambda value: pd.Period(value, freq="M").ordinal,
+                )
                 if len(future_months) >= 2:
-                    anchor_idx = months_order.index(last_forecast_period.month)
-                    x_values = [anchor_idx]
+                    months_values = [last_forecast_month] + future_months
                     low_values = [float(anchor_value_forecast)]
                     high_values = [float(anchor_value_forecast)]
-                    for period in sorted(future_months, key=lambda p: p.ordinal):
-                        band_values = band_by_month_prev_anchor.get(period.strftime("%Y%m"))
+                    for month_str in future_months:
+                        band_values = band_by_month_prev_anchor.get(month_str)
                         if band_values is None:
                             continue
-                        x_values.append(months_order.index(period.month))
                         low_values.append(float(band_values[0]))
                         high_values.append(float(band_values[1]))
-                    if len(x_values) >= 3:
+                    if len(months_values) == len(low_values) == len(high_values) and len(months_values) >= 3:
                         band_prev_segments.append(
                             {
-                                "x": x_values,
+                                "months": months_values,
                                 "low": low_values,
                                 "high": high_values,
                             }
@@ -1587,6 +1598,7 @@ def build_topdown_revpar_panel(
         "band_p90_prev_anchor": band_p90_prev_anchor,
         "band_by_month_prev_anchor": band_by_month_prev_anchor,
         "band_prev_segments": band_prev_segments,
+        "fiscal_month_strs": fiscal_month_strs,
         "rotation_month_strs": rotation_month_strs,
         "band_start_idx": band_start_idx,
         "forecast_end_idx": forecast_end_idx,

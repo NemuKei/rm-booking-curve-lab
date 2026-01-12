@@ -92,6 +92,12 @@ REQUIRED_HOTEL_KEYS = (
     "include_subfolders",
 )
 
+DEFAULT_ROUNDING_UNITS = {
+    "rooms": 100,
+    "pax": 100,
+    "revenue": 100000,
+}
+
 LOCAL_OVERRIDES_VERSION = 1
 PHASE_OVERRIDES_VERSION = 1
 
@@ -329,6 +335,62 @@ def _normalize_optional_number(hotel_id: str, key_name: str, value: Any) -> floa
     raise TypeError(f"{hotel_id}: {key_name} must be numeric or null (got {value!r})")
 
 
+def _normalize_rounding_unit_value(
+    hotel_id: str,
+    key_name: str,
+    value: Any,
+    default_value: int,
+) -> int:
+    if value is None:
+        return default_value
+    if isinstance(value, bool):
+        raise TypeError(f"{hotel_id}: rounding_units.{key_name} must be an integer (got {value!r})")
+    if isinstance(value, int):
+        if value <= 0:
+            raise ValueError(f"{hotel_id}: rounding_units.{key_name} must be > 0 (got {value!r})")
+        return value
+    if isinstance(value, float):
+        if not value.is_integer():
+            raise ValueError(
+                f"{hotel_id}: rounding_units.{key_name} must be an integer (got {value!r})"
+            )
+        int_value = int(value)
+        if int_value <= 0:
+            raise ValueError(f"{hotel_id}: rounding_units.{key_name} must be > 0 (got {value!r})")
+        return int_value
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError(
+                f"{hotel_id}: rounding_units.{key_name} must be an integer (got blank string)"
+            )
+        try:
+            int_value = int(stripped)
+        except ValueError as exc:
+            raise ValueError(
+                f"{hotel_id}: rounding_units.{key_name} must be an integer (got {value!r})"
+            ) from exc
+        if int_value <= 0:
+            raise ValueError(
+                f"{hotel_id}: rounding_units.{key_name} must be > 0 (got {value!r})"
+            )
+        return int_value
+    raise TypeError(f"{hotel_id}: rounding_units.{key_name} must be an integer (got {value!r})")
+
+
+def _normalize_rounding_units(hotel_id: str, rounding_units: Any) -> dict[str, int]:
+    defaults = DEFAULT_ROUNDING_UNITS
+    if rounding_units is None:
+        return dict(defaults)
+    if not isinstance(rounding_units, dict):
+        raise TypeError(f"{hotel_id}: rounding_units must be a JSON object")
+
+    return {
+        key: _normalize_rounding_unit_value(hotel_id, key, rounding_units.get(key), defaults[key])
+        for key in defaults
+    }
+
+
 def _validate_hotel_config(hotel_id: str, hotel_cfg: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(hotel_cfg, dict):
         raise TypeError(f"{hotel_id}: hotel config must be a JSON object")
@@ -365,6 +427,7 @@ def _validate_hotel_config(hotel_id: str, hotel_cfg: dict[str, Any]) -> dict[str
     display_name = _normalize_display_name(hotel_id, hotel_cfg["display_name"])
     capacity = _normalize_optional_number(hotel_id, "capacity", hotel_cfg["capacity"])
     forecast_cap = _normalize_optional_number(hotel_id, "forecast_cap", hotel_cfg["forecast_cap"])
+    rounding_units = _normalize_rounding_units(hotel_id, hotel_cfg.get("rounding_units"))
 
     normalized = dict(hotel_cfg)
     normalized["hotel_id"] = hotel_id_in_cfg
@@ -375,6 +438,7 @@ def _validate_hotel_config(hotel_id: str, hotel_cfg: dict[str, Any]) -> dict[str
     normalized["include_subfolders"] = include_subfolders
     normalized["capacity"] = capacity
     normalized["forecast_cap"] = forecast_cap
+    normalized["rounding_units"] = rounding_units
 
     return normalized
 
@@ -402,6 +466,12 @@ def _load_hotels_json() -> dict[str, Any]:
         raise ValueError(f"hotels.json must contain a non-empty object: {HOTEL_CONFIG_PATH}")
 
     return raw
+
+
+def _write_hotels_json(raw: dict[str, Any]) -> None:
+    HOTEL_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with HOTEL_CONFIG_PATH.open("w", encoding="utf-8") as f:
+        json.dump(raw, f, ensure_ascii=False, indent=2)
 
 
 def _apply_local_raw_root_overrides(raw_hotels: dict[str, Any]) -> dict[str, Any]:
@@ -451,6 +521,15 @@ def load_hotel_config() -> Dict[str, Dict[str, Any]]:
     return validated
 
 
+def get_hotel_rounding_units(hotel_id: str) -> dict[str, int]:
+    cfg = HOTEL_CONFIG.get(hotel_id, {})
+    rounding_units = cfg.get("rounding_units")
+    try:
+        return _normalize_rounding_units(hotel_id, rounding_units)
+    except Exception:
+        return dict(DEFAULT_ROUNDING_UNITS)
+
+
 def reload_hotel_config_inplace() -> Dict[str, Dict[str, Any]]:
     """Reload hotels.json and update HOTEL_CONFIG in place.
 
@@ -490,6 +569,20 @@ def set_local_override_raw_root_dir(hotel_id: str, raw_root_dir: str | Path) -> 
 
     updated_cfg = dict(raw[hotel_id])
     updated_cfg["raw_root_dir"] = raw_root_dir_str
+    HOTEL_CONFIG[hotel_id] = _validate_hotel_config(hotel_id, updated_cfg)
+
+
+def update_hotel_rounding_units(hotel_id: str, rounding_units: dict[str, int]) -> None:
+    raw = _load_hotels_json()
+    if hotel_id not in raw:
+        raise ValueError(f"Unknown hotel_id: {hotel_id}")
+
+    normalized_units = _normalize_rounding_units(hotel_id, rounding_units)
+    updated_cfg = dict(raw[hotel_id])
+    updated_cfg["rounding_units"] = normalized_units
+    raw[hotel_id] = updated_cfg
+    _write_hotels_json(raw)
+
     HOTEL_CONFIG[hotel_id] = _validate_hotel_config(hotel_id, updated_cfg)
 
 

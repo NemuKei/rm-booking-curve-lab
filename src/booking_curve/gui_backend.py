@@ -12,7 +12,7 @@ import pandas as pd
 import build_calendar_features
 import run_build_lt_csv
 import run_forecast_batch
-from booking_curve.config import HOTEL_CONFIG, OUTPUT_DIR
+from booking_curve.config import HOTEL_CONFIG, OUTPUT_DIR, get_hotel_rounding_units
 from booking_curve.daily_snapshots import (
     get_daily_snapshots_path,
     get_latest_asof_date,
@@ -1646,6 +1646,10 @@ def get_daily_forecast_table(
         日別行 + 最終行に TOTAL 行 を含むテーブル
     """
     cap = _get_capacity(hotel_tag, capacity)
+    rounding_units = get_hotel_rounding_units(hotel_tag)
+    round_rooms_unit = float(rounding_units["rooms"])
+    round_pax_unit = float(rounding_units["pax"])
+    round_revenue_unit = float(rounding_units["revenue"])
 
     def _round_int_series(series: pd.Series) -> pd.Series:
         return pd.to_numeric(series, errors="coerce").round().astype("Int64")
@@ -1900,7 +1904,7 @@ def get_daily_forecast_table(
     out["forecast_revenue_display"] = out["forecast_revenue"].copy()
 
     if apply_monthly_rounding:
-        forecast_total_goal = _round_display(pd.Series([forecast_total]), 100.0).iloc[0]
+        forecast_total_goal = _round_display(pd.Series([forecast_total]), round_rooms_unit).iloc[0]
         if pd.isna(forecast_total_goal):
             forecast_total_goal = 0.0
         reconciled_rooms, adjusted_rooms_total = _apply_remainder_rounding(
@@ -1915,7 +1919,7 @@ def get_daily_forecast_table(
         if out["forecast_pax"].notna().any():
             if pax_capacity is None:
                 pax_capacity = run_forecast_batch.infer_pax_capacity_p99(hotel_tag, asof_ts)
-            forecast_pax_total_goal = _round_display(pd.Series([forecast_pax_total]), 100.0).iloc[0]
+            forecast_pax_total_goal = _round_display(pd.Series([forecast_pax_total]), round_pax_unit).iloc[0]
             if pd.isna(forecast_pax_total_goal):
                 forecast_pax_total_goal = 0.0
             reconciled_pax, adjusted_pax_total = _apply_remainder_rounding(
@@ -1934,7 +1938,10 @@ def get_daily_forecast_table(
 
     if apply_monthly_rounding:
         out.loc[:, "forecast_revenue_display"] = out["forecast_revenue"].copy()
-        forecast_revenue_display_total = _round_display(pd.Series([forecast_revenue_total]), 100000.0).iloc[0]
+        forecast_revenue_display_total = _round_display(
+            pd.Series([forecast_revenue_total]),
+            round_revenue_unit,
+        ).iloc[0]
     else:
         forecast_revenue_display_total = forecast_revenue_total
 
@@ -1996,7 +2003,9 @@ def get_daily_forecast_table(
     }
 
     out = out.reset_index(drop=True)
-    out = pd.concat([out, pd.DataFrame([total_row])], ignore_index=True)
+    total_row_full = {col: pd.NA for col in out.columns}
+    total_row_full.update(total_row)
+    out.loc[len(out)] = total_row_full
 
     column_order = [
         "stay_date",

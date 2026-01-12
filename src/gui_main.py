@@ -48,11 +48,13 @@ try:
         LOCAL_OVERRIDES_DIR,
         STARTUP_INIT_LOG_PATH,
         clear_local_override_raw_root_dir,
+        get_hotel_rounding_units,
         get_local_overrides_path,
         load_phase_overrides,
         pop_runtime_init_errors,
         reload_hotel_config_inplace,
         set_local_override_raw_root_dir,
+        update_hotel_rounding_units,
         write_phase_overrides,
     )
 except Exception as exc:
@@ -284,6 +286,9 @@ class BookingCurveApp(tk.Tk):
             "mc_hotel_var",
         ):
             self._ensure_hotel_var_valid(var_name)
+
+        self._refresh_master_rounding_units()
+        self._update_master_rounding_units_state()
 
         try:
             clear_evaluation_detail_cache()
@@ -1108,6 +1113,78 @@ class BookingCurveApp(tk.Tk):
             command=self._on_save_master_daily_caps,
         ).grid(row=0, column=4, padx=UI_GRID_PADX * 2, pady=UI_GRID_PADY, sticky="e")
 
+        # ------- 月次丸め単位 -------
+        rounding_frame = ttk.LabelFrame(frame, text="月次丸め単位")
+        rounding_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, UI_SECTION_PADY))
+
+        ttk.Label(rounding_frame, text="Rooms:").grid(
+            row=0,
+            column=0,
+            sticky="w",
+            padx=UI_GRID_PADX,
+            pady=UI_GRID_PADY,
+        )
+        self.master_round_rooms_var = tk.StringVar()
+        round_rooms_spin = ttk.Spinbox(
+            rounding_frame,
+            from_=1,
+            to=1000000,
+            increment=1,
+            textvariable=self.master_round_rooms_var,
+            width=8,
+        )
+        round_rooms_spin.grid(row=0, column=1, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
+
+        ttk.Label(rounding_frame, text="Pax:").grid(
+            row=0,
+            column=2,
+            sticky="w",
+            padx=UI_GRID_PADX * 2,
+            pady=UI_GRID_PADY,
+        )
+        self.master_round_pax_var = tk.StringVar()
+        round_pax_spin = ttk.Spinbox(
+            rounding_frame,
+            from_=1,
+            to=1000000,
+            increment=1,
+            textvariable=self.master_round_pax_var,
+            width=8,
+        )
+        round_pax_spin.grid(row=0, column=3, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
+
+        ttk.Label(rounding_frame, text="Rev:").grid(
+            row=0,
+            column=4,
+            sticky="w",
+            padx=UI_GRID_PADX * 2,
+            pady=UI_GRID_PADY,
+        )
+        self.master_round_rev_var = tk.StringVar()
+        round_rev_spin = ttk.Spinbox(
+            rounding_frame,
+            from_=1,
+            to=100000000,
+            increment=1,
+            textvariable=self.master_round_rev_var,
+            width=10,
+        )
+        round_rev_spin.grid(row=0, column=5, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
+
+        round_save_btn = ttk.Button(
+            rounding_frame,
+            text="保存（このホテルのみ）",
+            command=self._on_save_master_rounding_units,
+        )
+        round_save_btn.grid(row=0, column=6, padx=UI_GRID_PADX * 2, pady=UI_GRID_PADY, sticky="e")
+
+        self.master_rounding_widgets = [
+            round_rooms_spin,
+            round_pax_spin,
+            round_rev_spin,
+            round_save_btn,
+        ]
+
         # ------- RAW取込元（このPCのみ） -------
         raw_root_frame = ttk.LabelFrame(frame, text="RAW取込元（このPCのみ）")
         raw_root_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, UI_SECTION_PADY))
@@ -1276,6 +1353,8 @@ class BookingCurveApp(tk.Tk):
         # 初期表示
         self._refresh_calendar_coverage()
         self._refresh_master_daily_caps()
+        self._refresh_master_rounding_units()
+        self._update_master_rounding_units_state()
         self._refresh_master_raw_root_dir()
         self._update_master_missing_check_status()
 
@@ -1283,6 +1362,8 @@ class BookingCurveApp(tk.Tk):
         # マスタ設定タブのホテル変更時に、カレンダー範囲とキャパ設定を両方更新
         self._refresh_calendar_coverage()
         self._refresh_master_daily_caps()
+        self._refresh_master_rounding_units()
+        self._update_master_rounding_units_state()
         self._refresh_master_raw_root_dir()
         self._update_master_missing_check_status()
 
@@ -1298,6 +1379,8 @@ class BookingCurveApp(tk.Tk):
 
         self._refresh_calendar_coverage()
         self._refresh_master_daily_caps()
+        self._refresh_master_rounding_units()
+        self._update_master_rounding_units_state()
         self._refresh_master_raw_root_dir()
         self._update_master_missing_check_status()
 
@@ -1414,6 +1497,65 @@ class BookingCurveApp(tk.Tk):
             self.master_occ_cap_var.set(str(int(occ_cap)))
         except Exception:
             self.master_occ_cap_var.set(str(occ_cap))
+
+    def _refresh_master_rounding_units(self) -> None:
+        if not hasattr(self, "master_round_rooms_var"):
+            return
+
+        hotel_tag = self.hotel_var.get().strip()
+        if not hotel_tag:
+            self.master_round_rooms_var.set("")
+            self.master_round_pax_var.set("")
+            self.master_round_rev_var.set("")
+            return
+
+        rounding_units = get_hotel_rounding_units(hotel_tag)
+        self.master_round_rooms_var.set(str(rounding_units["rooms"]))
+        self.master_round_pax_var.set(str(rounding_units["pax"]))
+        self.master_round_rev_var.set(str(rounding_units["revenue"]))
+
+    def _update_master_rounding_units_state(self) -> None:
+        if not hasattr(self, "master_rounding_widgets"):
+            return
+        is_enabled = True
+        if hasattr(self, "df_monthly_rounding_var"):
+            is_enabled = bool(self.df_monthly_rounding_var.get())
+        state = "normal" if is_enabled else "disabled"
+        for widget in self.master_rounding_widgets:
+            try:
+                widget.configure(state=state)
+            except Exception:
+                pass
+
+    def _on_save_master_rounding_units(self) -> None:
+        hotel_tag = self.hotel_var.get().strip()
+        if not hotel_tag:
+            messagebox.showerror("エラー", "ホテルが選択されていません。")
+            return
+
+        try:
+            rooms_unit = int(self.master_round_rooms_var.get().strip())
+            pax_unit = int(self.master_round_pax_var.get().strip())
+            rev_unit = int(self.master_round_rev_var.get().strip())
+        except Exception:
+            messagebox.showerror("エラー", "月次丸め単位には整数を入力してください。")
+            return
+
+        if rooms_unit <= 0 or pax_unit <= 0 or rev_unit <= 0:
+            messagebox.showerror("エラー", "月次丸め単位は 1 以上の整数を入力してください。")
+            return
+
+        try:
+            update_hotel_rounding_units(
+                hotel_tag,
+                {"rooms": rooms_unit, "pax": pax_unit, "revenue": rev_unit},
+            )
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("エラー", f"月次丸め単位の保存に失敗しました。\n{exc}")
+            return
+
+        self._refresh_master_rounding_units()
+        messagebox.showinfo("保存完了", "月次丸め単位を保存しました。")
 
     def _refresh_master_raw_root_dir(self) -> None:
         if not hasattr(self, "master_raw_root_dir_var"):
@@ -2226,7 +2368,7 @@ class BookingCurveApp(tk.Tk):
             left_row4,
             text="月次丸め（Forecast整合）",
             variable=self.df_monthly_rounding_var,
-            command=self._reload_daily_forecast_table,
+            command=self._on_df_monthly_rounding_changed,
         )
         df_rounding_checkbox.pack(side=tk.LEFT, padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 1, UI_GRID_PADY))
 
@@ -3568,6 +3710,10 @@ class BookingCurveApp(tk.Tk):
         if latest and latest not in ("なし", "(未取得)"):
             self.bc_asof_var.set(latest)
 
+    def _on_df_monthly_rounding_changed(self) -> None:
+        self._update_master_rounding_units_state()
+        self._reload_daily_forecast_table()
+
     def _reload_daily_forecast_table(self) -> None:
         hotel = self.df_hotel_var.get()
         month = self.df_month_var.get()
@@ -3911,6 +4057,10 @@ class BookingCurveApp(tk.Tk):
         month = self.df_month_var.get().strip()
         asof = self.df_asof_var.get().strip()
         model = self.df_model_var.get().strip()
+        rounding_units = get_hotel_rounding_units(hotel)
+        df_export["round_unit_rooms"] = rounding_units["rooms"]
+        df_export["round_unit_pax"] = rounding_units["pax"]
+        df_export["round_unit_revenue"] = rounding_units["revenue"]
 
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         out_path = OUTPUT_DIR / f"daily_forecast_{hotel}_{month}_{model}_asof_{asof.replace('-', '')}.csv"

@@ -4046,6 +4046,10 @@ class BookingCurveApp(tk.Tk):
         df_export = df.copy()
         display_cols = [col for col in df_export.columns if col.endswith("_display")]
         if display_cols:
+            for col in display_cols:
+                base_col = col.removesuffix("_display")
+                if base_col in df_export.columns:
+                    df_export[base_col] = df_export[col]
             df_export = df_export.drop(columns=display_cols, errors="ignore")
 
         def _needs_int_rounding(col: str) -> bool:

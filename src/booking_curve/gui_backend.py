@@ -1835,6 +1835,45 @@ def get_daily_forecast_table(
         values = pd.to_numeric(series, errors="coerce")
         return (values / unit).round() * unit
 
+    def _should_apply_monthly_rounding(
+        target_yyyymm: str,
+        asof_timestamp: pd.Timestamp,
+        stay_dates: pd.Series,
+    ) -> bool:
+        if not target_yyyymm or len(target_yyyymm) != 6 or not target_yyyymm.isdigit():
+            logging.debug("Skipping monthly rounding: invalid target_month=%s", target_yyyymm)
+            return False
+
+        asof_month = asof_timestamp.strftime("%Y%m")
+        if target_yyyymm != asof_month:
+            logging.debug(
+                "Skipping monthly rounding: target_month=%s is not current month=%s",
+                target_yyyymm,
+                asof_month,
+            )
+            return False
+
+        try:
+            target_period = pd.Period(target_yyyymm, freq="M")
+        except Exception:
+            logging.debug("Skipping monthly rounding: invalid target_month=%s", target_yyyymm)
+            return False
+
+        stay_norm = pd.to_datetime(stay_dates, errors="coerce").dt.normalize()
+        future_mask = stay_norm >= asof_timestamp
+        month_mask = stay_norm.dt.to_period("M") == target_period
+        future_count = int((future_mask & month_mask).sum())
+        if future_count < 20:
+            logging.debug(
+                "Skipping monthly rounding: future_day_count=%s < 20 (target_month=%s, asof=%s)",
+                future_count,
+                target_yyyymm,
+                asof_timestamp.strftime("%Y-%m-%d"),
+            )
+            return False
+
+        return True
+
     def _apply_remainder_rounding(
         values: pd.Series,
         stay_dates: pd.Series,
@@ -1846,7 +1885,7 @@ def get_daily_forecast_table(
         past_mask = stay_norm < asof_ts
         future_mask = ~past_mask
 
-        past_fixed = numeric.loc[past_mask].round().astype(int).clip(lower=0)
+        past_fixed = numeric.loc[past_mask].copy()
         future_raw = numeric.loc[future_mask]
         base_future = np.floor(future_raw).astype(int).clip(lower=0)
         remainder = future_raw - base_future
@@ -1861,8 +1900,8 @@ def get_daily_forecast_table(
         if cap_int is not None and cap_int >= 0:
             base_future = base_future.clip(upper=cap_int)
 
-        goal_int = int(round(goal_total))
-        need = goal_int - int(past_fixed.sum() + base_future.sum())
+        current_total = float(past_fixed.sum() + base_future.sum())
+        need = int(round(goal_total - current_total))
 
         if need > 0:
             order = remainder.sort_values(ascending=False).index.tolist()
@@ -1907,6 +1946,12 @@ def get_daily_forecast_table(
     out["asof_oh_pax_display"] = out["asof_oh_pax"].copy()
     out["forecast_revenue_display"] = out["forecast_revenue"].copy()
 
+    apply_monthly_rounding = apply_monthly_rounding and _should_apply_monthly_rounding(
+        target_month,
+        asof_ts,
+        out["stay_date"],
+    )
+
     if apply_monthly_rounding:
         forecast_total_goal = _round_display(pd.Series([forecast_total]), round_rooms_unit).iloc[0]
         if pd.isna(forecast_total_goal):
@@ -1942,18 +1987,27 @@ def get_daily_forecast_table(
 
     forecast_revenue_display_total = forecast_revenue_total
     if apply_monthly_rounding:
-        out.loc[:, "forecast_revenue_display"] = out["forecast_revenue"].copy()
-        forecast_revenue_display_total = _round_display(
+        forecast_revenue_total_goal = _round_display(
             pd.Series([forecast_revenue_total]),
             round_revenue_unit,
         ).iloc[0]
+        if pd.isna(forecast_revenue_total_goal):
+            forecast_revenue_total_goal = 0.0
+        reconciled_revenue, adjusted_revenue_total = _apply_remainder_rounding(
+            out["forecast_revenue"],
+            out["stay_date"],
+            float(forecast_revenue_total_goal),
+            None,
+        )
+        out.loc[:, "forecast_revenue_display"] = reconciled_revenue
+        forecast_revenue_display_total = adjusted_revenue_total
 
     out["pickup_expected_from_asof_display"] = out["forecast_rooms_display"] - out["asof_oh_rooms_display"]
     out["occ_forecast_pct_display"] = (out["forecast_rooms_display"] / cap * 100.0).astype(float)
     denom_forecast_display = out["forecast_rooms_display"].replace(0, pd.NA)
-    out["forecast_adr_display"] = (out["forecast_revenue"] / denom_forecast_display).astype(float)
+    out["forecast_adr_display"] = (out["forecast_revenue_display"] / denom_forecast_display).astype(float)
     denom_cap = pd.Series(cap, index=out.index, dtype="float").replace(0, pd.NA)
-    out["forecast_revpar_display"] = (out["forecast_revenue"] / denom_cap).astype(float)
+    out["forecast_revpar_display"] = (out["forecast_revenue_display"] / denom_cap).astype(float)
 
     forecast_rooms_total_display = float(forecast_rooms_total_display)
     forecast_pax_total_display = float(forecast_pax_total_display)
@@ -1970,7 +2024,7 @@ def get_daily_forecast_table(
 
     total_row = {
         "stay_date": pd.NaT,
-        "weekday": pd.NA,
+        "weekday": "",
         "actual_rooms": actual_total,
         "asof_oh_rooms": asof_total,
         "forecast_rooms": forecast_total,

@@ -844,7 +844,11 @@ class BookingCurveApp(tk.Tk):
 
         rooms_fc = _safe_float(projected_rooms.fillna(0).sum())
         pax_fc = _safe_float(projected_pax.fillna(0).sum())
-        rev_fc = _safe_float(projected_rev.fillna(0).sum())
+        rev_fc = None
+        if total_row is not None:
+            rev_fc = _safe_float(total_row.get("forecast_revenue_display"))
+        if rev_fc is None:
+            rev_fc = _safe_float(projected_rev.fillna(0).sum())
 
         adr_oh = _safe_float(total_row.get("adr_oh_now") if total_row is not None else None)
         if adr_oh is None:

@@ -1940,14 +1940,13 @@ def get_daily_forecast_table(
         forecast_rooms_total_display = float(out["forecast_rooms_display"].fillna(0).sum())
         forecast_pax_total_display = float(out["forecast_pax_display"].fillna(0).sum())
 
+    forecast_revenue_display_total = forecast_revenue_total
     if apply_monthly_rounding:
         out.loc[:, "forecast_revenue_display"] = out["forecast_revenue"].copy()
         forecast_revenue_display_total = _round_display(
             pd.Series([forecast_revenue_total]),
             round_revenue_unit,
         ).iloc[0]
-    else:
-        forecast_revenue_display_total = forecast_revenue_total
 
     out["pickup_expected_from_asof_display"] = out["forecast_rooms_display"] - out["asof_oh_rooms_display"]
     out["occ_forecast_pct_display"] = (out["forecast_rooms_display"] / cap * 100.0).astype(float)
@@ -1966,8 +1965,8 @@ def get_daily_forecast_table(
         occ_forecast_month_display = float("nan")
 
     denom_forecast_total_display = forecast_rooms_total_display if forecast_rooms_total_display > 0 else float("nan")
-    forecast_adr_total_display = forecast_revenue_total / denom_forecast_total_display
-    forecast_revpar_total_display = forecast_revenue_total / denom_cap_total
+    forecast_adr_total_display = forecast_revenue_display_total / denom_forecast_total_display
+    forecast_revpar_total_display = forecast_revenue_display_total / denom_cap_total
 
     total_row = {
         "stay_date": pd.NaT,

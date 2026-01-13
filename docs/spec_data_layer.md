@@ -197,14 +197,20 @@ LT_DATA の出力ファイルは、互換性維持と多指標対応のため以
 `lt_data[stay_date][lt]`：
 
 - `lt >= 0`：  
-  「**LT = lt の時点での、当該宿泊月の月累計 Rooms**」
-  - 例：`lt=30` なら「宿泊月末から 30 日前 ASOF における、その宿泊月の累計予約室数」。
+  「**LT = lt の時点での、当該宿泊月の月累計（value_type）**」
+  - rooms：月累計 Rooms
+  - pax：月累計 Pax
+  - revenue：月累計 Revenue
+  - 例：`lt=30` なら「宿泊月末から 30 日前 ASOF における、その宿泊月の月累計（value_type）」。
+
 - `lt = -1`：  
   「**実績最終値（ACT）**」。  
   - `stay_date` より後の日付に ASOF が存在する場合  
-    → 最初に出現する `as_of_date > stay_date` の月累計 Rooms を ACT として採用。  
+    → 最初に出現する `as_of_date > stay_date` の月累計（value_type）を ACT として採用。  
   - `stay_date` 以降の ASOF が存在しない場合  
     → ACT は `NaN` のまま（未着地）。
+
+※以降の説明は便宜上 rooms を例に書くが、pax / revenue も同一ロジックで「値（value_type）が差し替わるだけ」として読み替える。
 
 #### 欠損と補間
 

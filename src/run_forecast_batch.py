@@ -421,9 +421,6 @@ def _append_pax_forecast_from_dor(
     actual_available = actual_pax_series.notna()
     forecast_pax.loc[mask_past & actual_available] = actual_pax_series.loc[mask_past & actual_available]
 
-    def _round_int_series(series: pd.Series) -> pd.Series:
-        return pd.to_numeric(series, errors="coerce").round().astype("Int64")
-
     out_df["actual_pax"] = _round_int_series(actual_pax_series)
     out_df["forecast_pax"] = _round_int_series(forecast_pax)
 
@@ -444,7 +441,13 @@ def _append_pax_forecast_from_dor(
 
 
 def _round_int_series(series: pd.Series) -> pd.Series:
-    return pd.to_numeric(series, errors="coerce").round().astype("Int64")
+    values = pd.to_numeric(series, errors="coerce")
+    mask = values.isna()
+    rounded = np.rint(values.fillna(0).to_numpy(dtype=float)).astype(np.int64, copy=False)
+    result = pd.array(rounded, dtype="Int64")
+    if mask.any():
+        result[mask.to_numpy()] = pd.NA
+    return pd.Series(result, index=series.index, name=series.name)
 
 
 def _prepare_output(

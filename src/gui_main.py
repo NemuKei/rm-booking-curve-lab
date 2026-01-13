@@ -825,76 +825,100 @@ class BookingCurveApp(tk.Tk):
             asof_ts = stay_dates.min()
 
         mask_past = stay_dates < asof_ts
+        future_days = int((stay_dates >= asof_ts).sum())
 
-        rooms_past = actual_rooms_display.where(actual_rooms_display.notna(), daily_rows.get("asof_oh_rooms"))
-        rooms_past = rooms_past.where(rooms_past.notna(), daily_rows.get("forecast_rooms"))
-        pax_past = actual_pax_display.where(actual_pax_display.notna(), daily_rows.get("asof_oh_pax"))
-        pax_past = pax_past.where(pax_past.notna(), daily_rows.get("forecast_pax"))
-        rev_past = daily_rows.get("revenue_oh_now").where(daily_rows.get("revenue_oh_now").notna(), daily_rows.get("forecast_revenue"))
+        if future_days == 0:
+            rooms_fc = None
+            pax_fc = None
+            rev_fc = None
+        else:
+            rooms_past = actual_rooms_display.where(actual_rooms_display.notna(), daily_rows.get("asof_oh_rooms"))
+            rooms_past = rooms_past.where(rooms_past.notna(), daily_rows.get("forecast_rooms"))
+            pax_past = actual_pax_display.where(actual_pax_display.notna(), daily_rows.get("asof_oh_pax"))
+            pax_past = pax_past.where(pax_past.notna(), daily_rows.get("forecast_pax"))
+            rev_past = daily_rows.get("revenue_oh_now").where(
+                daily_rows.get("revenue_oh_now").notna(), daily_rows.get("forecast_revenue")
+            )
 
-        projected_rooms = pd.Series(index=daily_rows.index, dtype=float)
-        projected_pax = pd.Series(index=daily_rows.index, dtype=float)
-        projected_rev = pd.Series(index=daily_rows.index, dtype=float)
-        projected_rooms.loc[mask_past] = rooms_past.loc[mask_past]
-        projected_pax.loc[mask_past] = pax_past.loc[mask_past]
-        projected_rev.loc[mask_past] = rev_past.loc[mask_past]
-        projected_rooms.loc[~mask_past] = rooms_forecast_display.loc[~mask_past]
-        projected_pax.loc[~mask_past] = pax_forecast_display.loc[~mask_past]
-        projected_rev.loc[~mask_past] = daily_rows.get("forecast_revenue").loc[~mask_past]
+            projected_rooms = pd.Series(index=daily_rows.index, dtype=float)
+            projected_pax = pd.Series(index=daily_rows.index, dtype=float)
+            projected_rev = pd.Series(index=daily_rows.index, dtype=float)
+            projected_rooms.loc[mask_past] = rooms_past.loc[mask_past]
+            projected_pax.loc[mask_past] = pax_past.loc[mask_past]
+            projected_rev.loc[mask_past] = rev_past.loc[mask_past]
+            projected_rooms.loc[~mask_past] = rooms_forecast_display.loc[~mask_past]
+            projected_pax.loc[~mask_past] = pax_forecast_display.loc[~mask_past]
+            projected_rev.loc[~mask_past] = daily_rows.get("forecast_revenue").loc[~mask_past]
 
-        rooms_fc = _safe_float(projected_rooms.fillna(0).sum())
-        pax_fc = _safe_float(projected_pax.fillna(0).sum())
-        rev_fc = None
-        if total_row is not None:
-            rev_fc = _safe_float(total_row.get("forecast_revenue_display"))
-        if rev_fc is None:
-            rev_fc = _safe_float(projected_rev.fillna(0).sum())
+            rooms_fc = _safe_float(projected_rooms.fillna(0).sum())
+            pax_fc = _safe_float(projected_pax.fillna(0).sum())
+            rev_fc = None
+            if total_row is not None:
+                rev_fc = _safe_float(total_row.get("forecast_revenue_display"))
+            if rev_fc is None:
+                rev_fc = _safe_float(projected_rev.fillna(0).sum())
 
         adr_oh = _safe_float(total_row.get("adr_oh_now") if total_row is not None else None)
         if adr_oh is None:
             adr_oh = _safe_ratio(rev_oh, rooms_oh)
 
         dor_oh = _safe_ratio(pax_oh, rooms_oh)
-        dor_fc = _safe_ratio(pax_fc, rooms_fc)
-        adr_fc = _safe_ratio(rev_fc, rooms_fc)
+        if future_days == 0:
+            dor_fc = None
+            adr_fc = None
+        else:
+            dor_fc = _safe_ratio(pax_fc, rooms_fc)
+            adr_fc = _safe_ratio(rev_fc, rooms_fc)
 
         if rooms_oh is not None and occ_capacity > 0 and num_days > 0:
             occ_oh = rooms_oh / (occ_capacity * num_days) * 100.0
         else:
             occ_oh = None
 
-        if rooms_fc is not None and occ_capacity > 0 and num_days > 0:
-            occ_fc = rooms_fc / (occ_capacity * num_days) * 100.0
-        else:
+        if future_days == 0:
             occ_fc = None
+        else:
+            if rooms_fc is not None and occ_capacity > 0 and num_days > 0:
+                occ_fc = rooms_fc / (occ_capacity * num_days) * 100.0
+            else:
+                occ_fc = None
 
         revpar_oh = None
         revpar_fc = None
         if rev_oh is not None and occ_capacity > 0 and num_days > 0:
             revpar_oh = rev_oh / (occ_capacity * num_days)
-        if rev_fc is not None and occ_capacity > 0 and num_days > 0:
+        if future_days != 0 and rev_fc is not None and occ_capacity > 0 and num_days > 0:
             revpar_fc = rev_fc / (occ_capacity * num_days)
 
-        pickup_rooms = None
-        pickup_pax = None
-        pickup_rev = None
-        if rooms_fc is not None and rooms_oh is not None:
-            pickup_rooms = rooms_fc - rooms_oh
-        if pax_fc is not None and pax_oh is not None:
-            pickup_pax = pax_fc - pax_oh
-        if rev_fc is not None and rev_oh is not None:
-            pickup_rev = rev_fc - rev_oh
-
-        pickup_adr = _safe_ratio(pickup_rev, pickup_rooms)
-        pickup_dor = _safe_ratio(pickup_pax, pickup_rooms)
-        if pickup_rooms is not None and occ_capacity > 0 and num_days > 0:
-            pickup_occ = pickup_rooms / (occ_capacity * num_days) * 100.0
-        else:
+        if future_days == 0:
+            pickup_rooms = None
+            pickup_pax = None
+            pickup_rev = None
+            pickup_adr = None
+            pickup_dor = None
             pickup_occ = None
-        if pickup_rev is not None and occ_capacity > 0 and num_days > 0:
-            pickup_revpar = pickup_rev / (occ_capacity * num_days)
-        else:
             pickup_revpar = None
+        else:
+            pickup_rooms = None
+            pickup_pax = None
+            pickup_rev = None
+            if rooms_fc is not None and rooms_oh is not None:
+                pickup_rooms = rooms_fc - rooms_oh
+            if pax_fc is not None and pax_oh is not None:
+                pickup_pax = pax_fc - pax_oh
+            if rev_fc is not None and rev_oh is not None:
+                pickup_rev = rev_fc - rev_oh
+
+            pickup_adr = _safe_ratio(pickup_rev, pickup_rooms)
+            pickup_dor = _safe_ratio(pickup_pax, pickup_rooms)
+            if pickup_rooms is not None and occ_capacity > 0 and num_days > 0:
+                pickup_occ = pickup_rooms / (occ_capacity * num_days) * 100.0
+            else:
+                pickup_occ = None
+            if pickup_rev is not None and occ_capacity > 0 and num_days > 0:
+                pickup_revpar = pickup_rev / (occ_capacity * num_days)
+            else:
+                pickup_revpar = None
 
         ly = get_daily_forecast_ly_summary(hotel_tag=hotel, target_month=target_month, capacity=occ_capacity)
         ly_occ = None
@@ -915,37 +939,38 @@ class BookingCurveApp(tk.Tk):
             return _fmt_num(value)
 
         self.df_summary_vars["oh"]["Rooms"].set(_fmt_metric("Rooms", rooms_oh))
-        self.df_summary_vars["forecast"]["Rooms"].set(_fmt_metric("Rooms", rooms_fc))
+        forecast_empty_label = "-" if future_days == 0 else "N/A"
+        self.df_summary_vars["forecast"]["Rooms"].set(_fmt_metric("Rooms", rooms_fc, empty_label=forecast_empty_label))
         self.df_summary_vars["pickup"]["Rooms"].set(_fmt_metric("Rooms", pickup_rooms, empty_label="-"))
         self.df_summary_vars["ly"]["Rooms"].set(_fmt_metric("Rooms", ly.get("rooms"), empty_label="-"))
 
         self.df_summary_vars["oh"]["Pax"].set(_fmt_metric("Pax", pax_oh))
-        self.df_summary_vars["forecast"]["Pax"].set(_fmt_metric("Pax", pax_fc))
+        self.df_summary_vars["forecast"]["Pax"].set(_fmt_metric("Pax", pax_fc, empty_label=forecast_empty_label))
         self.df_summary_vars["pickup"]["Pax"].set(_fmt_metric("Pax", pickup_pax, empty_label="-"))
         self.df_summary_vars["ly"]["Pax"].set(_fmt_metric("Pax", ly.get("pax"), empty_label="-"))
 
         self.df_summary_vars["oh"]["Rev"].set(_fmt_metric("Rev", rev_oh))
-        self.df_summary_vars["forecast"]["Rev"].set(_fmt_metric("Rev", rev_fc))
+        self.df_summary_vars["forecast"]["Rev"].set(_fmt_metric("Rev", rev_fc, empty_label=forecast_empty_label))
         self.df_summary_vars["pickup"]["Rev"].set(_fmt_metric("Rev", pickup_rev, empty_label="-"))
         self.df_summary_vars["ly"]["Rev"].set(_fmt_metric("Rev", ly.get("revenue"), empty_label="-"))
 
         self.df_summary_vars["oh"]["OCC"].set(_fmt_metric("OCC", occ_oh))
-        self.df_summary_vars["forecast"]["OCC"].set(_fmt_metric("OCC", occ_fc))
+        self.df_summary_vars["forecast"]["OCC"].set(_fmt_metric("OCC", occ_fc, empty_label=forecast_empty_label))
         self.df_summary_vars["pickup"]["OCC"].set(_fmt_metric("OCC", pickup_occ, empty_label="-"))
         self.df_summary_vars["ly"]["OCC"].set(_fmt_metric("OCC", ly_occ, empty_label="-"))
 
         self.df_summary_vars["oh"]["ADR"].set(_fmt_metric("ADR", adr_oh))
-        self.df_summary_vars["forecast"]["ADR"].set(_fmt_metric("ADR", adr_fc))
+        self.df_summary_vars["forecast"]["ADR"].set(_fmt_metric("ADR", adr_fc, empty_label=forecast_empty_label))
         self.df_summary_vars["pickup"]["ADR"].set(_fmt_metric("ADR", pickup_adr, empty_label="-"))
         self.df_summary_vars["ly"]["ADR"].set(_fmt_metric("ADR", ly.get("adr"), empty_label="-"))
 
         self.df_summary_vars["oh"]["DOR"].set(_fmt_metric("DOR", dor_oh))
-        self.df_summary_vars["forecast"]["DOR"].set(_fmt_metric("DOR", dor_fc))
+        self.df_summary_vars["forecast"]["DOR"].set(_fmt_metric("DOR", dor_fc, empty_label=forecast_empty_label))
         self.df_summary_vars["pickup"]["DOR"].set(_fmt_metric("DOR", pickup_dor, empty_label="-"))
         self.df_summary_vars["ly"]["DOR"].set(_fmt_metric("DOR", ly.get("dor"), empty_label="-"))
 
         self.df_summary_vars["oh"]["RevPAR"].set(_fmt_metric("RevPAR", revpar_oh))
-        self.df_summary_vars["forecast"]["RevPAR"].set(_fmt_metric("RevPAR", revpar_fc))
+        self.df_summary_vars["forecast"]["RevPAR"].set(_fmt_metric("RevPAR", revpar_fc, empty_label=forecast_empty_label))
         self.df_summary_vars["pickup"]["RevPAR"].set(_fmt_metric("RevPAR", pickup_revpar, empty_label="-"))
         self.df_summary_vars["ly"]["RevPAR"].set(_fmt_metric("RevPAR", ly.get("revpar"), empty_label="-"))
 

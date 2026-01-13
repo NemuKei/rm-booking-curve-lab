@@ -2048,9 +2048,28 @@ def get_daily_forecast_table(
 
     missing_row = {col: _missing_value_for_dtype(out[col].dtype) for col in out.columns}
     missing_row.update(total_row)
-    total_row_series = pd.Series(missing_row)
-    total_row_series = total_row_series.reindex(out.columns)
-    out.loc[len(out)] = total_row_series
+
+    def _build_total_row_df(
+        base_df: pd.DataFrame,
+        row_values: dict[str, object],
+    ) -> pd.DataFrame:
+        series_by_col: dict[str, pd.Series] = {}
+        for col in base_df.columns:
+            value = row_values.get(col, _missing_value_for_dtype(base_df[col].dtype))
+            dtype = base_df[col].dtype
+            try:
+                series = pd.Series([value], dtype=dtype)
+            except (TypeError, ValueError):
+                try:
+                    series = pd.Series([value]).astype(dtype)
+                except (TypeError, ValueError):
+                    series = pd.Series([value])
+            series_by_col[col] = series
+        total_row_df = pd.concat(series_by_col, axis=1)
+        return total_row_df[base_df.columns]
+
+    total_row_df = _build_total_row_df(out, missing_row)
+    out = pd.concat([out, total_row_df], ignore_index=True)
 
     column_order = [
         "stay_date",

@@ -101,6 +101,15 @@ def _clip_value(value: float, low: float, high: float) -> float:
     return float(np.clip(value, low, high))
 
 
+def _round_int_series(series: pd.Series) -> pd.Series:
+    values = pd.to_numeric(series, errors="coerce")
+    mask = values.isna()
+    rounded = np.rint(values.fillna(0).to_numpy(dtype=float)).astype(np.int64, copy=False)
+    result = pd.array(rounded, dtype="Int64")
+    result[mask.to_numpy()] = pd.NA
+    return pd.Series(result, index=series.index, name=series.name)
+
+
 def build_pace14_spike_thresholds(
     history_df: pd.DataFrame,
     *,
@@ -722,23 +731,17 @@ def forecast_month_from_recent90(
     if act_col is not None:
         actual_series = df_target[act_col]
         actual_series.index = all_dates
-        out_df["actual_rooms"] = (
-            pd.to_numeric(actual_series, errors="coerce").round().astype("Int64")
-        )
+        out_df["actual_rooms"] = _round_int_series(actual_series)
     else:
         out_df["actual_rooms"] = pd.Series(pd.NA, index=all_dates, dtype="Int64")
 
-    out_df["forecast_rooms"] = (
-        pd.to_numeric(result.reindex(all_dates), errors="coerce").round().astype("Int64")
-    )
+    out_df["forecast_rooms"] = _round_int_series(result.reindex(all_dates))
 
     out_df["projected_rooms"] = out_df["actual_rooms"].where(
         out_df.index < as_of_ts,
         out_df["forecast_rooms"],
     )
-    out_df["projected_rooms"] = (
-        pd.to_numeric(out_df["projected_rooms"], errors="coerce").round().astype("Int64")
-    )
+    out_df["projected_rooms"] = _round_int_series(out_df["projected_rooms"])
 
     hotel_tag_value = hotel_tag or HOTEL_TAG
     out_df = apply_segment_adjustment(out_df, hotel_tag=hotel_tag_value)

@@ -3497,6 +3497,8 @@ class BookingCurveApp(tk.Tk):
             return pd.to_datetime(stay_date).strftime("%Y-%m-%d")
         if col == "weekday":
             weekday = row.get("weekday")
+            if pd.isna(weekday):
+                return ""
             if isinstance(weekday, (int, float)) and not pd.isna(weekday) and 0 <= int(weekday) <= 6:
                 weekday_idx = int(weekday)
                 return ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][weekday_idx]

@@ -37,7 +37,6 @@ BookingCurveLab の主目的は、ホテルの PMS から取得したオンハ�
 各ホテルについて、以下の情報を保持します。
 
 - `display_name`：GUI に表示する名称
-- `data_subdir`：PMS 時系列データや生データを置くサブフォルダ
 - `capacity`：理論最大稼働室数
 - `forecast_cap`：予測時に上限として用いる稼働室数（安全マージン込み）
 - `raw_root_dir`：RAW Excel の取り込み元フォルダ（唯一の正）

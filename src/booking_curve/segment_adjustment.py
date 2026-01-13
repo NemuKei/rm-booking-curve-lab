@@ -42,10 +42,14 @@ def apply_segment_adjustment(forecast_df: pd.DataFrame, hotel_tag: str) -> pd.Da
 
     factor = pd.Series(1.0, index=df.index)
 
-    mask_middle_long = (df["holiday_block_len"] >= 3) & (df["holiday_position"] == "middle")
-    factor.loc[mask_middle_long] = 0.98
+    if "holiday_block_len" in df.columns and "holiday_position" in df.columns:
+        holiday_block_len = pd.to_numeric(df["holiday_block_len"], errors="coerce").fillna(0)
+        holiday_position = df["holiday_position"].fillna("")
+        mask_middle_long = (holiday_block_len >= 3) & (holiday_position == "middle")
+        factor.loc[mask_middle_long] = 0.98
 
-    adjusted = (df["projected_rooms"] * factor).round().astype(int)
+    projected = pd.to_numeric(df["projected_rooms"], errors="coerce")
+    adjusted = (projected * factor).round().astype("Int64")
     df["adjusted_projected_rooms"] = adjusted
 
     out_cols = list(forecast_df.columns)

@@ -1679,55 +1679,118 @@ def get_daily_forecast_table(
 
     csv_name = f"{prefix}_{target_month}_{hotel_tag}_asof_{asof_tag}.csv"
     csv_path = OUTPUT_DIR / csv_name
-    if not csv_path.exists():
-        raise FileNotFoundError(f"forecast csv not found: {csv_path}")
-
-    df = pd.read_csv(csv_path, index_col=0)
-    df.index = pd.to_datetime(df.index)
-    df = df.sort_index()
-
-    if "actual_rooms" not in df.columns:
-        raise ValueError(f"{csv_path} に actual_rooms 列がありません。")
-    if col_name not in df.columns:
-        raise ValueError(f"{csv_path} に {col_name} 列がありません。")
-
-    out = pd.DataFrame(index=df.index.copy())
-    out["stay_date"] = out.index
-    out["weekday"] = out["stay_date"].dt.weekday.astype("Int64")
-    out["actual_rooms"] = _round_int_series(df["actual_rooms"])
-    out["forecast_rooms"] = _round_int_series(df[col_name])
-    if "actual_pax" in df.columns:
-        out["actual_pax"] = _round_int_series(df["actual_pax"])
-    else:
-        out["actual_pax"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
-    if "projected_pax" in df.columns:
-        out["forecast_pax"] = _round_int_series(df["projected_pax"])
-    elif "forecast_pax" in df.columns:
-        out["forecast_pax"] = _round_int_series(df["forecast_pax"])
-    else:
-        out["forecast_pax"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
-    if "projected_pax" in df.columns:
-        out["projected_pax"] = _round_int_series(df["projected_pax"])
-    else:
-        out["projected_pax"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
-    if "revenue_oh_now" in df.columns:
-        out["revenue_oh_now"] = pd.to_numeric(df["revenue_oh_now"], errors="coerce").astype(float)
-    else:
-        out["revenue_oh_now"] = pd.Series(np.nan, index=out.index, dtype="float")
-    if "adr_oh_now" in df.columns:
-        out["adr_oh_now"] = pd.to_numeric(df["adr_oh_now"], errors="coerce").astype(float)
-    else:
-        out["adr_oh_now"] = pd.Series(np.nan, index=out.index, dtype="float")
-    if "adr_pickup_est" in df.columns:
-        out["adr_pickup_est"] = pd.to_numeric(df["adr_pickup_est"], errors="coerce").astype(float)
-    else:
-        out["adr_pickup_est"] = pd.Series(np.nan, index=out.index, dtype="float")
-    if "forecast_revenue" in df.columns:
-        out["forecast_revenue"] = pd.to_numeric(df["forecast_revenue"], errors="coerce").astype(float)
-    else:
-        out["forecast_revenue"] = pd.Series(np.nan, index=out.index, dtype="float")
-
     snap_all = read_daily_snapshots_for_month(hotel_id=hotel_tag, target_month=target_month)
+    if not csv_path.exists():
+        period = pd.Period(target_month, freq="M")
+        stay_dates = pd.date_range(
+            start=date(period.year, period.month, 1),
+            end=date(period.year, period.month, period.days_in_month),
+            freq="D",
+        )
+        out = pd.DataFrame(index=stay_dates)
+        out["stay_date"] = out.index
+        out["weekday"] = out["stay_date"].dt.weekday.astype("Int64")
+
+        stay_dates_norm = out["stay_date"].dt.normalize()
+        mask_past = stay_dates_norm < asof_ts
+        if snap_all is None or snap_all.empty or not {"stay_date", "as_of_date", "rooms_oh"}.issubset(snap_all.columns):
+            out["actual_rooms"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
+            out["actual_pax"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
+            out["revenue_oh_now"] = pd.Series(np.nan, index=out.index, dtype="float")
+            out["adr_oh_now"] = pd.Series(np.nan, index=out.index, dtype="float")
+        else:
+            snap = snap_all.copy()
+            snap["stay_date"] = pd.to_datetime(snap["stay_date"], errors="coerce").dt.normalize()
+            snap["as_of_date"] = pd.to_datetime(snap["as_of_date"], errors="coerce").dt.normalize()
+            snap = snap.dropna(subset=["stay_date", "as_of_date"])
+            snap = snap.sort_values(["stay_date", "as_of_date"])
+
+            last_snap = snap.groupby("stay_date").tail(1)
+            rooms_map = pd.to_numeric(last_snap.set_index("stay_date")["rooms_oh"], errors="coerce")
+            actual_rooms_series = stay_dates_norm.map(rooms_map)
+            actual_rooms_series = actual_rooms_series.where(mask_past)
+            out["actual_rooms"] = _round_int_series(actual_rooms_series)
+
+            if "pax_oh" in snap_all.columns:
+                pax_map = pd.to_numeric(last_snap.set_index("stay_date")["pax_oh"], errors="coerce")
+                actual_pax_series = stay_dates_norm.map(pax_map)
+                actual_pax_series = actual_pax_series.where(mask_past)
+                out["actual_pax"] = _round_int_series(actual_pax_series)
+            else:
+                out["actual_pax"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
+
+            if "revenue_oh" in snap_all.columns:
+                snap_asof = snap[snap["as_of_date"] <= asof_ts]
+                if snap_asof.empty:
+                    revenue_oh_now = pd.Series(np.nan, index=out.index, dtype="float")
+                    rooms_oh_now = pd.Series(np.nan, index=out.index, dtype="float")
+                else:
+                    snap_asof = snap_asof.sort_values(["stay_date", "as_of_date"])
+                    last_snap_asof = snap_asof.groupby("stay_date").tail(1)
+                    revenue_map = pd.to_numeric(last_snap_asof.set_index("stay_date")["revenue_oh"], errors="coerce")
+                    rooms_oh_map = pd.to_numeric(last_snap_asof.set_index("stay_date")["rooms_oh"], errors="coerce")
+                    revenue_oh_now = stay_dates_norm.map(revenue_map)
+                    rooms_oh_now = stay_dates_norm.map(rooms_oh_map)
+                out["revenue_oh_now"] = pd.to_numeric(revenue_oh_now, errors="coerce").astype(float)
+                rooms_oh_now = pd.to_numeric(rooms_oh_now, errors="coerce").astype(float)
+                rooms_for_div = rooms_oh_now.replace(0, np.nan)
+                out["adr_oh_now"] = (out["revenue_oh_now"] / rooms_for_div).astype(float)
+            else:
+                out["revenue_oh_now"] = pd.Series(np.nan, index=out.index, dtype="float")
+                out["adr_oh_now"] = pd.Series(np.nan, index=out.index, dtype="float")
+
+        out["forecast_rooms"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
+        out["forecast_pax"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
+        out["projected_pax"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
+        out["adr_pickup_est"] = pd.Series(np.nan, index=out.index, dtype="float")
+        out["forecast_revenue"] = pd.Series(np.nan, index=out.index, dtype="float")
+        apply_monthly_rounding = False
+    else:
+        df = pd.read_csv(csv_path, index_col=0)
+        df.index = pd.to_datetime(df.index)
+        df = df.sort_index()
+
+        if "actual_rooms" not in df.columns:
+            raise ValueError(f"{csv_path} に actual_rooms 列がありません。")
+        if col_name not in df.columns:
+            raise ValueError(f"{csv_path} に {col_name} 列がありません。")
+
+        out = pd.DataFrame(index=df.index.copy())
+        out["stay_date"] = out.index
+        out["weekday"] = out["stay_date"].dt.weekday.astype("Int64")
+        out["actual_rooms"] = _round_int_series(df["actual_rooms"])
+        out["forecast_rooms"] = _round_int_series(df[col_name])
+        if "actual_pax" in df.columns:
+            out["actual_pax"] = _round_int_series(df["actual_pax"])
+        else:
+            out["actual_pax"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
+        if "projected_pax" in df.columns:
+            out["forecast_pax"] = _round_int_series(df["projected_pax"])
+        elif "forecast_pax" in df.columns:
+            out["forecast_pax"] = _round_int_series(df["forecast_pax"])
+        else:
+            out["forecast_pax"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
+        if "projected_pax" in df.columns:
+            out["projected_pax"] = _round_int_series(df["projected_pax"])
+        else:
+            out["projected_pax"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
+        if "revenue_oh_now" in df.columns:
+            out["revenue_oh_now"] = pd.to_numeric(df["revenue_oh_now"], errors="coerce").astype(float)
+        else:
+            out["revenue_oh_now"] = pd.Series(np.nan, index=out.index, dtype="float")
+        if "adr_oh_now" in df.columns:
+            out["adr_oh_now"] = pd.to_numeric(df["adr_oh_now"], errors="coerce").astype(float)
+        else:
+            out["adr_oh_now"] = pd.Series(np.nan, index=out.index, dtype="float")
+        if "adr_pickup_est" in df.columns:
+            out["adr_pickup_est"] = pd.to_numeric(df["adr_pickup_est"], errors="coerce").astype(float)
+        else:
+            out["adr_pickup_est"] = pd.Series(np.nan, index=out.index, dtype="float")
+        if "forecast_revenue" in df.columns:
+            out["forecast_revenue"] = pd.to_numeric(df["forecast_revenue"], errors="coerce").astype(float)
+        else:
+            out["forecast_revenue"] = pd.Series(np.nan, index=out.index, dtype="float")
+
     if snap_all is None or snap_all.empty or not {"stay_date", "as_of_date", "rooms_oh"}.issubset(snap_all.columns):
         out["asof_oh_rooms"] = _round_int_series(out["actual_rooms"])
         out["asof_oh_pax"] = pd.Series(pd.NA, index=out.index, dtype="Int64")

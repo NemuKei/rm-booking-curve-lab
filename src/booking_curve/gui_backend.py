@@ -30,6 +30,7 @@ from booking_curve.forecast_simple import (
     moving_average_recent_90days,
     moving_average_recent_90days_weighted,
 )
+from booking_curve import monthly_rounding
 from booking_curve.missing_report import build_missing_report, find_unconverted_raw_pairs
 from booking_curve.pms_adapter_nface import (
     build_daily_snapshots_fast,
@@ -1831,107 +1832,6 @@ def get_daily_forecast_table(
     else:
         adr_pickup_total = pd.NA
 
-    def _round_display(series: pd.Series, unit: float) -> pd.Series:
-        values = pd.to_numeric(series, errors="coerce")
-        return (values / unit).round() * unit
-
-    def _should_apply_monthly_rounding(
-        target_yyyymm: str,
-        asof_timestamp: pd.Timestamp,
-        stay_dates: pd.Series,
-    ) -> bool:
-        if not target_yyyymm or len(target_yyyymm) != 6 or not target_yyyymm.isdigit():
-            logging.debug("Skipping monthly rounding: invalid target_month=%s", target_yyyymm)
-            return False
-
-        try:
-            target_period = pd.Period(target_yyyymm, freq="M")
-        except Exception:
-            logging.debug("Skipping monthly rounding: invalid target_month=%s", target_yyyymm)
-            return False
-
-        stay_norm = pd.to_datetime(stay_dates, errors="coerce").dt.normalize()
-        asof_norm = pd.to_datetime(asof_timestamp).normalize()
-        month_start = target_period.start_time.normalize()
-        month_end = target_period.end_time.normalize()
-        month_mask = (stay_norm >= month_start) & (stay_norm <= month_end)
-        future_mask = stay_norm >= asof_norm
-        future_count = int((future_mask & month_mask).sum())
-        if future_count < 20:
-            logging.debug(
-                "Skipping monthly rounding: future_day_count=%s < 20 (target_month=%s, asof=%s)",
-                future_count,
-                target_yyyymm,
-                asof_norm.strftime("%Y-%m-%d"),
-            )
-            return False
-
-        return True
-
-    def _apply_remainder_rounding(
-        values: pd.Series,
-        stay_dates: pd.Series,
-        goal_total: float,
-        cap_value: float | None,
-    ) -> tuple[pd.Series, float]:
-        numeric = pd.to_numeric(values, errors="coerce").fillna(0.0)
-        stay_norm = pd.to_datetime(stay_dates, errors="coerce").dt.normalize()
-        past_mask = stay_norm < asof_ts
-        future_mask = ~past_mask
-
-        past_fixed = numeric.loc[past_mask].copy()
-        future_raw = numeric.loc[future_mask]
-        base_future = np.floor(future_raw).astype(int).clip(lower=0)
-        remainder = future_raw - base_future
-
-        cap_int: int | None = None
-        if cap_value is not None:
-            try:
-                cap_int = int(np.floor(float(cap_value)))
-            except Exception:
-                cap_int = None
-
-        if cap_int is not None and cap_int >= 0:
-            base_future = base_future.clip(upper=cap_int)
-
-        current_total = float(past_fixed.sum() + base_future.sum())
-        need = int(round(goal_total - current_total))
-
-        if need > 0:
-            order = remainder.sort_values(ascending=False).index.tolist()
-            while need > 0:
-                progress = False
-                for idx in order:
-                    if need == 0:
-                        break
-                    if cap_int is not None and cap_int >= 0 and base_future.at[idx] >= cap_int:
-                        continue
-                    base_future.at[idx] += 1
-                    need -= 1
-                    progress = True
-                if not progress:
-                    break
-        elif need < 0:
-            order = remainder.sort_values(ascending=True).index.tolist()
-            while need < 0:
-                progress = False
-                for idx in order:
-                    if need == 0:
-                        break
-                    if base_future.at[idx] <= 0:
-                        continue
-                    base_future.at[idx] -= 1
-                    need += 1
-                    progress = True
-                if not progress:
-                    break
-
-        adjusted = pd.Series(index=values.index, dtype=float)
-        adjusted.loc[past_mask] = past_fixed.astype(float)
-        adjusted.loc[future_mask] = base_future.astype(float)
-        adjusted_total = float(adjusted.sum())
-        return adjusted, adjusted_total
-
     out["actual_rooms_display"] = out["actual_rooms"].copy()
     out["asof_oh_rooms_display"] = out["asof_oh_rooms"].copy()
     out["forecast_rooms_display"] = out["forecast_rooms"].copy()
@@ -1940,21 +1840,21 @@ def get_daily_forecast_table(
     out["asof_oh_pax_display"] = out["asof_oh_pax"].copy()
     out["forecast_revenue_display"] = out["forecast_revenue"].copy()
 
-    apply_monthly_rounding = apply_monthly_rounding and _should_apply_monthly_rounding(
+    apply_monthly_rounding = apply_monthly_rounding and monthly_rounding.should_apply_monthly_rounding(
         target_month,
         asof_ts,
         out["stay_date"],
     )
 
     if apply_monthly_rounding:
-        forecast_total_goal = _round_display(pd.Series([forecast_total]), round_rooms_unit).iloc[0]
-        if pd.isna(forecast_total_goal):
-            forecast_total_goal = 0.0
-        reconciled_rooms, adjusted_rooms_total = _apply_remainder_rounding(
+        forecast_total_goal = monthly_rounding.round_total_goal(forecast_total, round_rooms_unit)
+        reconciled_rooms, adjusted_rooms_total = monthly_rounding.apply_remainder_rounding(
             out["forecast_rooms"],
             out["stay_date"],
-            float(forecast_total_goal),
-            cap,
+            asof_ts=asof_ts,
+            target_yyyymm=target_month,
+            goal_total=float(forecast_total_goal),
+            cap_value=cap,
         )
         out["forecast_rooms_display"] = reconciled_rooms
         forecast_rooms_total_display = adjusted_rooms_total
@@ -1962,14 +1862,14 @@ def get_daily_forecast_table(
         if out["forecast_pax"].notna().any():
             if pax_capacity is None:
                 pax_capacity = run_forecast_batch.infer_pax_capacity_p99(hotel_tag, asof_ts)
-            forecast_pax_total_goal = _round_display(pd.Series([forecast_pax_total]), round_pax_unit).iloc[0]
-            if pd.isna(forecast_pax_total_goal):
-                forecast_pax_total_goal = 0.0
-            reconciled_pax, adjusted_pax_total = _apply_remainder_rounding(
+            forecast_pax_total_goal = monthly_rounding.round_total_goal(forecast_pax_total, round_pax_unit)
+            reconciled_pax, adjusted_pax_total = monthly_rounding.apply_remainder_rounding(
                 out["forecast_pax"],
                 out["stay_date"],
-                float(forecast_pax_total_goal),
-                pax_capacity,
+                asof_ts=asof_ts,
+                target_yyyymm=target_month,
+                goal_total=float(forecast_pax_total_goal),
+                cap_value=pax_capacity,
             )
             out["forecast_pax_display"] = reconciled_pax
             forecast_pax_total_display = adjusted_pax_total
@@ -1981,17 +1881,17 @@ def get_daily_forecast_table(
 
     forecast_revenue_display_total = forecast_revenue_total
     if apply_monthly_rounding:
-        forecast_revenue_total_goal = _round_display(
-            pd.Series([forecast_revenue_total]),
+        forecast_revenue_total_goal = monthly_rounding.round_total_goal(
+            forecast_revenue_total,
             round_revenue_unit,
-        ).iloc[0]
-        if pd.isna(forecast_revenue_total_goal):
-            forecast_revenue_total_goal = 0.0
-        reconciled_revenue, adjusted_revenue_total = _apply_remainder_rounding(
+        )
+        reconciled_revenue, adjusted_revenue_total = monthly_rounding.apply_remainder_rounding(
             out["forecast_revenue"],
             out["stay_date"],
-            float(forecast_revenue_total_goal),
-            None,
+            asof_ts=asof_ts,
+            target_yyyymm=target_month,
+            goal_total=float(forecast_revenue_total_goal),
+            cap_value=None,
         )
         out.loc[:, "forecast_revenue_display"] = reconciled_revenue
         forecast_revenue_display_total = adjusted_revenue_total

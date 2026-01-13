@@ -894,7 +894,17 @@ def run_forecast_for_gui(
     # 計算としては base モデルと同じでよい。
     base_model = gui_model.replace("_adj", "")
 
+    asof_norm = asof_ts.normalize()
     for ym in target_months:
+        try:
+            period = pd.Period(ym, freq="M")
+        except Exception:
+            period = None
+        if period is not None:
+            month_end = period.end_time.normalize()
+            if asof_norm > month_end:
+                print(f"[SKIP] target_month settled: {ym} (as_of={asof_norm.date()})")
+                continue
         phase_factor = None
         if phase_factors:
             phase_factor = phase_factors.get(ym)
@@ -2038,10 +2048,9 @@ def get_daily_forecast_table(
 
     missing_row = {col: _missing_value_for_dtype(out[col].dtype) for col in out.columns}
     missing_row.update(total_row)
-    total_row_df = out.iloc[0:0].copy()
-    total_row_df.loc[0] = missing_row
-    total_row_df = _drop_all_na_columns(total_row_df)
-    out = pd.concat([out, total_row_df], ignore_index=True)
+    total_row_series = pd.Series(missing_row)
+    total_row_series = total_row_series.reindex(out.columns)
+    out.loc[len(out)] = total_row_series
 
     column_order = [
         "stay_date",

@@ -145,6 +145,24 @@ DOR_K_MIN_DEFAULT = 0.2
 PAX_PER_ROOM_MAX = 4.0
 
 
+def _should_skip_forecast(target_month: str, as_of_date: str) -> bool:
+    try:
+        period = pd.Period(target_month, freq="M")
+    except Exception:
+        return False
+
+    as_of_ts = pd.to_datetime(as_of_date, errors="coerce")
+    if pd.isna(as_of_ts):
+        return False
+
+    month_end = period.end_time.normalize()
+    if as_of_ts.normalize() > month_end:
+        print(f"[SKIP] target_month settled: {target_month} (as_of={as_of_ts.normalize().date()})")
+        return True
+
+    return False
+
+
 def _resolve_lt_csv_path(month: str, hotel_tag: str, value_type: str) -> Path:
     if value_type not in LT_VALUE_TYPES:
         raise ValueError(f"Unsupported lt value type: {value_type}")
@@ -696,6 +714,8 @@ def run_avg_forecast(
     avgモデル(3ヶ月平均)で target_month を as_of_date 時点で予測し、
     run_forecast_from_avg.py と同じ形式の CSV を OUTPUT_DIR に出力する。
     """
+    if _should_skip_forecast(target_month, as_of_date):
+        return
     cap = _resolve_capacity(capacity)
 
     df_target = load_lt_csv(target_month, hotel_tag=hotel_tag, value_type="rooms")
@@ -827,6 +847,8 @@ def run_recent90_forecast(
     recent90モデル(観測日から遡る90日平均)で target_month を as_of_date 時点で予測し、
     run_forecast_from_recent90.py と同じ形式の CSV を OUTPUT_DIR に出力する。
     """
+    if _should_skip_forecast(target_month, as_of_date):
+        return
     cap = _resolve_capacity(capacity)
 
     as_of_ts = pd.to_datetime(as_of_date)
@@ -984,6 +1006,8 @@ def run_recent90_weighted_forecast(
     出力ファイル名:
       forecast_recent90w_{target_month}_{hotel_tag}_asof_{as_of}.csv
     """
+    if _should_skip_forecast(target_month, as_of):
+        return
     cap = _resolve_capacity(capacity)
 
     as_of_ts = pd.to_datetime(as_of, format="%Y%m%d")
@@ -1137,6 +1161,8 @@ def run_pace14_forecast(
     phase_clip_pct: float | None = None,
 ) -> None:
     """pace14モデルで target_month を as_of_date 時点で予測し、CSVを出力する。"""
+    if _should_skip_forecast(target_month, as_of_date):
+        return
     cap = _resolve_capacity(capacity)
 
     as_of_ts = pd.to_datetime(as_of_date)
@@ -1292,6 +1318,8 @@ def run_pace14_market_forecast(
     phase_clip_pct: float | None = None,
 ) -> None:
     """pace14_marketモデルで target_month を as_of_date 時点で予測し、CSVを出力する。"""
+    if _should_skip_forecast(target_month, as_of_date):
+        return
     cap = _resolve_capacity(capacity)
 
     as_of_ts = pd.to_datetime(as_of_date)

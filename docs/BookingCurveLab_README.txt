@@ -126,7 +126,12 @@ BookingCurveLab/
 5-2. 月次（LT_DATA→カーブ確認）
 1) 「ブッキングカーブ」タブで対象ホテルを選択
 2) 「LT_DATA(4ヶ月)」または「LT_DATA(期間指定)」を実行
-   → lt_data_YYYYMM_*.csv / monthly_curve_YYYYMM_*.csv を再生成
+   → 以下を再生成
+    ・lt_data_YYYYMM_<hotel>.csv（互換用：rooms）
+    ・lt_data_rooms_YYYYMM_<hotel>.csv
+    ・lt_data_pax_YYYYMM_<hotel>.csv
+    ・lt_data_revenue_YYYYMM_<hotel>.csv
+    ・monthly_curve_YYYYMM_<hotel>.csv
 3) 「月次カーブ」タブで、最新月・前年同月のカーブを確認
 
 5-3. モデル評価・フォーキャスト

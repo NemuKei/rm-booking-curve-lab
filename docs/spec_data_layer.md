@@ -159,6 +159,23 @@ LT_DATA は、**宿泊日 × LT（Lead Time）** のブッキングカーブを�
 どちらのルートも、最終的には同じフォーマットの `lt_data_YYYYMM_<hotel>.csv` を出力する。  
 今後は daily snapshots ルートを標準とし、時系列 Excel ルートは互換性維持と比較用に残す方針。
 
+LT_DATA の出力ファイルは、互換性維持と多指標対応のため以下の扱いとする。
+
+### 互換ファイル（従来名）
+- `lt_data_YYYYMM_<hotel>.csv`
+  - rooms を出力する（従来運用・既存コードとの互換のため）
+
+### 指標別ファイル（追加）
+- `lt_data_rooms_YYYYMM_<hotel>.csv`
+- `lt_data_pax_YYYYMM_<hotel>.csv`
+- `lt_data_revenue_YYYYMM_<hotel>.csv`
+
+いずれもテーブル構造（行=stay_date、列=LT）は同一で、セル値の意味（value_type）のみが異なる。
+
+- rooms：当該宿泊月の月累計 Rooms（従来どおり）
+- pax：当該宿泊月の月累計 Pax
+- revenue：当該宿泊月の月累計 Revenue
+
 ---
 
 ### 2-2. LT_DATA テーブル仕様

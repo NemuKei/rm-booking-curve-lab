@@ -1918,7 +1918,7 @@ def get_daily_forecast_table(
 
     total_row = {
         "stay_date": pd.NaT,
-        "weekday": "",
+        "weekday": pd.NA,
         "actual_rooms": actual_total,
         "asof_oh_rooms": asof_total,
         "forecast_rooms": forecast_total,

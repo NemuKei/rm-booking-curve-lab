@@ -1844,15 +1844,6 @@ def get_daily_forecast_table(
             logging.debug("Skipping monthly rounding: invalid target_month=%s", target_yyyymm)
             return False
 
-        asof_month = asof_timestamp.strftime("%Y%m")
-        if target_yyyymm != asof_month:
-            logging.debug(
-                "Skipping monthly rounding: target_month=%s is not current month=%s",
-                target_yyyymm,
-                asof_month,
-            )
-            return False
-
         try:
             target_period = pd.Period(target_yyyymm, freq="M")
         except Exception:
@@ -1860,15 +1851,18 @@ def get_daily_forecast_table(
             return False
 
         stay_norm = pd.to_datetime(stay_dates, errors="coerce").dt.normalize()
-        future_mask = stay_norm >= asof_timestamp
-        month_mask = stay_norm.dt.to_period("M") == target_period
+        asof_norm = pd.to_datetime(asof_timestamp).normalize()
+        month_start = target_period.start_time.normalize()
+        month_end = target_period.end_time.normalize()
+        month_mask = (stay_norm >= month_start) & (stay_norm <= month_end)
+        future_mask = stay_norm >= asof_norm
         future_count = int((future_mask & month_mask).sum())
         if future_count < 20:
             logging.debug(
                 "Skipping monthly rounding: future_day_count=%s < 20 (target_month=%s, asof=%s)",
                 future_count,
                 target_yyyymm,
-                asof_timestamp.strftime("%Y-%m-%d"),
+                asof_norm.strftime("%Y-%m-%d"),
             )
             return False
 

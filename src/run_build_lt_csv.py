@@ -5,6 +5,7 @@ GUI からは run_build_lt_for_gui(hotel_tag, target_months) を呼び出す。
 CLI 実行時は HOTELS_CONFIG の先頭に定義された hotel_tag（現在は daikokucho）を処理する。
 """
 
+import argparse
 from calendar import monthrange
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -214,8 +215,17 @@ def run_build_lt_for_gui(
         print("[INFO] 対象月が指定されていないため処理をスキップします。")
         return
 
-    excel_path, display_name = _get_hotel_io_config(hotel_tag)
-    print(f"対象ホテル: {display_name} ({hotel_tag}) / ファイル: {excel_path.name}")
+    cfg = HOTEL_CONFIG.get(hotel_tag)
+    if cfg is None:
+        raise KeyError(f"Unknown hotel_tag: {hotel_tag!r}")
+
+    if source == "timeseries":
+        excel_path, display_name = _get_hotel_io_config(hotel_tag)
+        print(f"対象ホテル: {display_name} ({hotel_tag}) / ファイル: {excel_path.name}")
+    else:
+        excel_path = None
+        display_name = cfg.get("display_name", hotel_tag)
+        print(f"対象ホテル: {display_name} ({hotel_tag}) / source: {source}")
 
     all_asof_dates: list[pd.Timestamp] = []
 
@@ -289,15 +299,39 @@ def run_build_lt_for_gui(
 
 
 def main():
+    parser = argparse.ArgumentParser(description="LT_DATA CSV batch generator")
+    parser.add_argument(
+        "--source",
+        choices=["timeseries", "daily_snapshots"],
+        default="daily_snapshots",
+        help="LT_DATA build source (default: daily_snapshots)",
+    )
+    args = parser.parse_args()
+
     hotel_tag = DEFAULT_HOTEL_TAG
-    excel_path, display_name = _get_hotel_io_config(hotel_tag)
+    source = args.source
+    cfg = HOTEL_CONFIG.get(hotel_tag)
+    if cfg is None:
+        raise KeyError(f"Unknown hotel_tag: {hotel_tag!r}")
+    display_name = cfg.get("display_name", hotel_tag)
+
+    excel_path = None
+    if source == "timeseries":
+        excel_path, display_name = _get_hotel_io_config(hotel_tag)
 
     print("=== LT_DATA CSV 一括生成 ===")
-    print(f"対象ホテル: {display_name} ({hotel_tag}) / ファイル: {excel_path.name}")
+    if excel_path is None:
+        print(f"対象ホテル: {display_name} ({hotel_tag}) / source: {source}")
+    else:
+        print(f"対象ホテル: {display_name} ({hotel_tag}) / ファイル: {excel_path.name}")
     print(f"対象月シート: {', '.join(TARGET_MONTHS)}")
     print("")
 
-    run_build_lt_for_gui(hotel_tag=hotel_tag, target_months=TARGET_MONTHS)
+    run_build_lt_for_gui(
+        hotel_tag=hotel_tag,
+        target_months=TARGET_MONTHS,
+        source=source,
+    )
 
     print("\n=== 完了しました ===")
 

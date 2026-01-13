@@ -1657,7 +1657,14 @@ def get_daily_forecast_table(
     round_revenue_unit = float(rounding_units["revenue"])
 
     def _round_int_series(series: pd.Series) -> pd.Series:
-        return pd.to_numeric(series, errors="coerce").round().astype("Int64")
+        values = pd.to_numeric(series, errors="coerce")
+        mask = values.isna().to_numpy()
+        arr = values.to_numpy(dtype=float)
+        arr2 = np.where(mask, 0.0, arr)
+        rounded = np.rint(arr2).astype(np.int64, copy=False)
+        out_arr = pd.array(rounded, dtype="Int64")
+        out_arr[mask] = pd.NA
+        return pd.Series(out_arr, index=series.index, name=series.name)
 
     model_map = {
         "avg": ("forecast", "projected_rooms"),

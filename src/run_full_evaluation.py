@@ -9,9 +9,9 @@ import pandas as pd
 from booking_curve.config import HOTEL_CONFIG, OUTPUT_DIR
 from booking_curve.forecast_simple import (
     compute_market_pace_7d,
+    forecast_final_from_avg,
     forecast_final_from_pace14,
     forecast_final_from_pace14_market,
-    forecast_final_from_avg,
     forecast_month_from_recent90,
     moving_average_3months,
     moving_average_recent_90days,
@@ -72,9 +72,7 @@ def resolve_asof_dates_for_month(target_month: str) -> list[tuple[str, str]]:
     ]
 
 
-def get_history_months_around_asof(
-    as_of_ts: pd.Timestamp, months_back: int = 4, months_forward: int = 4
-) -> list[str]:
+def get_history_months_around_asof(as_of_ts: pd.Timestamp, months_back: int = 4, months_forward: int = 4) -> list[str]:
     center = as_of_ts.to_period("M")
     months: list[str] = []
     for offset in range(-months_back, months_forward + 1):
@@ -102,9 +100,7 @@ def _load_lt_data_csv(csv_path: Path, target_month: str, hotel_tag: str) -> pd.D
 
     if "stay_date" not in raw_df.columns:
         if raw_df.empty or raw_df.shape[1] == 0:
-            raise ValueError(
-                f"LT_DATA CSV missing stay_date column: {csv_path} (target_month={target_month}, hotel={hotel_tag})"
-            )
+            raise ValueError(f"LT_DATA CSV missing stay_date column: {csv_path} (target_month={target_month}, hotel={hotel_tag})")
         raw_df = raw_df.rename(columns={raw_df.columns[0]: "stay_date"})
 
     raw_df["stay_date"] = pd.to_datetime(raw_df["stay_date"], errors="coerce")
@@ -112,8 +108,7 @@ def _load_lt_data_csv(csv_path: Path, target_month: str, hotel_tag: str) -> pd.D
     if df.empty:
         sample = raw_df.head(3).to_dict(orient="list")
         raise ValueError(
-            f"LT_DATA CSV has no valid index rows after cleaning: {csv_path} "
-            f"(target_month={target_month}, hotel={hotel_tag}; head={sample})"
+            f"LT_DATA CSV has no valid index rows after cleaning: {csv_path} (target_month={target_month}, hotel={hotel_tag}; head={sample})"
         )
 
     df = df.set_index("stay_date")
@@ -136,10 +131,7 @@ def _load_lt_data_csv(csv_path: Path, target_month: str, hotel_tag: str) -> pd.D
 
     target_month_str = str(target_month).replace("-", "").replace("/", "")
     if len(target_month_str) < 6:
-        raise ValueError(
-            f"Invalid target_month format: {target_month} (expected YYYYMM) "
-            f"for hotel={hotel_tag}, file={csv_path}"
-        )
+        raise ValueError(f"Invalid target_month format: {target_month} (expected YYYYMM) for hotel={hotel_tag}, file={csv_path}")
     target_period = pd.Period(target_month_str[:6], freq="M")
     df_lt = df_lt.loc[df_lt.index.to_period("M") == target_period]
 
@@ -148,8 +140,7 @@ def _load_lt_data_csv(csv_path: Path, target_month: str, hotel_tag: str) -> pd.D
     if df_lt.empty:
         sample = raw_df.head(3).to_dict(orient="list")
         raise ValueError(
-            f"LT_DATA CSV has no valid index rows after cleaning: {csv_path} "
-            f"(target_month={target_month}, hotel={hotel_tag}; head={sample})"
+            f"LT_DATA CSV has no valid index rows after cleaning: {csv_path} (target_month={target_month}, hotel={hotel_tag}; head={sample})"
         )
 
     return df_lt
@@ -161,13 +152,9 @@ def load_lt_csv(month: str, hotel_tag: str) -> pd.DataFrame:
     try:
         return _load_lt_data_csv(file_path, target_month=month, hotel_tag=hotel_tag)
     except FileNotFoundError as exc:
-        raise FileNotFoundError(
-            f"LT_DATA CSV not found for month={month}, hotel={hotel_tag}: {file_path}"
-        ) from exc
+        raise FileNotFoundError(f"LT_DATA CSV not found for month={month}, hotel={hotel_tag}: {file_path}") from exc
     except ValueError as exc:
-        raise ValueError(
-            f"Invalid LT_DATA CSV for month={month}, hotel={hotel_tag}: {file_path}"
-        ) from exc
+        raise ValueError(f"Invalid LT_DATA CSV for month={month}, hotel={hotel_tag}: {file_path}") from exc
 
 
 def _get_actual_series(lt_df: pd.DataFrame, index: pd.Index) -> pd.Series:
@@ -188,9 +175,7 @@ def _get_actual_series(lt_df: pd.DataFrame, index: pd.Index) -> pd.Series:
     return actual_series
 
 
-def _build_projected_series(
-    lt_df: pd.DataFrame, forecasts: dict[pd.Timestamp, float], as_of_ts: pd.Timestamp
-) -> pd.Series:
+def _build_projected_series(lt_df: pd.DataFrame, forecasts: dict[pd.Timestamp, float], as_of_ts: pd.Timestamp) -> pd.Series:
     all_dates = pd.to_datetime(lt_df.index)
     all_dates = all_dates.sort_values()
 
@@ -217,9 +202,7 @@ def _infer_target_month(lt_df: pd.DataFrame) -> str:
     return f"{p.year}{p.month:02d}"
 
 
-def build_monthly_forecast(
-    lt_df: pd.DataFrame, model_name: str, as_of_date: str, hotel_tag: str
-) -> pd.Series:
+def build_monthly_forecast(lt_df: pd.DataFrame, model_name: str, as_of_date: str, hotel_tag: str) -> pd.Series:
     """
     Build a monthly forecast series (projected rooms per stay_date) for a given hotel.
 
@@ -241,9 +224,7 @@ def build_monthly_forecast(
     if model_name == "avg":
         history_months = get_avg_history_months(target_month=target_month, months_back=3)
     else:
-        history_months = get_history_months_around_asof(
-            as_of_ts=as_of_ts, months_back=4, months_forward=4
-        )
+        history_months = get_history_months_around_asof(as_of_ts=as_of_ts, months_back=4, months_forward=4)
 
     # 2) load history LT_DATA for the SAME hotel
     history_raw: dict[str, pd.DataFrame] = {}
@@ -423,9 +404,7 @@ def build_evaluation_detail(hotel_tag: str, target_months: list[str]) -> pd.Data
                 hotel_tag=hotel_tag,
             )
         except FileNotFoundError as exc:
-            raise FileNotFoundError(
-                f"{exc} (target_month={target_month}, hotel={hotel_tag})"
-            ) from exc
+            raise FileNotFoundError(f"{exc} (target_month={target_month}, hotel={hotel_tag})") from exc
         except ValueError as exc:
             raise ValueError(f"{exc} (target_month={target_month}, hotel={hotel_tag})") from exc
 
@@ -446,9 +425,7 @@ def build_evaluation_detail(hotel_tag: str, target_months: list[str]) -> pd.Data
                         hotel_tag=hotel_tag,
                     )
                 except Exception as exc:
-                    raise type(exc)(
-                        f"{exc} (target_month={target_month}, hotel={hotel_tag}, asof={asof_ts.date()}, model={model_name})"
-                    ) from exc
+                    raise type(exc)(f"{exc} (target_month={target_month}, hotel={hotel_tag}, asof={asof_ts.date()}, model={model_name})") from exc
 
                 forecast_series = pd.to_numeric(forecast_series, errors="coerce")
                 forecast_total_rooms = float(forecast_series.sum(skipna=True))
@@ -505,9 +482,7 @@ def build_evaluation_summary(df_detail: pd.DataFrame) -> pd.DataFrame:
     return df_summary.sort_values(by=["target_month", "model"]).reset_index(drop=True)
 
 
-def run_full_evaluation_for_range(
-    hotel_tag: str, target_months: list[str]
-) -> tuple[pd.DataFrame, pd.DataFrame, Path, Path]:
+def run_full_evaluation_for_range(hotel_tag: str, target_months: list[str]) -> tuple[pd.DataFrame, pd.DataFrame, Path, Path]:
     """
     指定ホテル・指定宿泊月リストについて評価を実行し、
     詳細・サマリの DataFrame と、それぞれの出力パスを返す。

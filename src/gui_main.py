@@ -11,8 +11,8 @@ import threading
 import time
 import tkinter as tk
 from datetime import date, datetime, timedelta
-from pathlib import Path
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Optional
 
@@ -104,6 +104,7 @@ def _safe_ratio(num: float | None, denom: float | None) -> float | None:
     if num is None or denom is None or denom == 0:
         return None
     return num / denom
+
 
 # プロジェクト内モジュール
 try:
@@ -886,9 +887,7 @@ class BookingCurveApp(tk.Tk):
             rooms_past = rooms_past.where(rooms_past.notna(), daily_rows.get("forecast_rooms"))
             pax_past = actual_pax_display.where(actual_pax_display.notna(), daily_rows.get("asof_oh_pax"))
             pax_past = pax_past.where(pax_past.notna(), daily_rows.get("forecast_pax"))
-            rev_past = daily_rows.get("revenue_oh_now").where(
-                daily_rows.get("revenue_oh_now").notna(), daily_rows.get("forecast_revenue")
-            )
+            rev_past = daily_rows.get("revenue_oh_now").where(daily_rows.get("revenue_oh_now").notna(), daily_rows.get("forecast_revenue"))
 
             projected_rooms = pd.Series(index=daily_rows.index, dtype=float)
             projected_pax = pd.Series(index=daily_rows.index, dtype=float)
@@ -2741,9 +2740,7 @@ class BookingCurveApp(tk.Tk):
         right_controls = ttk.Frame(control_frame)
         right_controls.grid(row=0, column=1, sticky="e")
 
-        ttk.Label(left_controls, text="予測範囲（月数）: (最新ASOF+90日固定)").grid(
-            row=0, column=0, sticky="w"
-        )
+        ttk.Label(left_controls, text="予測範囲（月数）: (最新ASOF+90日固定)").grid(row=0, column=0, sticky="w")
         self._topdown_horizon_var = tk.StringVar(value="3")
         horizon_spin = ttk.Spinbox(
             left_controls,
@@ -2770,9 +2767,7 @@ class BookingCurveApp(tk.Tk):
             command=self._rerender_topdown_if_panel_exists,
         ).grid(row=2, column=0, sticky="e")
 
-        ttk.Label(left_controls, text="表示モード:").grid(
-            row=1, column=0, sticky="w", pady=(4, 0)
-        )
+        ttk.Label(left_controls, text="表示モード:").grid(row=1, column=0, sticky="w", pady=(4, 0))
         self._topdown_view_mode_var = tk.StringVar(value="年度固定")
         view_mode_combo = ttk.Combobox(
             left_controls,
@@ -3038,6 +3033,7 @@ class BookingCurveApp(tk.Tk):
             lines_by_fy = {fy: _rotate_sequence(list(values), shift) for fy, values in lines_by_fy.items()}
             current_actual = _rotate_sequence(list(current_actual), shift)
             current_forecast = _rotate_sequence(list(current_forecast), shift)
+
             def _band_from_month_map(
                 months: list[str],
                 band_map: dict[str, tuple[float, float]],
@@ -3132,11 +3128,7 @@ class BookingCurveApp(tk.Tk):
                             last_actual_idx_orig = idx
             if last_actual_idx_orig is not None:
                 dashed_orig[last_actual_idx_orig] = orig_current_actual[last_actual_idx_orig]
-            if (
-                last_actual_idx_orig is not None
-                and first_forecast_idx_orig is not None
-                and first_forecast_idx_orig > last_actual_idx_orig + 1
-            ):
+            if last_actual_idx_orig is not None and first_forecast_idx_orig is not None and first_forecast_idx_orig > last_actual_idx_orig + 1:
                 start_value = orig_current_actual[last_actual_idx_orig]
                 end_value = orig_current_forecast[first_forecast_idx_orig]
                 if start_value is not None and end_value is not None:
@@ -3173,12 +3165,7 @@ class BookingCurveApp(tk.Tk):
             band_low = np.array([np.nan if v is None else float(v) for v in low])
             band_high = np.array([np.nan if v is None else float(v) for v in high])
             mask = np.isfinite(band_low) & np.isfinite(band_high)
-            if (
-                apply_anchor_mask
-                and view_mode_label == "年度固定"
-                and isinstance(anchor_idx, int)
-                and 0 <= anchor_idx < len(band_low)
-            ):
+            if apply_anchor_mask and view_mode_label == "年度固定" and isinstance(anchor_idx, int) and 0 <= anchor_idx < len(band_low):
                 mask &= np.arange(len(band_low)) >= anchor_idx
             if not mask.any():
                 return
@@ -3247,11 +3234,7 @@ class BookingCurveApp(tk.Tk):
                         months = segment.get("months", [])
                         segment_low = segment.get("low", [])
                         segment_high = segment.get("high", [])
-                        if not (
-                            isinstance(months, list)
-                            and isinstance(segment_low, list)
-                            and isinstance(segment_high, list)
-                        ):
+                        if not (isinstance(months, list) and isinstance(segment_low, list) and isinstance(segment_high, list)):
                             continue
                         mapped_points = []
                         for month_str, low_value, high_value in zip(months, segment_low, segment_high):
@@ -3291,6 +3274,7 @@ class BookingCurveApp(tk.Tk):
                 )
 
         if view_mode_label == "回転（対象月を中央寄せ）":
+
             def _month_from_label(label_value: object) -> int | None:
                 if not isinstance(label_value, str):
                     return None
@@ -3991,7 +3975,7 @@ class BookingCurveApp(tk.Tk):
             logging.exception("Forecast input data not found")
             messagebox.showerror(
                 "エラー",
-                f"Forecast実行に必要な LT_DATA が見つかりません。\n(ログファイル: gui_app.log)",
+                "Forecast実行に必要な LT_DATA が見つかりません。\n(ログファイル: gui_app.log)",
             )
             _offer_open_logs_dir("ログ確認")
             return
@@ -3999,7 +3983,7 @@ class BookingCurveApp(tk.Tk):
             logging.exception("Forecast execution failed")
             messagebox.showerror(
                 "エラー",
-                f"Forecast実行に失敗しました。\n(ログファイル: gui_app.log)",
+                "Forecast実行に失敗しました。\n(ログファイル: gui_app.log)",
             )
             _offer_open_logs_dir("ログ確認")
             return

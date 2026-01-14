@@ -45,6 +45,7 @@ from run_full_evaluation import resolve_asof_dates_for_month, run_full_evaluatio
 
 _EVALUATION_DETAIL_CACHE: dict[str, tuple[float, pd.DataFrame]] = {}
 _TOPDOWN_ACT_CACHE: dict[str, tuple[float, pd.DataFrame]] = {}
+logger = logging.getLogger(__name__)
 
 
 def _drop_all_na_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -903,7 +904,12 @@ def run_forecast_for_gui(
         if period is not None:
             month_end = period.end_time.normalize()
             if asof_norm > month_end:
-                print(f"[SKIP] target_month settled: {ym} (as_of={asof_norm.date()})")
+                logger.info(
+                    "Skipping settled target month forecast: hotel_tag=%s target_month=%s as_of=%s",
+                    hotel_tag,
+                    ym,
+                    asof_norm.date(),
+                )
                 continue
         phase_factor = None
         if phase_factors:

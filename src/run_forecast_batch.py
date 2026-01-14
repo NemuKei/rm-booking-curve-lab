@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -18,6 +19,8 @@ from booking_curve.forecast_simple import (
     moving_average_recent_90days_weighted,
 )
 from booking_curve.plot_booking_curve import filter_by_weekday
+
+logger = logging.getLogger(__name__)
 
 # ===== 設定ここから =====
 HOTEL_TAG = "daikokucho"
@@ -157,7 +160,11 @@ def _should_skip_forecast(target_month: str, as_of_date: str) -> bool:
 
     month_end = period.end_time.normalize()
     if as_of_ts.normalize() > month_end:
-        print(f"[SKIP] target_month settled: {target_month} (as_of={as_of_ts.normalize().date()})")
+        logger.info(
+            "[SKIP] target_month settled: %s (as_of=%s)",
+            target_month,
+            as_of_ts.normalize().date(),
+        )
         return True
 
     return False
@@ -701,6 +708,42 @@ def _merge_pace14_details(
     return out_df
 
 
+def _log_no_forecasts(
+    *,
+    target_month: str,
+    as_of_date: str,
+    hotel_tag: str,
+    value_type: str,
+    df_target: pd.DataFrame | None,
+    df_target_pax: pd.DataFrame | None,
+    history_raw: dict[str, pd.DataFrame] | None,
+    history_raw_pax: dict[str, pd.DataFrame] | None,
+    all_forecasts: dict[pd.Timestamp, float] | None,
+    all_forecasts_pax: dict[pd.Timestamp, float] | None,
+) -> None:
+    df_target_rows = len(df_target) if df_target is not None else 0
+    df_target_pax_status = "None" if df_target_pax is None else f"rows={len(df_target_pax)}"
+    history_raw_count = len(history_raw) if history_raw is not None else 0
+    history_raw_pax_count = len(history_raw_pax) if history_raw_pax is not None else 0
+    all_forecasts_count = len(all_forecasts) if all_forecasts is not None else 0
+    all_forecasts_pax_count = len(all_forecasts_pax) if all_forecasts_pax is not None else 0
+    logger.warning(
+        "No forecasts were generated. target_month=%s as_of_date=%s hotel_tag=%s "
+        "value_type=%s df_target_rows=%s df_target_pax=%s history_raw_count=%s "
+        "history_raw_pax_count=%s all_forecasts_count=%s all_forecasts_pax_count=%s",
+        target_month,
+        as_of_date,
+        hotel_tag,
+        value_type,
+        df_target_rows,
+        df_target_pax_status,
+        history_raw_count,
+        history_raw_pax_count,
+        all_forecasts_count,
+        all_forecasts_pax_count,
+    )
+
+
 def run_avg_forecast(
     target_month: str,
     as_of_date: str,
@@ -737,7 +780,7 @@ def run_avg_forecast(
     history_raw_pax = _load_history_raw(history_months, hotel_tag, value_type="pax")
 
     if not history_raw:
-        print(f"[avg] No history LT_DATA for target_month={target_month}")
+        logger.info("[avg] No history LT_DATA for target_month=%s", target_month)
 
     as_of_ts = pd.to_datetime(as_of_date)
     if pax_capacity is None:
@@ -805,7 +848,18 @@ def run_avg_forecast(
                 all_forecasts_pax[stay_date] = value
 
     if not all_forecasts:
-        print("No forecasts were generated. Check settings or data.")
+        _log_no_forecasts(
+            target_month=target_month,
+            as_of_date=as_of_date,
+            hotel_tag=hotel_tag,
+            value_type="rooms",
+            df_target=df_target,
+            df_target_pax=df_target_pax,
+            history_raw=history_raw,
+            history_raw_pax=history_raw_pax,
+            all_forecasts=all_forecasts,
+            all_forecasts_pax=all_forecasts_pax,
+        )
 
     out_df = _prepare_output(df_target, all_forecasts, as_of_ts)
     if df_target_pax is not None:
@@ -831,7 +885,7 @@ def run_avg_forecast(
     out_path = Path(OUTPUT_DIR) / out_name
 
     out_df.to_csv(out_path, index=True)
-    print(f"[OK] Forecast exported to {out_path}")
+    logger.info("[OK] Forecast exported to %s", out_path)
 
 
 def run_recent90_forecast(
@@ -864,7 +918,7 @@ def run_recent90_forecast(
     history_raw_pax = _load_history_raw(history_months, hotel_tag, value_type="pax")
 
     if not history_raw:
-        print(f"[recent90] No history LT_DATA for as_of={as_of_date}")
+        logger.info("[recent90] No history LT_DATA for as_of=%s", as_of_date)
 
     df_target = load_lt_csv(target_month, hotel_tag=hotel_tag, value_type="rooms")
     df_target_pax: pd.DataFrame | None
@@ -956,7 +1010,18 @@ def run_recent90_forecast(
                 all_forecasts_pax[stay_date] = value
 
     if not all_forecasts:
-        print("No forecasts were generated. Check settings or data.")
+        _log_no_forecasts(
+            target_month=target_month,
+            as_of_date=as_of_date,
+            hotel_tag=hotel_tag,
+            value_type="rooms",
+            df_target=df_target,
+            df_target_pax=df_target_pax,
+            history_raw=history_raw,
+            history_raw_pax=history_raw_pax,
+            all_forecasts=all_forecasts,
+            all_forecasts_pax=all_forecasts_pax,
+        )
 
     out_df = forecast_month_from_recent90(
         df_target=df_target,
@@ -987,7 +1052,7 @@ def run_recent90_forecast(
     out_path = Path(OUTPUT_DIR) / out_name
 
     out_df.to_csv(out_path, index=True)
-    print(f"[OK] Forecast exported to {out_path}")
+    logger.info("[OK] Forecast exported to %s", out_path)
 
 
 def run_recent90_weighted_forecast(
@@ -1024,7 +1089,7 @@ def run_recent90_weighted_forecast(
     history_raw_pax = _load_history_raw(history_months, hotel_tag, value_type="pax")
 
     if not history_raw:
-        print(f"[recent90_weighted] No history LT_DATA for as_of={as_of}")
+        logger.info("[recent90_weighted] No history LT_DATA for as_of=%s", as_of)
 
     df_target = load_lt_csv(target_month, hotel_tag=hotel_tag, value_type="rooms")
     df_target_pax: pd.DataFrame | None
@@ -1119,7 +1184,18 @@ def run_recent90_weighted_forecast(
                 all_forecasts_pax[stay_date] = value
 
     if not all_forecasts:
-        print(f"[recent90_weighted] No forecasts for {target_month} as_of={as_of}")
+        _log_no_forecasts(
+            target_month=target_month,
+            as_of_date=as_of,
+            hotel_tag=hotel_tag,
+            value_type="rooms",
+            df_target=df_target,
+            df_target_pax=df_target_pax,
+            history_raw=history_raw,
+            history_raw_pax=history_raw_pax,
+            all_forecasts=all_forecasts,
+            all_forecasts_pax=all_forecasts_pax,
+        )
 
     out_df = forecast_month_from_recent90(
         df_target=df_target,
@@ -1148,7 +1224,7 @@ def run_recent90_weighted_forecast(
     out_name = f"forecast_recent90w_{target_month}_{hotel_tag}_asof_{as_of}.csv"
     out_path = Path(OUTPUT_DIR) / out_name
     out_df.to_csv(out_path, index=True)
-    print(f"[recent90_weighted][OK] {out_path}")
+    logger.info("[recent90_weighted][OK] %s", out_path)
 
 
 def run_pace14_forecast(
@@ -1178,7 +1254,7 @@ def run_pace14_forecast(
     history_raw_pax = _load_history_raw(history_months, hotel_tag, value_type="pax")
 
     if not history_raw:
-        print(f"[pace14] No history LT_DATA for as_of={as_of_date}")
+        logger.info("[pace14] No history LT_DATA for as_of=%s", as_of_date)
 
     df_target = load_lt_csv(target_month, hotel_tag=hotel_tag, value_type="rooms")
     df_target_pax: pd.DataFrame | None
@@ -1276,7 +1352,18 @@ def run_pace14_forecast(
                 all_forecasts_pax[stay_date] = value
 
     if not all_forecasts:
-        print("No forecasts were generated. Check settings or data.")
+        _log_no_forecasts(
+            target_month=target_month,
+            as_of_date=as_of_date,
+            hotel_tag=hotel_tag,
+            value_type="rooms",
+            df_target=df_target,
+            df_target_pax=df_target_pax,
+            history_raw=history_raw,
+            history_raw_pax=history_raw_pax,
+            all_forecasts=all_forecasts,
+            all_forecasts_pax=all_forecasts_pax,
+        )
 
     out_df = _prepare_output(df_target, all_forecasts, as_of_ts)
     if detail_frames:
@@ -1305,7 +1392,7 @@ def run_pace14_forecast(
     out_path = Path(OUTPUT_DIR) / out_name
 
     out_df.to_csv(out_path, index=True)
-    print(f"[OK] Forecast exported to {out_path}")
+    logger.info("[OK] Forecast exported to %s", out_path)
 
 
 def run_pace14_market_forecast(
@@ -1335,7 +1422,7 @@ def run_pace14_market_forecast(
     history_raw_pax = _load_history_raw(history_months, hotel_tag, value_type="pax")
 
     if not history_raw:
-        print(f"[pace14_market] No history LT_DATA for as_of={as_of_date}")
+        logger.info("[pace14_market] No history LT_DATA for as_of=%s", as_of_date)
 
     df_target = load_lt_csv(target_month, hotel_tag=hotel_tag, value_type="rooms")
     df_target_pax: pd.DataFrame | None
@@ -1464,7 +1551,18 @@ def run_pace14_market_forecast(
                 all_forecasts_pax[stay_date] = value
 
     if not all_forecasts:
-        print("No forecasts were generated. Check settings or data.")
+        _log_no_forecasts(
+            target_month=target_month,
+            as_of_date=as_of_date,
+            hotel_tag=hotel_tag,
+            value_type="rooms",
+            df_target=df_target,
+            df_target_pax=df_target_pax,
+            history_raw=history_raw,
+            history_raw_pax=history_raw_pax,
+            all_forecasts=all_forecasts,
+            all_forecasts_pax=all_forecasts_pax,
+        )
 
     out_df = _prepare_output(df_target, all_forecasts, as_of_ts)
     if detail_frames:
@@ -1495,29 +1593,29 @@ def run_pace14_market_forecast(
     out_path = Path(OUTPUT_DIR) / out_name
 
     out_df.to_csv(out_path, index=True)
-    print(f"[OK] Forecast exported to {out_path}")
+    logger.info("[OK] Forecast exported to %s", out_path)
 
 
 def main() -> None:
     for target_month in TARGET_MONTHS:
         asof_list = get_asof_dates_for_month(target_month)
         for as_of in asof_list:
-            print(f"[avg]       target={target_month} as_of={as_of}")
+            logger.info("[avg]       target=%s as_of=%s", target_month, as_of)
             run_avg_forecast(target_month, as_of)
 
-            print(f"[recent90]  target={target_month} as_of={as_of}")
+            logger.info("[recent90]  target=%s as_of=%s", target_month, as_of)
             run_recent90_forecast(target_month, as_of)
 
-            print(f"[recent90w] target={target_month} as_of={as_of}")
+            logger.info("[recent90w] target=%s as_of=%s", target_month, as_of)
             run_recent90_weighted_forecast(target_month, as_of)
 
-            print(f"[pace14]   target={target_month} as_of={as_of}")
+            logger.info("[pace14]   target=%s as_of=%s", target_month, as_of)
             run_pace14_forecast(target_month, as_of)
 
-            print(f"[pace14m]  target={target_month} as_of={as_of}")
+            logger.info("[pace14m]  target=%s as_of=%s", target_month, as_of)
             run_pace14_market_forecast(target_month, as_of)
 
-    print("=== batch forecast finished ===")
+    logger.info("=== batch forecast finished ===")
 
 
 if __name__ == "__main__":

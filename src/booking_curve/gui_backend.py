@@ -12,6 +12,7 @@ import pandas as pd
 import build_calendar_features
 import run_build_lt_csv
 import run_forecast_batch
+from booking_curve import monthly_rounding
 from booking_curve.config import HOTEL_CONFIG, OUTPUT_DIR, get_hotel_rounding_units
 from booking_curve.daily_snapshots import (
     get_daily_snapshots_path,
@@ -30,7 +31,6 @@ from booking_curve.forecast_simple import (
     moving_average_recent_90days,
     moving_average_recent_90days_weighted,
 )
-from booking_curve import monthly_rounding
 from booking_curve.missing_report import build_missing_report, find_unconverted_raw_pairs
 from booking_curve.pms_adapter_nface import (
     build_daily_snapshots_fast,
@@ -1185,10 +1185,7 @@ def build_topdown_revpar_panel(
 
     months_order = [(fiscal_year_start_month + offset - 1) % 12 + 1 for offset in range(12)]
     fiscal_month_labels = [f"{month}月" for month in months_order]
-    fiscal_month_strs = [
-        f"{current_fy if month >= fiscal_year_start_month else current_fy + 1}{month:02d}"
-        for month in months_order
-    ]
+    fiscal_month_strs = [f"{current_fy if month >= fiscal_year_start_month else current_fy + 1}{month:02d}" for month in months_order]
     target_month_idx = months_order.index(target_period.month)
 
     monthly_actual = _get_topdown_actual_monthly_revenue(hotel_tag)
@@ -1517,8 +1514,7 @@ def build_topdown_revpar_panel(
                 future_months = [
                     month_str
                     for month_str in (fiscal_month_strs + rotation_month_strs)
-                    if pd.Period(month_str, freq="M") > last_forecast_period
-                    and month_str in band_by_month_prev_anchor
+                    if pd.Period(month_str, freq="M") > last_forecast_period and month_str in band_by_month_prev_anchor
                 ]
                 future_months = sorted(
                     future_months,

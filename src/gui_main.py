@@ -12,6 +12,7 @@ import time
 import tkinter as tk
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from logging.handlers import RotatingFileHandler
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Optional
 
@@ -40,6 +41,69 @@ from build_daily_snapshots_from_folder import (
     count_excel_files,
     load_historical_full_all_rate,
 )
+
+
+def _setup_gui_logging() -> None:
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    log_path = (LOGS_DIR / "gui_app.log").resolve()
+    root_logger = logging.getLogger()
+
+    for handler in root_logger.handlers:
+        if not isinstance(handler, RotatingFileHandler):
+            continue
+        handler_path = getattr(handler, "baseFilename", None)
+        if not handler_path:
+            continue
+        if Path(handler_path).resolve() == log_path:
+            return
+
+    handler = RotatingFileHandler(
+        log_path,
+        maxBytes=1_000_000,
+        backupCount=5,
+        encoding="utf-8",
+    )
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s - %(message)s")
+    handler.setFormatter(formatter)
+    root_logger.addHandler(handler)
+    root_logger.setLevel(logging.INFO)
+
+
+def _offer_open_logs_dir(title: str) -> None:
+    should_open = messagebox.askyesno(
+        title,
+        "エラーが発生しました。ログフォルダを開きますか？\n(ログファイル: gui_app.log)",
+    )
+    if not should_open:
+        return
+    try:
+        if sys.platform.startswith("win"):
+            os.startfile(str(LOGS_DIR))  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.run(["open", str(LOGS_DIR)], check=False)
+        else:
+            subprocess.run(["xdg-open", str(LOGS_DIR)], check=False)
+    except Exception:
+        logging.exception("Failed to open logs directory")
+
+
+def open_file(path: str | Path) -> None:
+    path_obj = Path(path)
+    path_str = str(path_obj)
+    if sys.platform.startswith("win"):
+        os.startfile(path_str)  # type: ignore[attr-defined]
+        return
+
+    if sys.platform == "darwin":
+        subprocess.run(["open", path_str], check=False)
+    else:
+        subprocess.run(["xdg-open", path_str], check=False)
+
+
+def _safe_ratio(num: float | None, denom: float | None) -> float | None:
+    if num is None or denom is None or denom == 0:
+        return None
+    return num / denom
 
 # プロジェクト内モジュール
 try:
@@ -74,8 +138,9 @@ except Exception as exc:
     root.withdraw()
     messagebox.showerror(
         "起動エラー",
-        f"booking_curve.config の読み込みに失敗しました。\n{exc}\n\nログ: {log_hint}",
+        "booking_curve.config の読み込みに失敗しました。\nログファイル: startup_init.log",
     )
+    _offer_open_logs_dir("ログ確認")
     root.destroy()
     sys.exit(1)
 
@@ -121,8 +186,9 @@ except Exception as exc:
     root.withdraw()
     messagebox.showerror(
         "起動エラー",
-        f"booking_curve.gui_backend の読み込みに失敗しました。\n{exc}\n\nログ: {STARTUP_INIT_LOG_PATH}",
+        "booking_curve.gui_backend の読み込みに失敗しました。\nログファイル: startup_init.log",
     )
+    _offer_open_logs_dir("ログ確認")
     root.destroy()
     sys.exit(1)
 
@@ -141,38 +207,22 @@ UI_SECTION_PADX = 6
 UI_SECTION_PADY = 4
 
 
-def _safe_ratio(num: float | None, denom: float | None) -> float | None:
-    if num is None or denom is None or denom == 0:
-        return None
-    return num / denom
-
-
-def open_file(path: str | Path) -> None:
-    path_obj = Path(path)
-    path_str = str(path_obj)
-    if sys.platform.startswith("win"):
-        os.startfile(path_str)  # type: ignore[attr-defined]
-        return
-
-    if sys.platform == "darwin":
-        subprocess.run(["open", path_str], check=False)
-    else:
-        subprocess.run(["xdg-open", path_str], check=False)
-
-
 class BookingCurveApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("Booking Curve Lab GUI")
         self.geometry("1200x900")
+        _setup_gui_logging()
+        logging.info("GUI started")
 
         init_errors = pop_runtime_init_errors()
         if init_errors:
             details = "\n".join(init_errors)
             messagebox.showerror(
                 "初期化エラー",
-                f"{details}\n\nログ: {STARTUP_INIT_LOG_PATH}",
+                f"{details}\n\nログファイル: startup_init.log",
             )
+            _offer_open_logs_dir("ログ確認")
 
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill=tk.BOTH, expand=True)
@@ -3912,6 +3962,21 @@ class BookingCurveApp(tk.Tk):
         phase_factors = {month: phase_factor} if phase_factor is not None else None
 
         try:
+            phase_label = override.get("phase", "unknown") if isinstance(override, dict) else "none"
+            strength_label = override.get("strength", "unknown") if isinstance(override, dict) else "none"
+            logging.info(
+                "Forecast inputs: hotel=%s, target_months=%s, asof=%s, model=%s, capacity=%s, pax_capacity=%s, "
+                "phase_override=%s, strength=%s, clip_pct=%s",
+                hotel,
+                target_months,
+                asof,
+                model,
+                forecast_cap,
+                pax_capacity,
+                phase_label,
+                strength_label,
+                clip_pct,
+            )
             run_forecast_for_gui(
                 hotel_tag=hotel,
                 target_months=target_months,
@@ -3922,11 +3987,21 @@ class BookingCurveApp(tk.Tk):
                 phase_factors=phase_factors,
                 phase_clip_pct=clip_pct,
             )
-        except FileNotFoundError as e:
-            messagebox.showerror("エラー", f"Forecast実行に必要な LT_DATA が見つかりません:\n{e}")
+        except FileNotFoundError:
+            logging.exception("Forecast input data not found")
+            messagebox.showerror(
+                "エラー",
+                f"Forecast実行に必要な LT_DATA が見つかりません。\n(ログファイル: gui_app.log)",
+            )
+            _offer_open_logs_dir("ログ確認")
             return
-        except Exception as e:
-            messagebox.showerror("エラー", f"Forecast実行に失敗しました:\n{e}")
+        except Exception:
+            logging.exception("Forecast execution failed")
+            messagebox.showerror(
+                "エラー",
+                f"Forecast実行に失敗しました。\n(ログファイル: gui_app.log)",
+            )
+            _offer_open_logs_dir("ログ確認")
             return
 
         self._set_daily_caps_for_hotel(hotel, forecast_cap, occ_capacity, pax_capacity)

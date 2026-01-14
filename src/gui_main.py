@@ -2506,9 +2506,12 @@ class BookingCurveApp(tk.Tk):
                     "month": "",
                     "phase_var": phase_var,
                     "strength_var": strength_var,
+                    "phase_combo": phase_combo,
+                    "strength_combo": strength_combo,
                 }
             )
             self.df_phase_month_labels.append(month_label)
+            self._update_phase_strength_combo_state(self.df_phase_entries[-1])
 
         summary_controls = ttk.Frame(frame)
         summary_controls.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, 0))
@@ -3608,6 +3611,17 @@ class BookingCurveApp(tk.Tk):
             return 1.0 + bias
         return 1.0
 
+    def _update_phase_strength_combo_state(self, entry: dict) -> None:
+        strength_combo = entry.get("strength_combo")
+        if strength_combo is None:
+            return
+        phase = entry.get("phase_var").get()
+        if phase == "中立":
+            entry.get("strength_var").set("中")
+            strength_combo.configure(state="disabled")
+        else:
+            strength_combo.configure(state="readonly")
+
     def _refresh_phase_overrides_ui(self) -> None:
         if not hasattr(self, "df_phase_entries"):
             return
@@ -3635,6 +3649,7 @@ class BookingCurveApp(tk.Tk):
 
                 entry["phase_var"].set(phase)
                 entry["strength_var"].set(strength)
+                self._update_phase_strength_combo_state(entry)
         finally:
             self._phase_override_loading = False
 
@@ -3662,6 +3677,10 @@ class BookingCurveApp(tk.Tk):
                 continue
             phase = entry["phase_var"].get()
             strength = entry["strength_var"].get()
+            if phase == "中立":
+                strength = "中"
+                entry["strength_var"].set(strength)
+            self._update_phase_strength_combo_state(entry)
             hotel_overrides[month] = {"phase": phase, "strength": strength}
 
         write_phase_overrides(self._phase_overrides)

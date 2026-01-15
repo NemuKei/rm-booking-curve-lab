@@ -43,6 +43,47 @@ from build_daily_snapshots_from_folder import (
 )
 
 
+def _find_project_root() -> Path:
+    icon_rel_path = Path("assets/icon/BookingCurveLab.ico")
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        if (parent / icon_rel_path).exists():
+            return parent
+    return current.parent
+
+
+def _resource_path(rel: Path) -> Path:
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS) / rel  # type: ignore[attr-defined]
+    return _find_project_root() / rel
+
+
+def _set_windows_appusermodel_id(app_id: str) -> None:
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+    except Exception:
+        return
+
+
+def _apply_window_icon(window: tk.Tk | tk.Toplevel) -> None:
+    if not sys.platform.startswith("win"):
+        return
+    icon_path = _resource_path(Path("assets/icon/BookingCurveLab.ico"))
+    if not icon_path.exists():
+        return
+    try:
+        window.iconbitmap(str(icon_path))
+    except Exception:
+        return
+
+
+_set_windows_appusermodel_id("worldheritage.BookingCurveLab")
+
+
 def _setup_gui_logging() -> None:
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
     log_path = (LOGS_DIR / "gui_app.log").resolve()
@@ -136,6 +177,7 @@ except Exception as exc:
     except Exception:
         pass
     root = tk.Tk()
+    _apply_window_icon(root)
     root.withdraw()
     messagebox.showerror(
         "起動エラー",
@@ -184,6 +226,7 @@ except Exception as exc:
     except Exception:
         pass
     root = tk.Tk()
+    _apply_window_icon(root)
     root.withdraw()
     messagebox.showerror(
         "起動エラー",
@@ -211,6 +254,7 @@ UI_SECTION_PADY = 4
 class BookingCurveApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
+        _apply_window_icon(self)
         self.title("Booking Curve Lab GUI")
         self.geometry("1200x900")
         _setup_gui_logging()

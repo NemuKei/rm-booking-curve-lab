@@ -286,3 +286,73 @@
   * docs/spec_data_layer.md: hotels.json等の設定項目追加方針追記予定
   * docs/spec_evaluation.md: 影響なし（原則不要）
 * Status: 未反映
+
+## D-20260110-XXX TopDown予測範囲は「最新ASOF+90日後にかかる月まで」＋描画対象は“全日程揃い”のみ
+
+* Decision:
+
+  * TopDown RevPAR の予測範囲上限は「最新ASOF + 90日後にかかる月まで」とする。
+  * TopDownで描画・比較に使う月は「日別Forecastが全日程分そろう月のみ」とし、CSVが出ていても一部日程のみの月（INCOMPLETE）は除外する。
+* Why:
+
+  * CSV出力の有無だけでは不完全予測（月内欠損）が混入し、スパイク等の誤読・誤判断を招くため。
+* Spec link:
+
+  * docs/spec_overview.md: TopDown RevPAR（予測範囲の定義・表示対象月の条件）追記
+  * docs/spec_models.md: 影響なし
+  * docs/spec_data_layer.md: INCOMPLETE判定（全日程未充足）の定義と、可視化/比較からの除外ルール追記
+  * docs/spec_evaluation.md: 影響なし
+* Status: 未反映
+
+## D-20260110-XXX 回転モードは「再計算なしの再描画」で切替する
+
+* Decision:
+
+  * TopDown RevPAR の表示モード「回転」は、再計算を伴わない再描画（表示だけ切替）とする。
+* Why:
+
+  * 再計算は待ち時間・不具合・運用ロスを増やす一方、回転は表現上の切替であり結果差異を生まないため。
+* Spec link:
+
+  * docs/spec_overview.md: TopDown RevPAR（表示モード切替の挙動：再計算有無）追記
+  * docs/spec_models.md: 影響なし
+  * docs/spec_data_layer.md: 影響なし
+  * docs/spec_evaluation.md: 影響なし
+* Status: 未反映
+
+## D-20260110-XXX p10–p90帯はA/Cの二本立て（ハイブリッド表示）を正式採用
+
+* Decision:
+
+  * p10–p90帯は二系統で扱う：
+
+    * A：直近着地月アンカー帯
+    * C：前月アンカー帯
+  * UIは「同時表示」または「片方のみ表示」を選べる（ハイブリッド運用）とする。
+* Why:
+
+  * 3ヶ月予測運用では、当月基準（A）だけでなく前月起点のレンジ（C）も意思決定に必要で、単一帯だと解釈が固定されるため。
+* Spec link:
+
+  * docs/spec_overview.md: TopDown RevPAR（p10–p90帯A/Cの意味・表示ルール）追記
+  * docs/spec_models.md: 影響なし
+  * docs/spec_data_layer.md: p10–p90算出に使う分布（過去年の月次比率分布）とアンカー入力（着地/Fc）を明記する追記
+  * docs/spec_evaluation.md: 影響なし
+* Status: 未反映
+
+## D-20260110-XXX 前月アンカー（C）は「前月が予測でもOK」＋予測欠損は“最後の予測”を起点に延長
+
+* Decision:
+
+  * 前月アンカー帯（C）のアンカーは「前月が予測値でも可」とする（確定月に限定しない）。
+  * 予測が存在しない期間は「直近で存在する最後の予測」を起点として帯を延長してよい。
+* Why:
+
+  * 予測レンジの解釈を“予測の連鎖”として扱う運用ニーズがあり、確定月限定だと帯が途切れて運用価値が落ちるため。
+* Spec link:
+
+  * docs/spec_overview.md: p10–p90帯C（前月アンカー）のアンカー定義と欠損時挙動追記
+  * docs/spec_models.md: 影響なし
+  * docs/spec_data_layer.md: 「予測欠損」と「最後の予測」の扱い（可視化側の補完ルール）追記
+  * docs/spec_evaluation.md: 影響なし
+* Status: 未反映

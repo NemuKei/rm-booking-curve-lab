@@ -81,7 +81,7 @@ def _apply_window_icon(window: tk.Tk | tk.Toplevel) -> None:
         return
 
 
-_set_windows_appusermodel_id("worldheritage.BookingCurveLab")
+_set_windows_appusermodel_id("BookingCurveLab.GUIApp")
 
 
 def _setup_gui_logging() -> None:

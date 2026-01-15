@@ -51,3 +51,12 @@ python make_release_zip.py --profile full --with-output-samples
 
 
 
+まず確認（壊さずプレビュー）
+python tools/assign_decision_ids.py --verbose
+
+実際に書き換え
+python tools/assign_decision_ids.py --in-place --verbose
+
+“XXX残ってたらリリース禁止”に使うチェック
+python tools/assign_decision_ids.py --check-only
+

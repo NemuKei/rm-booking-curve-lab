@@ -81,7 +81,9 @@ def _apply_window_icon(window: tk.Tk | tk.Toplevel) -> None:
         return
 
 
-_set_windows_appusermodel_id("BookingCurveLab.GUIApp")
+_env_app_id = os.environ.get("BOOKING_CURVE_APP_ID")
+if _env_app_id:
+    _set_windows_appusermodel_id(_env_app_id)
 
 
 def _setup_gui_logging() -> None:

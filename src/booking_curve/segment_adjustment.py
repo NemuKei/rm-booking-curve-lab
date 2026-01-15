@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from booking_curve.config import OUTPUT_DIR
@@ -17,6 +18,15 @@ def _load_calendar(hotel_tag: str) -> pd.DataFrame:
     cal["date"] = pd.to_datetime(cal["date"])
     cal = cal.set_index("date")
     return cal
+
+
+def _round_int_series(series: pd.Series) -> pd.Series:
+    values = pd.to_numeric(series, errors="coerce")
+    mask = values.isna()
+    rounded = np.rint(values.fillna(0).to_numpy(dtype=float)).astype(np.int64, copy=False)
+    result = pd.array(rounded, dtype="Int64")
+    result[mask.to_numpy()] = pd.NA
+    return pd.Series(result, index=series.index, name=series.name)
 
 
 def apply_segment_adjustment(forecast_df: pd.DataFrame, hotel_tag: str) -> pd.DataFrame:
@@ -42,10 +52,14 @@ def apply_segment_adjustment(forecast_df: pd.DataFrame, hotel_tag: str) -> pd.Da
 
     factor = pd.Series(1.0, index=df.index)
 
-    mask_middle_long = (df["holiday_block_len"] >= 3) & (df["holiday_position"] == "middle")
-    factor.loc[mask_middle_long] = 0.98
+    if "holiday_block_len" in df.columns and "holiday_position" in df.columns:
+        holiday_block_len = pd.to_numeric(df["holiday_block_len"], errors="coerce").fillna(0)
+        holiday_position = df["holiday_position"].fillna("")
+        mask_middle_long = (holiday_block_len >= 3) & (holiday_position == "middle")
+        factor.loc[mask_middle_long] = 0.98
 
-    adjusted = (df["projected_rooms"] * factor).round().astype(int)
+    projected = pd.to_numeric(df["projected_rooms"], errors="coerce")
+    adjusted = _round_int_series(projected * factor)
     df["adjusted_projected_rooms"] = adjusted
 
     out_cols = list(forecast_df.columns)

@@ -37,12 +37,18 @@ BookingCurveLab の主目的は、ホテルの PMS から取得したオンハ�
 各ホテルについて、以下の情報を保持します。
 
 - `display_name`：GUI に表示する名称
-- `data_subdir`：PMS 時系列データや生データを置くサブフォルダ
 - `capacity`：理論最大稼働室数
 - `forecast_cap`：予測時に上限として用いる稼働室数（安全マージン込み）
 - `raw_root_dir`：RAW Excel の取り込み元フォルダ（唯一の正）
 - `include_subfolders`：サブフォルダも探索対象にするか
 - `adapter_type`：PMSアダプタ種別（現状は nface）
+- `data_subdir`：PMS 時系列データ（legacy: timeseries）を置くサブフォルダ（※ daily snapshots ルートでは必須ではない）
+- `timeseries_file`：PMS 時系列データ（legacy）のファイル名（※ daily snapshots ルートでは必須ではない）
+
+必須キーの扱いは **データソース（source）により異なる**。
+
+- `source="daily_snapshots"`：`data_subdir` / `timeseries_file` が未設定（空）でも処理可能（timeseries は参照しない）
+- `source="timeseries"`：`data_subdir` / `timeseries_file` は必須。欠けている／空の場合は安全側に STOP する（推測で続行しない）
 
 これらは「外部仕様」として扱い、互換性を壊す変更は行わない方針です。
 hotels.json が欠けている／必須キー不足の場合は 安全側に STOP し、推測で続行しない

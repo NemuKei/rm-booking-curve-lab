@@ -20,6 +20,7 @@ INCLUDE_GLOBS = [
     "requirements.txt",
     "README.md",
     "AGENTS.md",
+    "make_release_zip.py",
 ]
 
 # 「サンプル出力」を入れるときだけ追加する（git管理外でも入る想定）

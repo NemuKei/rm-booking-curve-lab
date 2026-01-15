@@ -6,16 +6,19 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import numpy as np
 import pandas as pd
 
 import build_calendar_features
 import run_build_lt_csv
 import run_forecast_batch
-from booking_curve.config import HOTEL_CONFIG, OUTPUT_DIR
+from booking_curve import monthly_rounding
+from booking_curve.config import HOTEL_CONFIG, OUTPUT_DIR, get_hotel_rounding_units
 from booking_curve.daily_snapshots import (
     get_daily_snapshots_path,
     get_latest_asof_date,
     list_stay_months_from_daily_snapshots,
+    read_daily_snapshots,
     read_daily_snapshots_for_month,
     rebuild_asof_dates_from_daily_snapshots,
 )
@@ -41,6 +44,12 @@ from booking_curve.utils import apply_nocb_along_lt
 from run_full_evaluation import resolve_asof_dates_for_month, run_full_evaluation_for_gui
 
 _EVALUATION_DETAIL_CACHE: dict[str, tuple[float, pd.DataFrame]] = {}
+_TOPDOWN_ACT_CACHE: dict[str, tuple[float, pd.DataFrame]] = {}
+logger = logging.getLogger(__name__)
+
+
+def _drop_all_na_columns(df: pd.DataFrame) -> pd.DataFrame:
+    return df.dropna(axis=1, how="all")
 
 
 def generate_month_range(start_yyyymm: str, end_yyyymm: str) -> list[str]:
@@ -175,6 +184,54 @@ def clear_evaluation_detail_cache(hotel_tag: str | None = None) -> None:
         return
 
     _EVALUATION_DETAIL_CACHE.pop(hotel_tag, None)
+
+
+def _get_topdown_actual_monthly_revenue(hotel_tag: str) -> pd.DataFrame:
+    daily_path = get_daily_snapshots_path(hotel_tag)
+    if not daily_path.exists():
+        return pd.DataFrame(columns=["stay_month", "revenue_total", "days_in_month"])
+
+    mtime = daily_path.stat().st_mtime
+    cached = _TOPDOWN_ACT_CACHE.get(hotel_tag)
+    if cached is not None:
+        cached_mtime, cached_df = cached
+        if cached_mtime == mtime:
+            return cached_df.copy()
+
+    df = read_daily_snapshots(hotel_tag)
+    if df.empty:
+        empty_df = pd.DataFrame(columns=["stay_month", "revenue_total", "days_in_month"])
+        _TOPDOWN_ACT_CACHE[hotel_tag] = (mtime, empty_df)
+        return empty_df.copy()
+
+    df = df.copy()
+    df["stay_date"] = pd.to_datetime(df["stay_date"], errors="coerce").dt.normalize()
+    df["as_of_date"] = pd.to_datetime(df["as_of_date"], errors="coerce").dt.normalize()
+    df = df.dropna(subset=["stay_date", "as_of_date"])
+    if df.empty:
+        empty_df = pd.DataFrame(columns=["stay_month", "revenue_total", "days_in_month"])
+        _TOPDOWN_ACT_CACHE[hotel_tag] = (mtime, empty_df)
+        return empty_df.copy()
+
+    df = df.sort_values(["stay_date", "as_of_date"])
+    latest = df.groupby("stay_date").tail(1).copy()
+    if "revenue_oh" not in latest.columns:
+        empty_df = pd.DataFrame(columns=["stay_month", "revenue_total", "days_in_month"])
+        _TOPDOWN_ACT_CACHE[hotel_tag] = (mtime, empty_df)
+        return empty_df.copy()
+
+    latest["revenue_oh"] = pd.to_numeric(latest["revenue_oh"], errors="coerce")
+    latest = latest.dropna(subset=["revenue_oh"])
+    if latest.empty:
+        empty_df = pd.DataFrame(columns=["stay_month", "revenue_total", "days_in_month"])
+        _TOPDOWN_ACT_CACHE[hotel_tag] = (mtime, empty_df)
+        return empty_df.copy()
+
+    latest["stay_month"] = latest["stay_date"].dt.to_period("M")
+    monthly = latest.groupby("stay_month", as_index=False)["revenue_oh"].sum().rename(columns={"revenue_oh": "revenue_total"})
+    monthly["days_in_month"] = monthly["stay_month"].dt.days_in_month
+    _TOPDOWN_ACT_CACHE[hotel_tag] = (mtime, monthly)
+    return monthly.copy()
 
 
 def _get_hotel_config(hotel_tag: str) -> dict:
@@ -813,6 +870,9 @@ def run_forecast_for_gui(
     as_of_date: str,
     gui_model: str,
     capacity: float | None = None,
+    phase_factors: dict[str, float] | None = None,
+    phase_clip_pct: float | None = None,
+    pax_capacity: float | None = None,
 ) -> None:
     """
     日別フォーキャストタブから Forecast を実行するための薄いラッパー。
@@ -835,44 +895,737 @@ def run_forecast_for_gui(
     # 計算としては base モデルと同じでよい。
     base_model = gui_model.replace("_adj", "")
 
+    asof_norm = asof_ts.normalize()
     for ym in target_months:
+        try:
+            period = pd.Period(ym, freq="M")
+        except Exception:
+            period = None
+        if period is not None:
+            month_end = period.end_time.normalize()
+            if asof_norm > month_end:
+                logger.info(
+                    "Skipping settled target month forecast: hotel_tag=%s target_month=%s as_of=%s",
+                    hotel_tag,
+                    ym,
+                    asof_norm.date(),
+                )
+                continue
+        phase_factor = None
+        if phase_factors:
+            phase_factor = phase_factors.get(ym)
         if base_model == "avg":
             run_forecast_batch.run_avg_forecast(
                 target_month=ym,
                 as_of_date=asof_tag,
                 capacity=capacity,
+                pax_capacity=pax_capacity,
                 hotel_tag=hotel_tag,
+                phase_factor=phase_factor,
+                phase_clip_pct=phase_clip_pct,
             )
         elif base_model == "recent90":
             run_forecast_batch.run_recent90_forecast(
                 target_month=ym,
                 as_of_date=asof_tag,
                 capacity=capacity,
+                pax_capacity=pax_capacity,
                 hotel_tag=hotel_tag,
+                phase_factor=phase_factor,
+                phase_clip_pct=phase_clip_pct,
             )
         elif base_model == "recent90w":
             run_forecast_batch.run_recent90_weighted_forecast(
                 target_month=ym,
                 as_of=asof_tag,
                 capacity=capacity,
+                pax_capacity=pax_capacity,
                 hotel_tag=hotel_tag,
+                phase_factor=phase_factor,
+                phase_clip_pct=phase_clip_pct,
             )
         elif base_model == "pace14":
             run_forecast_batch.run_pace14_forecast(
                 target_month=ym,
                 as_of_date=asof_tag,
                 capacity=capacity,
+                pax_capacity=pax_capacity,
                 hotel_tag=hotel_tag,
+                phase_factor=phase_factor,
+                phase_clip_pct=phase_clip_pct,
             )
         elif base_model == "pace14_market":
             run_forecast_batch.run_pace14_market_forecast(
                 target_month=ym,
                 as_of_date=asof_tag,
                 capacity=capacity,
+                pax_capacity=pax_capacity,
                 hotel_tag=hotel_tag,
+                phase_factor=phase_factor,
+                phase_clip_pct=phase_clip_pct,
             )
         else:
             raise ValueError(f"Unsupported gui_model: {gui_model}")
+
+
+def _get_forecast_csv_prefix(gui_model: str) -> tuple[str, str]:
+    model_map = {
+        "avg": ("forecast", "projected_rooms"),
+        "recent90": ("forecast_recent90", "projected_rooms"),
+        "recent90w": ("forecast_recent90w", "projected_rooms"),
+        "recent90_adj": ("forecast_recent90", "adjusted_projected_rooms"),
+        "recent90w_adj": ("forecast_recent90w", "adjusted_projected_rooms"),
+        "pace14": ("forecast_pace14", "projected_rooms"),
+        "pace14_market": ("forecast_pace14_market", "projected_rooms"),
+    }
+    if gui_model not in model_map:
+        raise ValueError(f"Unsupported gui_model: {gui_model}")
+    return model_map[gui_model]
+
+
+def _read_forecast_csv_safely(csv_path: Path) -> tuple[pd.DataFrame | None, str | None]:
+    try:
+        df = pd.read_csv(csv_path, index_col=0)
+    except Exception as exc:  # noqa: BLE001
+        return None, f"read failed: {exc}"
+
+    index_str = df.index.astype(str)
+    parsed_index = pd.to_datetime(index_str, errors="coerce")
+
+    if parsed_index.isna().any():
+        numeric_index = pd.to_numeric(index_str, errors="coerce")
+        if numeric_index.notna().all():
+            in_range = numeric_index.between(30000, 60000)
+            if in_range.all():
+                parsed_index = pd.to_datetime(
+                    numeric_index,
+                    unit="D",
+                    origin="1899-12-30",
+                    errors="coerce",
+                )
+
+    invalid_mask = parsed_index.isna()
+    if invalid_mask.any():
+        invalid_values = list(dict.fromkeys(index_str[invalid_mask].tolist()))[:5]
+        sample_text = ", ".join(invalid_values) if invalid_values else "unknown"
+        return None, f"INVALID stay_date index in {csv_path}: {sample_text}"
+
+    df = df.copy()
+    df.index = parsed_index.normalize()
+    return df, None
+
+
+def _summarize_forecast_error(err_msg: str, max_len: int = 120) -> str:
+    err_msg = err_msg.strip()
+    if len(err_msg) <= max_len:
+        return err_msg
+
+    if "INVALID stay_date index" in err_msg:
+        if " in " in err_msg and ":" in err_msg:
+            prefix, _, tail = err_msg.partition(" in ")
+            path_part, _, sample_part = tail.partition(":")
+            file_name = Path(path_part.strip()).name
+            summarized = f"{prefix} in {file_name}: {sample_part.strip()}"
+            if len(summarized) <= max_len:
+                return summarized
+    return f"{err_msg[: max_len - 3]}..."
+
+
+def _check_forecast_csv_complete_for_month(
+    hotel_tag: str,
+    target_month: str,
+    as_of_date: str,
+    gui_model: str,
+) -> tuple[bool, str]:
+    prefix, _ = _get_forecast_csv_prefix(gui_model)
+    asof_ts = pd.to_datetime(as_of_date)
+    asof_tag = asof_ts.strftime("%Y%m%d")
+    csv_name = f"{prefix}_{target_month}_{hotel_tag}_asof_{asof_tag}.csv"
+    csv_path = OUTPUT_DIR / csv_name
+    if not csv_path.exists():
+        return False, "CSV not found"
+
+    df, err_msg = _read_forecast_csv_safely(csv_path)
+    if df is None:
+        return False, f"CSV read failed: {err_msg}"
+
+    if df.empty:
+        return False, "CSV empty"
+    if "forecast_revenue" not in df.columns:
+        return False, "forecast_revenue missing"
+
+    try:
+        year = int(target_month[:4])
+        month = int(target_month[4:])
+    except Exception:
+        return False, "invalid target_month"
+    _, num_days = monthrange(year, month)
+    expected_dates = pd.date_range(
+        start=pd.Timestamp(year=year, month=month, day=1),
+        end=pd.Timestamp(year=year, month=month, day=num_days),
+        freq="D",
+    )
+
+    index_dates = df.index.normalize()
+    if index_dates.empty:
+        return False, "stay_date missing"
+
+    revenue_series = pd.to_numeric(df["forecast_revenue"], errors="coerce")
+    revenue_series.index = index_dates
+    revenue_series = revenue_series[~pd.isna(revenue_series.index)]
+    revenue_by_date = revenue_series.groupby(level=0).max()
+    revenue_by_date = revenue_by_date.reindex(expected_dates)
+    if revenue_by_date.isna().any():
+        return False, "forecast_revenue incomplete"
+
+    if len(expected_dates) != num_days:
+        return False, "unexpected days"
+    return True, "complete"
+
+
+def _get_projected_monthly_revpar(
+    hotel_tag: str,
+    target_month: str,
+    as_of_date: str,
+    gui_model: str,
+    rooms_cap: float,
+    missing_ok: bool = False,
+) -> tuple[float | None, str | None]:
+    prefix, _ = _get_forecast_csv_prefix(gui_model)
+    asof_ts = pd.to_datetime(as_of_date)
+    asof_tag = asof_ts.strftime("%Y%m%d")
+    csv_name = f"{prefix}_{target_month}_{hotel_tag}_asof_{asof_tag}.csv"
+    csv_path = OUTPUT_DIR / csv_name
+    if not csv_path.exists():
+        if missing_ok:
+            return None, f"CSV not found: {csv_path}"
+        raise FileNotFoundError(f"forecast csv not found: {csv_path}")
+
+    df, err_msg = _read_forecast_csv_safely(csv_path)
+    if df is None:
+        return None, err_msg
+    if "forecast_revenue" not in df.columns:
+        if missing_ok:
+            return None, "forecast_revenue missing"
+        return None, "forecast_revenue missing"
+
+    revenue = pd.to_numeric(df["forecast_revenue"], errors="coerce")
+
+    try:
+        year = int(target_month[:4])
+        month = int(target_month[4:])
+    except Exception:
+        return None, "invalid target_month"
+    _, num_days = monthrange(year, month)
+    expected_dates = pd.date_range(
+        start=pd.Timestamp(year=year, month=month, day=1),
+        end=pd.Timestamp(year=year, month=month, day=num_days),
+        freq="D",
+    )
+
+    index_dates = df.index.normalize()
+    if index_dates.empty:
+        return None, "stay_date missing"
+
+    revenue.index = index_dates
+    revenue = revenue[~pd.isna(revenue.index)]
+    revenue_by_date = revenue.groupby(level=0).max()
+    revenue_by_date = revenue_by_date.reindex(expected_dates)
+    if revenue_by_date.isna().any():
+        return None, "forecast_revenue incomplete"
+
+    revenue_total = revenue_by_date.sum(min_count=1)
+    if pd.isna(revenue_total):
+        return None, "forecast_revenue missing"
+    denom = rooms_cap * num_days
+    if denom <= 0:
+        return None, "rooms capacity missing"
+    return float(revenue_total / denom), None
+
+
+def build_topdown_revpar_panel(
+    *,
+    hotel_tag: str,
+    target_month: str,
+    as_of_date: str,
+    latest_asof_date: str | None = None,
+    model_key: str,
+    rooms_cap: float,
+    phase_factors: dict[str, float] | None,
+    phase_clip_pct: float | None,
+    forecast_horizon_months: int = 3,
+    show_years: list[int] | None = None,
+    fiscal_year_start_month: int = 6,
+) -> dict[str, object]:
+    if forecast_horizon_months <= 0:
+        raise ValueError("forecast_horizon_months must be a positive integer")
+
+    try:
+        target_period = pd.Period(target_month, freq="M")
+    except Exception as exc:
+        raise ValueError(f"Invalid target_month: {target_month}") from exc
+
+    try:
+        asof_period = pd.Period(as_of_date, freq="M")
+    except Exception as exc:
+        raise ValueError(f"Invalid as_of_date: {as_of_date}") from exc
+
+    asof_ts = pd.to_datetime(as_of_date).normalize()
+    latest_asof_ts = asof_ts
+    if latest_asof_date:
+        try:
+            parsed_latest = pd.to_datetime(latest_asof_date).normalize()
+        except Exception:
+            parsed_latest = None
+        if parsed_latest is not None and not pd.isna(parsed_latest):
+            latest_asof_ts = parsed_latest
+
+    def _get_fiscal_year(year: int, month: int) -> int:
+        if month >= fiscal_year_start_month:
+            return year
+        return year - 1
+
+    current_fy = _get_fiscal_year(target_period.year, target_period.month)
+    if show_years is None:
+        show_years = list(range(current_fy - 5, current_fy + 1))
+
+    months_order = [(fiscal_year_start_month + offset - 1) % 12 + 1 for offset in range(12)]
+    fiscal_month_labels = [f"{month}月" for month in months_order]
+    fiscal_month_strs = [f"{current_fy if month >= fiscal_year_start_month else current_fy + 1}{month:02d}" for month in months_order]
+    target_month_idx = months_order.index(target_period.month)
+
+    monthly_actual = _get_topdown_actual_monthly_revenue(hotel_tag)
+    revpar_by_period: dict[pd.Period, float] = {}
+    month_revpar_map: dict[tuple[int, int], float] = {}
+    if not monthly_actual.empty:
+        for _, row in monthly_actual.iterrows():
+            stay_month = row["stay_month"]
+            if pd.isna(stay_month):
+                continue
+            if isinstance(stay_month, pd.Period):
+                stay_period = stay_month.asfreq("M")
+            else:
+                stay_period = pd.Period(stay_month, freq="M")
+            year = int(stay_period.year)
+            month = int(stay_period.month)
+            fy = _get_fiscal_year(year, month)
+            if month >= fiscal_year_start_month:
+                fiscal_index = month - fiscal_year_start_month
+            else:
+                fiscal_index = month + (12 - fiscal_year_start_month)
+            days = float(row.get("days_in_month") or 0)
+            if days <= 0 or rooms_cap <= 0:
+                continue
+            revenue_total = float(row.get("revenue_total") or 0)
+            revpar = revenue_total / (rooms_cap * days)
+            revpar_by_period[stay_period] = revpar
+            month_revpar_map[(fy, fiscal_index)] = revpar
+
+    lines_by_fy: dict[int, list[float | None]] = {}
+    for fy in show_years:
+        if fy == current_fy:
+            continue
+        values: list[float | None] = [None] * 12
+        for idx in range(12):
+            value = month_revpar_map.get((fy, idx))
+            if value is not None:
+                values[idx] = float(value)
+        lines_by_fy[fy] = values
+
+    current_fy_actual: list[float | None] = [None] * 12
+    for idx in range(12):
+        value = month_revpar_map.get((current_fy, idx))
+        if value is None:
+            continue
+        month_num = months_order[idx]
+        year = current_fy if month_num >= fiscal_year_start_month else current_fy + 1
+        month_end = pd.Timestamp(year=year, month=month_num, day=1) + pd.offsets.MonthEnd(0)
+        if month_end <= asof_ts:
+            current_fy_actual[idx] = float(value)
+
+    start_period = pd.Period(latest_asof_ts, freq="M")
+    end_ts = latest_asof_ts + timedelta(days=90)
+    end_period = pd.Period(end_ts, freq="M")
+    if start_period > end_period:
+        end_period = start_period
+    forecast_month_strs_range = generate_month_range(
+        start_period.strftime("%Y%m"),
+        end_period.strftime("%Y%m"),
+    )
+    rotation_month_strs = [(target_period + offset).strftime("%Y%m") for offset in range(-5, 7)]
+    view_months_set = set(fiscal_month_strs) | set(rotation_month_strs)
+    band_month_candidates = set(forecast_month_strs_range)
+    band_month_candidates.update(rotation_month_strs)
+    computable_months: list[str] = []
+    skipped_months: dict[str, str] = {}
+    for month_str in forecast_month_strs_range:
+        try:
+            run_forecast_for_gui(
+                hotel_tag=hotel_tag,
+                target_months=[month_str],
+                as_of_date=as_of_date,
+                gui_model=model_key,
+                capacity=None,
+                pax_capacity=None,
+                phase_factors=phase_factors,
+                phase_clip_pct=phase_clip_pct,
+            )
+            is_complete, reason = _check_forecast_csv_complete_for_month(
+                hotel_tag=hotel_tag,
+                target_month=month_str,
+                as_of_date=as_of_date,
+                gui_model=model_key,
+            )
+            if is_complete:
+                computable_months.append(month_str)
+            else:
+                skipped_months[month_str] = f"INCOMPLETE: {_summarize_forecast_error(reason)}"
+        except Exception as exc:  # noqa: BLE001
+            logging.warning("Skipping forecast month %s due to error: %s", month_str, exc)
+            skipped_months[month_str] = str(exc)
+
+    current_fy_forecast: list[float | None] = [None] * 12
+    forecast_revpar_map: dict[str, float | None] = {}
+    effective_forecast_months: list[str] = []
+    for month_str in computable_months:
+        revpar_value, err_msg = _get_projected_monthly_revpar(
+            hotel_tag=hotel_tag,
+            target_month=month_str,
+            as_of_date=as_of_date,
+            gui_model=model_key,
+            rooms_cap=rooms_cap,
+            missing_ok=True,
+        )
+        if err_msg:
+            skipped_months.setdefault(
+                month_str,
+                f"INCOMPLETE: {_summarize_forecast_error(err_msg)}",
+            )
+        if revpar_value is None:
+            continue
+        forecast_revpar_map[month_str] = revpar_value
+        effective_forecast_months.append(month_str)
+        try:
+            month_period = pd.Period(month_str, freq="M")
+        except Exception:
+            continue
+        idx = months_order.index(month_period.month)
+        if _get_fiscal_year(month_period.year, month_period.month) == current_fy:
+            current_fy_forecast[idx] = revpar_value
+
+    anchor_idx = None
+    anchor_value = None
+    anchor_month_end = None
+    for idx in range(12):
+        value = month_revpar_map.get((current_fy, idx))
+        if value is None:
+            continue
+        month_num = months_order[idx]
+        year = current_fy if month_num >= fiscal_year_start_month else current_fy + 1
+        month_end = pd.Timestamp(year=year, month=month_num, day=1) + pd.offsets.MonthEnd(0)
+        if month_end <= asof_ts and (anchor_month_end is None or month_end > anchor_month_end):
+            anchor_idx = idx
+            anchor_value = float(value)
+            anchor_month_end = month_end
+
+    band_p10: list[float | None] = [None] * 12
+    band_p90: list[float | None] = [None] * 12
+    band_by_month: dict[str, tuple[float, float]] = {}
+    band_p10_prev_anchor: list[float | None] = [None] * 12
+    band_p90_prev_anchor: list[float | None] = [None] * 12
+    band_by_month_prev_anchor: dict[str, tuple[float, float]] = {}
+    reference_years = [fy for fy in show_years if fy != current_fy]
+    anchor_period_latest = pd.Period(anchor_month_end, freq="M") if anchor_month_end is not None else None
+    anchor_month_str = anchor_period_latest.strftime("%Y%m") if anchor_period_latest is not None else None
+    if anchor_month_str is not None:
+        band_month_candidates.add(anchor_month_str)
+    if anchor_period_latest is not None and anchor_value is not None and anchor_idx is not None:
+        band_by_month[anchor_month_str] = (anchor_value, anchor_value)
+        month_num_anchor = months_order[anchor_idx]
+        end_month = fiscal_year_start_month - 1 or 12
+        end_year = current_fy + 1 if end_month < fiscal_year_start_month else current_fy
+        fy_end_period = pd.Period(f"{end_year}{end_month:02d}", freq="M")
+        if anchor_period_latest + 1 <= fy_end_period:
+            for period in generate_month_range(
+                (anchor_period_latest + 1).strftime("%Y%m"),
+                fy_end_period.strftime("%Y%m"),
+            ):
+                band_month_candidates.add(period)
+        band_months_sorted = sorted(
+            band_month_candidates,
+            key=lambda value: pd.Period(value, freq="M").ordinal,
+        )
+        for month_str in band_months_sorted:
+            try:
+                target_period = pd.Period(month_str, freq="M")
+            except Exception:
+                continue
+            step = int(target_period.ordinal - anchor_period_latest.ordinal)
+            if step <= 0:
+                continue
+            ratios = []
+            for fy in reference_years:
+                year_anchor_ref = fy if month_num_anchor >= fiscal_year_start_month else fy + 1
+                anchor_ref_period = pd.Period(f"{year_anchor_ref}{month_num_anchor:02d}", freq="M")
+                target_ref_period = anchor_ref_period + step
+                anchor_ref_val = revpar_by_period.get(anchor_ref_period)
+                target_ref_val = revpar_by_period.get(target_ref_period)
+                if anchor_ref_val in (None, 0) or target_ref_val is None:
+                    continue
+                ratios.append(float(target_ref_val) / float(anchor_ref_val))
+            if not ratios:
+                continue
+            p10_ratio = float(np.percentile(ratios, 10))
+            p90_ratio = float(np.percentile(ratios, 90))
+            band_by_month[month_str] = (anchor_value * p10_ratio, anchor_value * p90_ratio)
+
+        for idx in range(12):
+            month_num = months_order[idx]
+            year = current_fy if month_num >= fiscal_year_start_month else current_fy + 1
+            month_str = f"{year}{month_num:02d}"
+            band_values = band_by_month.get(month_str)
+            if band_values is not None:
+                band_p10[idx] = band_values[0]
+                band_p90[idx] = band_values[1]
+
+    def _month_end(period: pd.Period) -> pd.Timestamp:
+        return pd.Timestamp(year=period.year, month=period.month, day=1) + pd.offsets.MonthEnd(0)
+
+    def _get_current_revpar(period: pd.Period) -> float | None:
+        month_end = _month_end(period)
+        actual_val = revpar_by_period.get(period)
+        if actual_val is not None and month_end <= asof_ts:
+            return float(actual_val)
+        forecast_val = forecast_revpar_map.get(period.strftime("%Y%m"))
+        if forecast_val is not None:
+            return float(forecast_val)
+        return None
+
+    min_actual_period = min(revpar_by_period) if revpar_by_period else None
+
+    def _find_anchor_period(target_period: pd.Period) -> tuple[pd.Period | None, float | None]:
+        candidate_ordinal = int(target_period.ordinal) - 1
+        for _ in range(120):
+            candidate = pd.Period(ordinal=candidate_ordinal, freq="M")
+            if min_actual_period is not None and candidate < min_actual_period:
+                return None, None
+            anchor_val = _get_current_revpar(candidate)
+            if anchor_val is not None:
+                return candidate, anchor_val
+            candidate_ordinal -= 1
+        return None, None
+
+    band_months_sorted = sorted(
+        band_month_candidates,
+        key=lambda value: pd.Period(value, freq="M").ordinal,
+    )
+    ratio_fallback_months: set[str] = set()
+    last_ratio_band: tuple[float, float] | None = None
+    min_ratio_samples = 3
+    for month_str in band_months_sorted:
+        try:
+            target_period = pd.Period(month_str, freq="M")
+        except Exception:
+            continue
+        if anchor_period_latest is not None and target_period < anchor_period_latest:
+            continue
+        if anchor_period_latest is not None and target_period == anchor_period_latest:
+            if anchor_value is not None:
+                band_by_month_prev_anchor[month_str] = (anchor_value, anchor_value)
+            continue
+        anchor_period_candidate, anchor_value_prev = _find_anchor_period(target_period)
+        if anchor_period_candidate is None or anchor_value_prev is None:
+            continue
+        anchor_month_str = anchor_period_candidate.strftime("%Y%m")
+        band_by_month_prev_anchor.setdefault(
+            anchor_month_str,
+            (anchor_value_prev, anchor_value_prev),
+        )
+        step = int(target_period.ordinal - anchor_period_candidate.ordinal)
+        if step <= 0:
+            continue
+        ratios = []
+        month_num_anchor = anchor_period_candidate.month
+        for fy in reference_years:
+            year_anchor_ref = fy if month_num_anchor >= fiscal_year_start_month else fy + 1
+            anchor_ref_period = pd.Period(f"{year_anchor_ref}{month_num_anchor:02d}", freq="M")
+            target_ref_period = anchor_ref_period + step
+            anchor_ref_val = revpar_by_period.get(anchor_ref_period)
+            target_ref_val = revpar_by_period.get(target_ref_period)
+            if anchor_ref_val in (None, 0) or target_ref_val is None:
+                continue
+            ratios.append(float(target_ref_val) / float(anchor_ref_val))
+        if len(ratios) >= min_ratio_samples:
+            p10_ratio = float(np.percentile(ratios, 10))
+            p90_ratio = float(np.percentile(ratios, 90))
+            last_ratio_band = (p10_ratio, p90_ratio)
+        elif last_ratio_band is not None:
+            p10_ratio, p90_ratio = last_ratio_band
+            ratio_fallback_months.add(month_str)
+        else:
+            p10_ratio = 1.0
+            p90_ratio = 1.0
+            ratio_fallback_months.add(month_str)
+        band_by_month_prev_anchor[month_str] = (
+            anchor_value_prev * p10_ratio,
+            anchor_value_prev * p90_ratio,
+        )
+
+    for idx in range(12):
+        month_num = months_order[idx]
+        year = current_fy if month_num >= fiscal_year_start_month else current_fy + 1
+        month_str = f"{year}{month_num:02d}"
+        band_values = band_by_month_prev_anchor.get(month_str)
+        if band_values is not None:
+            band_p10_prev_anchor[idx] = band_values[0]
+            band_p90_prev_anchor[idx] = band_values[1]
+
+    band_prev_segments: list[dict[str, list[float] | list[str]]] = []
+    if anchor_period_latest is not None:
+        for month_str in sorted(
+            effective_forecast_months,
+            key=lambda value: pd.Period(value, freq="M").ordinal,
+        ):
+            if month_str not in view_months_set:
+                continue
+            try:
+                target_period = pd.Period(month_str, freq="M")
+            except Exception:
+                continue
+            band_values = band_by_month_prev_anchor.get(month_str)
+            if band_values is None:
+                continue
+            anchor_period_candidate, anchor_value_prev = _find_anchor_period(target_period)
+            if anchor_period_candidate is None or anchor_value_prev is None:
+                continue
+            anchor_month_str = anchor_period_candidate.strftime("%Y%m")
+            if anchor_month_str not in view_months_set:
+                continue
+            band_prev_segments.append(
+                {
+                    "months": [anchor_month_str, month_str],
+                    "low": [float(anchor_value_prev), float(band_values[0])],
+                    "high": [float(anchor_value_prev), float(band_values[1])],
+                }
+            )
+
+        if effective_forecast_months:
+            last_forecast_period = max(
+                (pd.Period(month_str, freq="M") for month_str in effective_forecast_months),
+                key=lambda period: period.ordinal,
+            )
+            last_forecast_month = last_forecast_period.strftime("%Y%m")
+            anchor_value_forecast = forecast_revpar_map.get(last_forecast_month)
+            if anchor_value_forecast is not None:
+                future_months = [
+                    month_str
+                    for month_str in (fiscal_month_strs + rotation_month_strs)
+                    if pd.Period(month_str, freq="M") > last_forecast_period and month_str in band_by_month_prev_anchor
+                ]
+                future_months = sorted(
+                    future_months,
+                    key=lambda value: pd.Period(value, freq="M").ordinal,
+                )
+                if len(future_months) >= 2:
+                    months_values = [last_forecast_month] + future_months
+                    low_values = [float(anchor_value_forecast)]
+                    high_values = [float(anchor_value_forecast)]
+                    for month_str in future_months:
+                        band_values = band_by_month_prev_anchor.get(month_str)
+                        if band_values is None:
+                            continue
+                        low_values.append(float(band_values[0]))
+                        high_values.append(float(band_values[1]))
+                    if len(months_values) == len(low_values) == len(high_values) and len(months_values) >= 3:
+                        band_prev_segments.append(
+                            {
+                                "months": months_values,
+                                "low": low_values,
+                                "high": high_values,
+                            }
+                        )
+
+    forecast_indices = {
+        months_order.index(pd.Period(month_str, freq="M").month)
+        for month_str in effective_forecast_months
+        if _get_fiscal_year(int(month_str[:4]), int(month_str[4:])) == current_fy
+    }
+    band_start_idx = months_order.index(asof_period.month)
+    forecast_end_idx = max(forecast_indices) if forecast_indices else band_start_idx - 1
+
+    diagnostics: list[dict[str, object]] = []
+    for month_str in band_months_sorted:
+        try:
+            month_period = pd.Period(month_str, freq="M")
+        except Exception:
+            month_period = None
+        if month_period is not None and month_period < asof_period:
+            continue
+        if anchor_period_latest is not None and month_period is not None and month_period <= anchor_period_latest:
+            continue
+        revpar_value = forecast_revpar_map.get(month_str)
+        band_values = band_by_month.get(month_str)
+        if anchor_period_latest is not None:
+            if month_period is not None and month_period < anchor_period_latest:
+                band_prev_values = None
+            else:
+                band_prev_values = band_by_month_prev_anchor.get(month_str)
+        else:
+            band_prev_values = band_by_month_prev_anchor.get(month_str)
+        p10_latest = band_values[0] if band_values else None
+        p90_latest = band_values[1] if band_values else None
+        p10_prev = band_prev_values[0] if band_prev_values else None
+        p90_prev = band_prev_values[1] if band_prev_values else None
+        if revpar_value is None and p10_latest is None and p90_latest is None and p10_prev is None and p90_prev is None:
+            continue
+        out_of_range_latest = False
+        out_of_range_prev = False
+        if revpar_value is not None and p10_latest is not None and p90_latest is not None:
+            out_of_range_latest = revpar_value < p10_latest or revpar_value > p90_latest
+        if revpar_value is not None and p10_prev is not None and p90_prev is not None:
+            out_of_range_prev = revpar_value < p10_prev or revpar_value > p90_prev
+        notes: list[str] = []
+        if month_str in ratio_fallback_months:
+            notes.append("(C:ratio_fallback)")
+        diagnostics.append(
+            {
+                "month": month_str,
+                "revpar": revpar_value,
+                "p10_latest": p10_latest,
+                "p90_latest": p90_latest,
+                "p10_prev": p10_prev,
+                "p90_prev": p90_prev,
+                "out_of_range_latest": out_of_range_latest,
+                "out_of_range_prev": out_of_range_prev,
+                "notes": notes,
+            }
+        )
+
+    return {
+        "fiscal_month_labels": fiscal_month_labels,
+        "month_labels": fiscal_month_labels,
+        "lines_by_fy": lines_by_fy,
+        "current_fy": current_fy,
+        "current_fy_actual": current_fy_actual,
+        "current_fy_forecast": current_fy_forecast,
+        "band_p10": band_p10,
+        "band_p90": band_p90,
+        "band_by_month": band_by_month,
+        "band_p10_prev_anchor": band_p10_prev_anchor,
+        "band_p90_prev_anchor": band_p90_prev_anchor,
+        "band_by_month_prev_anchor": band_by_month_prev_anchor,
+        "band_prev_segments": band_prev_segments,
+        "fiscal_month_strs": fiscal_month_strs,
+        "rotation_month_strs": rotation_month_strs,
+        "band_start_idx": band_start_idx,
+        "forecast_end_idx": forecast_end_idx,
+        "diagnostics": diagnostics,
+        "target_month_index": target_month_idx,
+        "forecast_months_range": forecast_month_strs_range,
+        "forecast_months": effective_forecast_months,
+        "skipped_months": skipped_months,
+        "anchor_idx": anchor_idx,
+    }
 
 
 def get_daily_forecast_table(
@@ -881,6 +1634,8 @@ def get_daily_forecast_table(
     as_of_date: str,
     gui_model: str,
     capacity: Optional[float] = None,
+    pax_capacity: Optional[float] = None,
+    apply_monthly_rounding: bool = True,
 ) -> pd.DataFrame:
     """日別フォーキャスト一覧画面向けのテーブルを構築する。
 
@@ -897,6 +1652,10 @@ def get_daily_forecast_table(
         ("avg", "recent90", "recent90_adj", "recent90w", "recent90w_adj", "pace14", "pace14_market")
     capacity : float, optional
         None の場合は HOTEL_CONFIG の設定を使用
+    pax_capacity : float, optional
+        pax の日別キャップ。None の場合は自動推定値を使用
+    apply_monthly_rounding : bool, optional
+        True の場合、Forecast 系の *_display を資料向けに丸める
 
     Returns
     -------
@@ -904,6 +1663,20 @@ def get_daily_forecast_table(
         日別行 + 最終行に TOTAL 行 を含むテーブル
     """
     cap = _get_capacity(hotel_tag, capacity)
+    rounding_units = get_hotel_rounding_units(hotel_tag)
+    round_rooms_unit = float(rounding_units["rooms"])
+    round_pax_unit = float(rounding_units["pax"])
+    round_revenue_unit = float(rounding_units["revenue"])
+
+    def _round_int_series(series: pd.Series) -> pd.Series:
+        values = pd.to_numeric(series, errors="coerce")
+        mask = values.isna().to_numpy()
+        arr = values.to_numpy(dtype=float)
+        arr2 = np.where(mask, 0.0, arr)
+        rounded = np.rint(arr2).astype(np.int64, copy=False)
+        out_arr = pd.array(rounded, dtype="Int64")
+        out_arr[mask] = pd.NA
+        return pd.Series(out_arr, index=series.index, name=series.name)
 
     model_map = {
         "avg": ("forecast", "projected_rooms"),
@@ -925,29 +1698,121 @@ def get_daily_forecast_table(
 
     csv_name = f"{prefix}_{target_month}_{hotel_tag}_asof_{asof_tag}.csv"
     csv_path = OUTPUT_DIR / csv_name
-    if not csv_path.exists():
-        raise FileNotFoundError(f"forecast csv not found: {csv_path}")
-
-    df = pd.read_csv(csv_path, index_col=0)
-    df.index = pd.to_datetime(df.index)
-    df = df.sort_index()
-
-    if "actual_rooms" not in df.columns:
-        raise ValueError(f"{csv_path} に actual_rooms 列がありません。")
-    if col_name not in df.columns:
-        raise ValueError(f"{csv_path} に {col_name} 列がありません。")
-
-    out = pd.DataFrame(index=df.index.copy())
-    out["stay_date"] = out.index
-    out["weekday"] = out["stay_date"].dt.weekday
-    out["actual_rooms"] = df["actual_rooms"].astype(float)
-    out["forecast_rooms"] = df[col_name].astype(float)
-
     snap_all = read_daily_snapshots_for_month(hotel_id=hotel_tag, target_month=target_month)
-    required_cols = {"stay_date", "as_of_date", "rooms_oh"}
+    if not csv_path.exists():
+        period = pd.Period(target_month, freq="M")
+        stay_dates = pd.date_range(
+            start=date(period.year, period.month, 1),
+            end=date(period.year, period.month, period.days_in_month),
+            freq="D",
+        )
+        out = pd.DataFrame(index=stay_dates)
+        out["stay_date"] = out.index
+        out["weekday"] = out["stay_date"].dt.weekday.astype("Int64")
 
-    if snap_all is None or snap_all.empty or not required_cols.issubset(snap_all.columns):
-        out["asof_oh_rooms"] = out["actual_rooms"].astype(float)
+        stay_dates_norm = out["stay_date"].dt.normalize()
+        mask_past = stay_dates_norm < asof_ts
+        if snap_all is None or snap_all.empty or not {"stay_date", "as_of_date", "rooms_oh"}.issubset(snap_all.columns):
+            out["actual_rooms"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
+            out["actual_pax"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
+            out["revenue_oh_now"] = pd.Series(np.nan, index=out.index, dtype="float")
+            out["adr_oh_now"] = pd.Series(np.nan, index=out.index, dtype="float")
+        else:
+            snap = snap_all.copy()
+            snap["stay_date"] = pd.to_datetime(snap["stay_date"], errors="coerce").dt.normalize()
+            snap["as_of_date"] = pd.to_datetime(snap["as_of_date"], errors="coerce").dt.normalize()
+            snap = snap.dropna(subset=["stay_date", "as_of_date"])
+            snap = snap.sort_values(["stay_date", "as_of_date"])
+
+            last_snap = snap.groupby("stay_date").tail(1)
+            rooms_map = pd.to_numeric(last_snap.set_index("stay_date")["rooms_oh"], errors="coerce")
+            actual_rooms_series = stay_dates_norm.map(rooms_map)
+            actual_rooms_series = actual_rooms_series.where(mask_past)
+            out["actual_rooms"] = _round_int_series(actual_rooms_series)
+
+            if "pax_oh" in snap_all.columns:
+                pax_map = pd.to_numeric(last_snap.set_index("stay_date")["pax_oh"], errors="coerce")
+                actual_pax_series = stay_dates_norm.map(pax_map)
+                actual_pax_series = actual_pax_series.where(mask_past)
+                out["actual_pax"] = _round_int_series(actual_pax_series)
+            else:
+                out["actual_pax"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
+
+            if "revenue_oh" in snap_all.columns:
+                snap_asof = snap[snap["as_of_date"] <= asof_ts]
+                if snap_asof.empty:
+                    revenue_oh_now = pd.Series(np.nan, index=out.index, dtype="float")
+                    rooms_oh_now = pd.Series(np.nan, index=out.index, dtype="float")
+                else:
+                    snap_asof = snap_asof.sort_values(["stay_date", "as_of_date"])
+                    last_snap_asof = snap_asof.groupby("stay_date").tail(1)
+                    revenue_map = pd.to_numeric(last_snap_asof.set_index("stay_date")["revenue_oh"], errors="coerce")
+                    rooms_oh_map = pd.to_numeric(last_snap_asof.set_index("stay_date")["rooms_oh"], errors="coerce")
+                    revenue_oh_now = stay_dates_norm.map(revenue_map)
+                    rooms_oh_now = stay_dates_norm.map(rooms_oh_map)
+                out["revenue_oh_now"] = pd.to_numeric(revenue_oh_now, errors="coerce").astype(float)
+                rooms_oh_now = pd.to_numeric(rooms_oh_now, errors="coerce").astype(float)
+                rooms_for_div = rooms_oh_now.replace(0, np.nan)
+                out["adr_oh_now"] = (out["revenue_oh_now"] / rooms_for_div).astype(float)
+            else:
+                out["revenue_oh_now"] = pd.Series(np.nan, index=out.index, dtype="float")
+                out["adr_oh_now"] = pd.Series(np.nan, index=out.index, dtype="float")
+
+        out["forecast_rooms"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
+        out["forecast_pax"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
+        out["projected_pax"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
+        out["adr_pickup_est"] = pd.Series(np.nan, index=out.index, dtype="float")
+        out["forecast_revenue"] = pd.Series(np.nan, index=out.index, dtype="float")
+        apply_monthly_rounding = False
+    else:
+        df = pd.read_csv(csv_path, index_col=0)
+        df.index = pd.to_datetime(df.index)
+        df = df.sort_index()
+
+        if "actual_rooms" not in df.columns:
+            raise ValueError(f"{csv_path} に actual_rooms 列がありません。")
+        if col_name not in df.columns:
+            raise ValueError(f"{csv_path} に {col_name} 列がありません。")
+
+        out = pd.DataFrame(index=df.index.copy())
+        out["stay_date"] = out.index
+        out["weekday"] = out["stay_date"].dt.weekday.astype("Int64")
+        out["actual_rooms"] = _round_int_series(df["actual_rooms"])
+        out["forecast_rooms"] = _round_int_series(df[col_name])
+        if "actual_pax" in df.columns:
+            out["actual_pax"] = _round_int_series(df["actual_pax"])
+        else:
+            out["actual_pax"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
+        if "projected_pax" in df.columns:
+            out["forecast_pax"] = _round_int_series(df["projected_pax"])
+        elif "forecast_pax" in df.columns:
+            out["forecast_pax"] = _round_int_series(df["forecast_pax"])
+        else:
+            out["forecast_pax"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
+        if "projected_pax" in df.columns:
+            out["projected_pax"] = _round_int_series(df["projected_pax"])
+        else:
+            out["projected_pax"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
+        if "revenue_oh_now" in df.columns:
+            out["revenue_oh_now"] = pd.to_numeric(df["revenue_oh_now"], errors="coerce").astype(float)
+        else:
+            out["revenue_oh_now"] = pd.Series(np.nan, index=out.index, dtype="float")
+        if "adr_oh_now" in df.columns:
+            out["adr_oh_now"] = pd.to_numeric(df["adr_oh_now"], errors="coerce").astype(float)
+        else:
+            out["adr_oh_now"] = pd.Series(np.nan, index=out.index, dtype="float")
+        if "adr_pickup_est" in df.columns:
+            out["adr_pickup_est"] = pd.to_numeric(df["adr_pickup_est"], errors="coerce").astype(float)
+        else:
+            out["adr_pickup_est"] = pd.Series(np.nan, index=out.index, dtype="float")
+        if "forecast_revenue" in df.columns:
+            out["forecast_revenue"] = pd.to_numeric(df["forecast_revenue"], errors="coerce").astype(float)
+        else:
+            out["forecast_revenue"] = pd.Series(np.nan, index=out.index, dtype="float")
+
+    if snap_all is None or snap_all.empty or not {"stay_date", "as_of_date", "rooms_oh"}.issubset(snap_all.columns):
+        out["asof_oh_rooms"] = _round_int_series(out["actual_rooms"])
+        out["asof_oh_pax"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
     else:
         snap = snap_all.copy()
         snap["stay_date"] = pd.to_datetime(snap["stay_date"], errors="coerce").dt.normalize()
@@ -957,7 +1822,7 @@ def get_daily_forecast_table(
         snap_asof = snap[snap["as_of_date"] <= asof_ts]
         if snap_asof.empty:
             asof_oh_series = pd.Series(0.0, index=out.index)
-            out["asof_oh_rooms"] = asof_oh_series.astype(float)
+            out["asof_oh_rooms"] = _round_int_series(asof_oh_series)
         else:
             snap_asof = snap_asof.sort_values(["stay_date", "as_of_date"])
             last_snap = snap_asof.groupby("stay_date").tail(1)
@@ -970,7 +1835,28 @@ def get_daily_forecast_table(
             mask_fallback = asof_oh_series.isna() & mask_past & out["actual_rooms"].notna()
             asof_oh_series.loc[mask_fallback] = out.loc[mask_fallback, "actual_rooms"].to_numpy()
             asof_oh_series = asof_oh_series.fillna(0.0)
-            out["asof_oh_rooms"] = asof_oh_series.astype(float)
+            out["asof_oh_rooms"] = _round_int_series(asof_oh_series)
+
+        if "pax_oh" not in snap_all.columns:
+            logging.warning("daily_snapshots に pax_oh 列がありません。asof_oh_pax は NaN で継続します。")
+            out["asof_oh_pax"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
+        else:
+            snap_asof = snap[snap["as_of_date"] <= asof_ts]
+            if snap_asof.empty:
+                asof_oh_pax_series = pd.Series(pd.NA, index=out.index, dtype="float")
+            else:
+                snap_asof = snap_asof.sort_values(["stay_date", "as_of_date"])
+                last_snap = snap_asof.groupby("stay_date").tail(1)
+                pax_oh_map = pd.to_numeric(last_snap.set_index("stay_date")["pax_oh"], errors="coerce")
+
+                stay_dates_norm = out["stay_date"].dt.normalize()
+                asof_oh_pax_series = stay_dates_norm.map(pax_oh_map)
+
+                mask_past = stay_dates_norm < asof_ts
+                mask_fallback = asof_oh_pax_series.isna() & mask_past & out["actual_pax"].notna()
+                asof_oh_pax_series.loc[mask_fallback] = out.loc[mask_fallback, "actual_pax"].to_numpy()
+
+            out["asof_oh_pax"] = _round_int_series(asof_oh_pax_series)
 
     out["diff_rooms_vs_actual"] = out["forecast_rooms"] - out["actual_rooms"]
     denom_actual = out["actual_rooms"].replace(0, pd.NA)
@@ -983,12 +1869,22 @@ def get_daily_forecast_table(
     out["occ_actual_pct"] = (out["actual_rooms"] / cap * 100.0).astype(float)
     out["occ_asof_pct"] = (out["asof_oh_rooms"] / cap * 100.0).astype(float)
     out["occ_forecast_pct"] = (out["forecast_rooms"] / cap * 100.0).astype(float)
+    denom_forecast_rooms = out["forecast_rooms"].replace(0, pd.NA)
+    out["forecast_adr"] = (out["forecast_revenue"] / denom_forecast_rooms).astype(float)
+    denom_cap = pd.Series(cap, index=out.index, dtype="float")
+    denom_cap = denom_cap.replace(0, pd.NA)
+    out["forecast_revpar"] = (out["forecast_revenue"] / denom_cap).astype(float)
 
     num_days = out["stay_date"].nunique()
 
     actual_total = out["actual_rooms"].fillna(0).sum()
     asof_total = out["asof_oh_rooms"].fillna(0).sum()
     forecast_total = out["forecast_rooms"].fillna(0).sum()
+    actual_pax_total = out["actual_pax"].fillna(0).sum()
+    forecast_pax_total = out["forecast_pax"].fillna(0).sum()
+    asof_pax_total = out["asof_oh_pax"].fillna(0).sum()
+    revenue_oh_total = out["revenue_oh_now"].fillna(0).sum()
+    forecast_revenue_total = out["forecast_revenue"].fillna(0).sum()
 
     diff_total_vs_actual = forecast_total - actual_total
     if actual_total > 0:
@@ -1007,24 +1903,175 @@ def get_daily_forecast_table(
         occ_asof_month = float("nan")
         occ_forecast_month = float("nan")
 
+    denom_asof_total = asof_total if asof_total > 0 else float("nan")
+    denom_forecast_total = forecast_total if forecast_total > 0 else float("nan")
+    denom_cap_total = cap * num_days if cap > 0 and num_days > 0 else float("nan")
+    adr_oh_total = revenue_oh_total / denom_asof_total
+    forecast_adr_total = forecast_revenue_total / denom_forecast_total
+    forecast_revpar_total = forecast_revenue_total / denom_cap_total
+    if pickup_total_from_asof > 0:
+        adr_pickup_total = (forecast_revenue_total - revenue_oh_total) / pickup_total_from_asof
+    else:
+        adr_pickup_total = pd.NA
+
+    out["actual_rooms_display"] = out["actual_rooms"].copy()
+    out["asof_oh_rooms_display"] = out["asof_oh_rooms"].copy()
+    out["forecast_rooms_display"] = out["forecast_rooms"].copy()
+    out["actual_pax_display"] = out["actual_pax"].copy()
+    out["forecast_pax_display"] = out["forecast_pax"].copy()
+    out["asof_oh_pax_display"] = out["asof_oh_pax"].copy()
+    out["forecast_revenue_display"] = out["forecast_revenue"].copy()
+
+    apply_monthly_rounding = apply_monthly_rounding and monthly_rounding.should_apply_monthly_rounding(
+        target_month,
+        asof_ts,
+        out["stay_date"],
+    )
+
+    if apply_monthly_rounding:
+        forecast_total_goal = monthly_rounding.round_total_goal(forecast_total, round_rooms_unit)
+        reconciled_rooms, adjusted_rooms_total = monthly_rounding.apply_remainder_rounding(
+            out["forecast_rooms"],
+            out["stay_date"],
+            asof_ts=asof_ts,
+            target_yyyymm=target_month,
+            goal_total=float(forecast_total_goal),
+            cap_value=cap,
+        )
+        out["forecast_rooms_display"] = reconciled_rooms
+        forecast_rooms_total_display = adjusted_rooms_total
+
+        if out["forecast_pax"].notna().any():
+            if pax_capacity is None:
+                pax_capacity = run_forecast_batch.infer_pax_capacity_p99(hotel_tag, asof_ts)
+            forecast_pax_total_goal = monthly_rounding.round_total_goal(forecast_pax_total, round_pax_unit)
+            reconciled_pax, adjusted_pax_total = monthly_rounding.apply_remainder_rounding(
+                out["forecast_pax"],
+                out["stay_date"],
+                asof_ts=asof_ts,
+                target_yyyymm=target_month,
+                goal_total=float(forecast_pax_total_goal),
+                cap_value=pax_capacity,
+            )
+            out["forecast_pax_display"] = reconciled_pax
+            forecast_pax_total_display = adjusted_pax_total
+        else:
+            forecast_pax_total_display = float(out["forecast_pax_display"].fillna(0).sum())
+    else:
+        forecast_rooms_total_display = float(out["forecast_rooms_display"].fillna(0).sum())
+        forecast_pax_total_display = float(out["forecast_pax_display"].fillna(0).sum())
+
+    forecast_revenue_display_total = forecast_revenue_total
+    if apply_monthly_rounding:
+        forecast_revenue_total_goal = monthly_rounding.round_total_goal(
+            forecast_revenue_total,
+            round_revenue_unit,
+        )
+        reconciled_revenue, adjusted_revenue_total = monthly_rounding.apply_remainder_rounding(
+            out["forecast_revenue"],
+            out["stay_date"],
+            asof_ts=asof_ts,
+            target_yyyymm=target_month,
+            goal_total=float(forecast_revenue_total_goal),
+            cap_value=None,
+        )
+        out.loc[:, "forecast_revenue_display"] = reconciled_revenue
+        forecast_revenue_display_total = adjusted_revenue_total
+
+    out["pickup_expected_from_asof_display"] = out["forecast_rooms_display"] - out["asof_oh_rooms_display"]
+    out["occ_forecast_pct_display"] = (out["forecast_rooms_display"] / cap * 100.0).astype(float)
+    denom_forecast_display = out["forecast_rooms_display"].replace(0, pd.NA)
+    out["forecast_adr_display"] = (out["forecast_revenue_display"] / denom_forecast_display).astype(float)
+    denom_cap = pd.Series(cap, index=out.index, dtype="float").replace(0, pd.NA)
+    out["forecast_revpar_display"] = (out["forecast_revenue_display"] / denom_cap).astype(float)
+
+    forecast_rooms_total_display = float(forecast_rooms_total_display)
+    forecast_pax_total_display = float(forecast_pax_total_display)
+
+    pickup_total_display = forecast_rooms_total_display - asof_total
+    if num_days > 0:
+        occ_forecast_month_display = forecast_rooms_total_display / (cap * num_days) * 100.0
+    else:
+        occ_forecast_month_display = float("nan")
+
+    denom_forecast_total_display = forecast_rooms_total_display if forecast_rooms_total_display > 0 else float("nan")
+    forecast_adr_total_display = forecast_revenue_display_total / denom_forecast_total_display
+    forecast_revpar_total_display = forecast_revenue_display_total / denom_cap_total
+
     total_row = {
         "stay_date": pd.NaT,
-        "weekday": "",
+        "weekday": pd.NA,
         "actual_rooms": actual_total,
         "asof_oh_rooms": asof_total,
         "forecast_rooms": forecast_total,
+        "actual_pax": actual_pax_total,
+        "forecast_pax": forecast_pax_total,
+        "asof_oh_pax": asof_pax_total,
+        "projected_pax": pd.NA,
+        "revenue_oh_now": revenue_oh_total,
+        "adr_oh_now": adr_oh_total,
+        "adr_pickup_est": adr_pickup_total,
+        "forecast_revenue": forecast_revenue_total,
+        "forecast_adr": forecast_adr_total,
+        "forecast_revpar": forecast_revpar_total,
+        "actual_rooms_display": actual_total,
+        "asof_oh_rooms_display": asof_total,
+        "forecast_rooms_display": forecast_rooms_total_display,
+        "actual_pax_display": actual_pax_total,
+        "forecast_pax_display": forecast_pax_total_display,
+        "asof_oh_pax_display": asof_pax_total,
+        "forecast_revenue_display": forecast_revenue_display_total,
         "diff_rooms_vs_actual": diff_total_vs_actual,
         "diff_pct_vs_actual": diff_total_pct_vs_actual,
         "pickup_expected_from_asof": pickup_total_from_asof,
+        "pickup_expected_from_asof_display": pickup_total_display,
         "diff_rooms": diff_total_vs_actual,
         "diff_pct": diff_total_pct_vs_actual,
         "occ_actual_pct": occ_actual_month,
         "occ_asof_pct": occ_asof_month,
         "occ_forecast_pct": occ_forecast_month,
+        "occ_forecast_pct_display": occ_forecast_month_display,
+        "forecast_adr_display": forecast_adr_total_display,
+        "forecast_revpar_display": forecast_revpar_total_display,
     }
 
     out = out.reset_index(drop=True)
-    out = pd.concat([out, pd.DataFrame([total_row])], ignore_index=True)
+
+    def _missing_value_for_dtype(dtype: pd.api.extensions.ExtensionDtype | np.dtype) -> object:
+        if pd.api.types.is_datetime64_any_dtype(dtype):
+            return pd.NaT
+        if pd.api.types.is_float_dtype(dtype):
+            return np.nan
+        if pd.api.types.is_integer_dtype(dtype) or pd.api.types.is_boolean_dtype(dtype):
+            return pd.NA
+        if pd.api.types.is_string_dtype(dtype):
+            return ""
+        return pd.NA
+
+    missing_row = {col: _missing_value_for_dtype(out[col].dtype) for col in out.columns}
+    missing_row.update(total_row)
+
+    def _build_total_row_df(
+        base_df: pd.DataFrame,
+        row_values: dict[str, object],
+    ) -> pd.DataFrame:
+        series_by_col: dict[str, pd.Series] = {}
+        for col in base_df.columns:
+            value = row_values.get(col, _missing_value_for_dtype(base_df[col].dtype))
+            dtype = base_df[col].dtype
+            try:
+                series = pd.Series([value], dtype=dtype)
+            except (TypeError, ValueError):
+                try:
+                    series = pd.Series([value]).astype(dtype)
+                except (TypeError, ValueError):
+                    series = pd.Series([value])
+            series_by_col[col] = series
+        total_row_df = pd.concat(series_by_col, axis=1)
+        return total_row_df[base_df.columns]
+
+    total_row_df = _build_total_row_df(out, missing_row)
+    out = pd.concat([out, total_row_df], ignore_index=True)
 
     column_order = [
         "stay_date",
@@ -1032,19 +2079,113 @@ def get_daily_forecast_table(
         "actual_rooms",
         "asof_oh_rooms",
         "forecast_rooms",
+        "actual_pax",
+        "forecast_pax",
+        "asof_oh_pax",
+        "projected_pax",
+        "revenue_oh_now",
+        "adr_oh_now",
+        "adr_pickup_est",
+        "forecast_revenue",
+        "forecast_adr",
+        "forecast_revpar",
+        "actual_rooms_display",
+        "asof_oh_rooms_display",
+        "forecast_rooms_display",
+        "actual_pax_display",
+        "forecast_pax_display",
+        "asof_oh_pax_display",
+        "forecast_revenue_display",
         "diff_rooms_vs_actual",
         "diff_pct_vs_actual",
         "pickup_expected_from_asof",
+        "pickup_expected_from_asof_display",
         "diff_rooms",
         "diff_pct",
         "occ_actual_pct",
         "occ_asof_pct",
         "occ_forecast_pct",
+        "occ_forecast_pct_display",
+        "forecast_adr_display",
+        "forecast_revpar_display",
     ]
 
     out = out[column_order]
 
     return out
+
+
+def get_daily_forecast_ly_summary(
+    hotel_tag: str,
+    target_month: str,
+    capacity: Optional[float] = None,
+) -> dict[str, float | None]:
+    try:
+        period = pd.Period(target_month, freq="M")
+    except Exception:
+        return {
+            "rooms": None,
+            "pax": None,
+            "revenue": None,
+            "adr": None,
+            "dor": None,
+            "revpar": None,
+        }
+
+    ly_period = period - 12
+    ly_month = f"{ly_period.year}{ly_period.month:02d}"
+
+    def _sum_act(value_type: str) -> float | None:
+        try:
+            df = run_forecast_batch.load_lt_csv(ly_month, hotel_tag=hotel_tag, value_type=value_type)
+        except FileNotFoundError:
+            return None
+        if df.empty:
+            return None
+        act_col = None
+        for col in df.columns:
+            try:
+                if int(col) == -1:
+                    act_col = col
+                    break
+            except Exception:
+                continue
+        if act_col is None:
+            return None
+        series = pd.to_numeric(df[act_col], errors="coerce")
+        series = series[series.notna()]
+        if series.empty:
+            return None
+        return float(series.sum())
+
+    rooms_total = _sum_act("rooms")
+    pax_total = _sum_act("pax")
+    revenue_total = _sum_act("revenue")
+
+    adr = None
+    dor = None
+    revpar = None
+    if rooms_total is not None and rooms_total > 0:
+        if pax_total is not None:
+            dor = pax_total / rooms_total
+        if revenue_total is not None:
+            adr = revenue_total / rooms_total
+
+    if revenue_total is not None:
+        cap = _get_capacity(hotel_tag, capacity)
+        days = monthrange(ly_period.year, ly_period.month)[1]
+        denom = cap * days if cap > 0 and days > 0 else None
+        if denom:
+            revpar = revenue_total / denom
+
+    return {
+        "rooms": rooms_total,
+        "pax": pax_total,
+        "revenue": revenue_total,
+        "adr": adr,
+        "dor": dor,
+        "revpar": revpar,
+    }
 
 
 def get_model_evaluation_table(hotel_tag: str) -> pd.DataFrame:
@@ -1159,6 +2300,7 @@ def get_model_evaluation_table(hotel_tag: str) -> pd.DataFrame:
             ],
         )
 
+        df_total = _drop_all_na_columns(df_total)
         out = pd.concat([df_merged, df_total], ignore_index=True)
 
     else:
@@ -1461,7 +2603,7 @@ def get_eval_monthly_by_asof(
 def run_build_lt_data_for_gui(
     hotel_tag: str,
     target_months: list[str],
-    source: str = "timeseries",
+    source: str = "daily_snapshots",
 ) -> None:
     """
     Tkinter GUI から LT_DATA 生成バッチを実行するための薄いラッパー。
@@ -1469,7 +2611,7 @@ def run_build_lt_data_for_gui(
     hotel_tag ごとに config.HOTEL_CONFIG で定義された時系列Excelを読み込み、
     run_build_lt_csv.run_build_lt_for_gui() を呼び出す。
 
-    source: "timeseries" または "daily_snapshots" を指定する。デフォルトは "timeseries"。
+    source: "timeseries" または "daily_snapshots" を指定する。デフォルトは "daily_snapshots"。
     """
 
     if not target_months:

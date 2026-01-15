@@ -15,13 +15,13 @@ from booking_curve.daily_snapshots import (
     get_latest_asof_date,
     rebuild_asof_dates_from_daily_snapshots,
 )
-from booking_curve.raw_inventory import RawInventory, build_raw_inventory
 from booking_curve.pms_adapter_nface import (
     build_daily_snapshots_fast,
     build_daily_snapshots_from_folder_partial,
     build_daily_snapshots_full_all,
     build_daily_snapshots_full_months,
 )
+from booking_curve.raw_inventory import RawInventory, build_raw_inventory
 
 EXCEL_GLOB = "*.xls*"
 LOGS_DIR = OUTPUT_DIR / "logs"
@@ -213,10 +213,7 @@ def _build_range_rebuild_plan(
     asof_min = asof_max - pd.Timedelta(days=buffer_days)
     stay_end = asof_max + pd.Timedelta(days=lookahead_days)
 
-    stay_months = {
-        f"{period.year}{period.month:02d}"
-        for period in pd.period_range(start=asof_max, end=stay_end, freq="M")
-    }
+    stay_months = {f"{period.year}{period.month:02d}" for period in pd.period_range(start=asof_max, end=stay_end, freq="M")}
 
     if asof_min.to_period("M") != asof_max.to_period("M"):
         stay_months.add((asof_min.to_period("M") - 1).strftime("%Y%m"))

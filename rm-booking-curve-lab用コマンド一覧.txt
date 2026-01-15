@@ -1,0 +1,53 @@
+python run_build_lt_csv.py（LTデータ作成）
+python build_calendar_features.py（カレンダー作成）
+python run_plot_monthly_curve.py
+
+FC系
+python run_forecast_from_avg.py
+python run_forecast_from_recent90.py
+python run_forecast_from_recent90_weighted.py
+python run_forecast_batch.py（3ポイントFC一括作成）
+
+評価系
+python build_daily_errors.py（日別誤差一括作成）
+python run_evaluate_forecasts.py（誤差評価作成）
+python run_segment_error_summary.py（タイプ別誤差作成）
+python run_full_evaluation.py
+
+python gui_main.py
+
+
+cd C:\Users\中村圭一\projects\rm-booking-curve-lab\src
+コマンドプロンプト：pyinstaller --name BookingCurveLab --windowed --noconfirm gui_main.py
+VSCode：pyinstaller --noconfirm BookingCurveLab.spec
+
+
+# いじる予定のファイルだけ、修正＋フォーマット
+ruff check booking_curve/gui_backend.py --fix
+ruff format booking_curve/gui_backend.py
+
+
+# venv 有効化後にまとめて
+python -m pip install \
+  pandas \
+  numpy \
+  matplotlib \
+  openpyxl \
+  jpholiday \
+  ruff
+
+python -m pip install tkcalendar
+
+
+スレッド引き継ぎ用（最小）：
+python make_release_zip.py --profile handover
+
+出力サンプルも入れる：
+python make_release_zip.py --with-output-samples
+
+広め（従来に近い）：
+python make_release_zip.py --profile full
+python make_release_zip.py --profile full --with-output-samples
+
+
+

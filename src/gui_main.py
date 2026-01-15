@@ -10,7 +10,8 @@ import sys
 import threading
 import time
 import tkinter as tk
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Optional
@@ -41,6 +42,70 @@ from build_daily_snapshots_from_folder import (
     load_historical_full_all_rate,
 )
 
+
+def _setup_gui_logging() -> None:
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    log_path = (LOGS_DIR / "gui_app.log").resolve()
+    root_logger = logging.getLogger()
+
+    for handler in root_logger.handlers:
+        if not isinstance(handler, RotatingFileHandler):
+            continue
+        handler_path = getattr(handler, "baseFilename", None)
+        if not handler_path:
+            continue
+        if Path(handler_path).resolve() == log_path:
+            return
+
+    handler = RotatingFileHandler(
+        log_path,
+        maxBytes=1_000_000,
+        backupCount=5,
+        encoding="utf-8",
+    )
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s - %(message)s")
+    handler.setFormatter(formatter)
+    root_logger.addHandler(handler)
+    root_logger.setLevel(logging.INFO)
+
+
+def _offer_open_logs_dir(title: str) -> None:
+    should_open = messagebox.askyesno(
+        title,
+        "エラーが発生しました。ログフォルダを開きますか？\n(ログファイル: gui_app.log)",
+    )
+    if not should_open:
+        return
+    try:
+        if sys.platform.startswith("win"):
+            os.startfile(str(LOGS_DIR))  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.run(["open", str(LOGS_DIR)], check=False)
+        else:
+            subprocess.run(["xdg-open", str(LOGS_DIR)], check=False)
+    except Exception:
+        logging.exception("Failed to open logs directory")
+
+
+def open_file(path: str | Path) -> None:
+    path_obj = Path(path)
+    path_str = str(path_obj)
+    if sys.platform.startswith("win"):
+        os.startfile(path_str)  # type: ignore[attr-defined]
+        return
+
+    if sys.platform == "darwin":
+        subprocess.run(["open", path_str], check=False)
+    else:
+        subprocess.run(["xdg-open", path_str], check=False)
+
+
+def _safe_ratio(num: float | None, denom: float | None) -> float | None:
+    if num is None or denom is None or denom == 0:
+        return None
+    return num / denom
+
+
 # プロジェクト内モジュール
 try:
     from booking_curve.config import (
@@ -48,10 +113,14 @@ try:
         LOCAL_OVERRIDES_DIR,
         STARTUP_INIT_LOG_PATH,
         clear_local_override_raw_root_dir,
+        get_hotel_rounding_units,
         get_local_overrides_path,
+        load_phase_overrides,
         pop_runtime_init_errors,
         reload_hotel_config_inplace,
         set_local_override_raw_root_dir,
+        update_hotel_rounding_units,
+        write_phase_overrides,
     )
 except Exception as exc:
     logging.exception("Failed to import booking_curve.config")
@@ -70,8 +139,9 @@ except Exception as exc:
     root.withdraw()
     messagebox.showerror(
         "起動エラー",
-        f"booking_curve.config の読み込みに失敗しました。\n{exc}\n\nログ: {log_hint}",
+        "booking_curve.config の読み込みに失敗しました。\nログファイル: startup_init.log",
     )
+    _offer_open_logs_dir("ログ確認")
     root.destroy()
     sys.exit(1)
 
@@ -81,11 +151,13 @@ try:
         OUTPUT_DIR,
         build_calendar_for_gui,
         build_range_rebuild_plan_for_gui,
+        build_topdown_revpar_panel,
         clear_evaluation_detail_cache,
         get_all_target_months_for_lt_from_daily_snapshots,
         get_best_model_for_month,
         get_booking_curve_data,
         get_calendar_coverage,
+        get_daily_forecast_ly_summary,
         get_daily_forecast_table,
         get_eval_monthly_by_asof,
         get_eval_overview_by_asof,
@@ -115,8 +187,9 @@ except Exception as exc:
     root.withdraw()
     messagebox.showerror(
         "起動エラー",
-        f"booking_curve.gui_backend の読み込みに失敗しました。\n{exc}\n\nログ: {STARTUP_INIT_LOG_PATH}",
+        "booking_curve.gui_backend の読み込みに失敗しました。\nログファイル: startup_init.log",
     )
+    _offer_open_logs_dir("ログ確認")
     root.destroy()
     sys.exit(1)
 
@@ -124,19 +197,15 @@ except Exception as exc:
 DEFAULT_HOTEL = next(iter(HOTEL_CONFIG.keys()), "daikokucho")
 SETTINGS_FILE = LOCAL_OVERRIDES_DIR / "gui_settings.json"
 LEGACY_SETTINGS_FILE = OUTPUT_DIR / "gui_settings.json"
-
-
-def open_file(path: str | Path) -> None:
-    path_obj = Path(path)
-    path_str = str(path_obj)
-    if sys.platform.startswith("win"):
-        os.startfile(path_str)  # type: ignore[attr-defined]
-        return
-
-    if sys.platform == "darwin":
-        subprocess.run(["open", path_str], check=False)
-    else:
-        subprocess.run(["xdg-open", path_str], check=False)
+PHASE_OPTIONS = ["悪化", "中立", "回復"]
+PHASE_STRENGTH_OPTIONS = ["弱", "中", "強"]
+PHASE_STRENGTH_FACTORS = {"弱": 0.4, "中": 0.7, "強": 1.0}
+PHASE_CLIP_DEFAULT = 0.05
+PHASE_CLIP_OPTIONS = [0.05, 0.1, 0.15]
+UI_GRID_PADX = 2
+UI_GRID_PADY = 1
+UI_SECTION_PADX = 6
+UI_SECTION_PADY = 4
 
 
 class BookingCurveApp(tk.Tk):
@@ -144,14 +213,17 @@ class BookingCurveApp(tk.Tk):
         super().__init__()
         self.title("Booking Curve Lab GUI")
         self.geometry("1200x900")
+        _setup_gui_logging()
+        logging.info("GUI started")
 
         init_errors = pop_runtime_init_errors()
         if init_errors:
             details = "\n".join(init_errors)
             messagebox.showerror(
                 "初期化エラー",
-                f"{details}\n\nログ: {STARTUP_INIT_LOG_PATH}",
+                f"{details}\n\nログファイル: startup_init.log",
             )
+            _offer_open_logs_dir("ログ確認")
 
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill=tk.BOTH, expand=True)
@@ -172,6 +244,8 @@ class BookingCurveApp(tk.Tk):
         self.notebook.add(self.tab_master_settings, text="マスタ設定")
 
         self._settings = self._load_settings()
+        self._phase_overrides = load_phase_overrides()
+        self._phase_override_loading = False
 
         general = self._settings.get("general") or {}
         initial_hotel = general.get("last_hotel")
@@ -263,6 +337,9 @@ class BookingCurveApp(tk.Tk):
             "mc_hotel_var",
         ):
             self._ensure_hotel_var_valid(var_name)
+
+        self._refresh_master_rounding_units()
+        self._update_master_rounding_units_state()
 
         try:
             clear_evaluation_detail_cache()
@@ -447,9 +524,37 @@ class BookingCurveApp(tk.Tk):
             general["last_hotel"] = hotel_tag
             self._save_settings()
 
-    def _get_daily_caps_for_hotel(self, hotel_tag: str) -> tuple[float, float]:
+    def _on_df_model_changed(self, model_values: list[str]) -> None:
+        try:
+            selected_model = self.df_model_var.get().strip()
+        except Exception:
+            return
+
+        if selected_model not in model_values:
+            return
+
+        general = self._settings.setdefault("general", {})
+        if general.get("last_df_model") != selected_model:
+            general["last_df_model"] = selected_model
+            self._save_settings()
+
+    def _on_bc_model_changed(self, model_values: list[str]) -> None:
+        try:
+            selected_model = self.bc_model_var.get().strip()
+        except Exception:
+            return
+
+        if selected_model not in model_values:
+            return
+
+        general = self._settings.setdefault("general", {})
+        if general.get("last_bc_model") != selected_model:
+            general["last_bc_model"] = selected_model
+            self._save_settings()
+
+    def _get_daily_caps_for_hotel(self, hotel_tag: str) -> tuple[float, float | None, float]:
         """
-        Returns (forecast_cap, occ_capacity).
+        Returns (forecast_cap_rooms, forecast_cap_pax, occ_capacity).
         """
 
         def _safe_float(value: object, fallback: float) -> float:
@@ -460,23 +565,54 @@ class BookingCurveApp(tk.Tk):
             except (TypeError, ValueError):
                 return fallback
 
+        def _safe_optional_float(value: object) -> float | None:
+            if value is None or value == "":
+                return None
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
         hotel_cfg = HOTEL_CONFIG.get(hotel_tag, {})
         base_cap = _safe_float(hotel_cfg.get("capacity"), 100.0)
         base_fc_cap = _safe_float(hotel_cfg.get("forecast_cap"), base_cap)
         daily = self._settings.get("daily_forecast", {})
-        fc_map = daily.get("forecast_cap", {})
+        fc_rooms_map = daily.get("forecast_cap_rooms", {})
+        fc_legacy_map = daily.get("forecast_cap", {})
+        fc_pax_map = daily.get("forecast_cap_pax", {})
+        pax_map = daily.get("pax_capacity", {})
         occ_map = daily.get("occ_capacity", {})
-        fc = _safe_float(fc_map.get(hotel_tag, base_fc_cap), base_fc_cap)
+        rooms_value = fc_rooms_map.get(hotel_tag)
+        if rooms_value is None or rooms_value == "":
+            rooms_value = fc_legacy_map.get(hotel_tag, base_fc_cap)
+        rooms_cap = _safe_float(rooms_value, base_fc_cap)
+        pax_cap = _safe_optional_float(pax_map.get(hotel_tag))
+        if pax_cap is None:
+            pax_cap = _safe_optional_float(fc_pax_map.get(hotel_tag))
         occ = _safe_float(occ_map.get(hotel_tag, base_cap), base_cap)
-        return fc, occ
+        return rooms_cap, pax_cap, occ
 
-    def _set_daily_caps_for_hotel(self, hotel_tag: str, forecast_cap: float, occ_capacity: float) -> None:
+    def _set_daily_caps_for_hotel(
+        self,
+        hotel_tag: str,
+        forecast_cap: float,
+        occ_capacity: float,
+        pax_capacity: float | None = None,
+    ) -> None:
         daily = self._settings.setdefault("daily_forecast", {})
-        fc_map = daily.setdefault("forecast_cap", {})
+        fc_rooms_map = daily.setdefault("forecast_cap_rooms", {})
+        fc_pax_map = daily.setdefault("forecast_cap_pax", {})
+        pax_map = daily.setdefault("pax_capacity", {})
         occ_map = daily.setdefault("occ_capacity", {})
         try:
-            fc_map[hotel_tag] = float(forecast_cap)
+            fc_rooms_map[hotel_tag] = float(forecast_cap)
             occ_map[hotel_tag] = float(occ_capacity)
+            if pax_capacity is None:
+                fc_pax_map.pop(hotel_tag, None)
+                pax_map.pop(hotel_tag, None)
+            else:
+                fc_pax_map[hotel_tag] = float(pax_capacity)
+                pax_map[hotel_tag] = float(pax_capacity)
         except Exception:
             return
         self._save_settings()
@@ -683,6 +819,213 @@ class BookingCurveApp(tk.Tk):
 
         return total
 
+    def _clear_daily_forecast_summary(self, status: str | None = None) -> None:
+        if hasattr(self, "df_status_var") and status is not None:
+            self.df_status_var.set(status)
+        if not hasattr(self, "df_summary_vars"):
+            return
+        for scope in self.df_summary_vars.values():
+            for var in scope.values():
+                var.set("N/A")
+
+    def _update_daily_forecast_summary(
+        self,
+        df: pd.DataFrame,
+        hotel: str,
+        target_month: str,
+        occ_capacity: float,
+        asof_date: str,
+    ) -> None:
+        if df is None or df.empty or "stay_date" not in df.columns:
+            self._clear_daily_forecast_summary("")
+            return
+
+        daily_rows = df[df["stay_date"].notna()].copy()
+        if daily_rows.empty:
+            self._clear_daily_forecast_summary("")
+            return
+
+        total_rows = df[df["stay_date"].isna()]
+        total_row = total_rows.iloc[0] if not total_rows.empty else None
+        num_days = int(daily_rows["stay_date"].notna().sum())
+
+        try:
+            asof_ts = pd.to_datetime(asof_date).normalize()
+        except Exception:
+            asof_ts = None
+
+        def _safe_float(value) -> float | None:
+            try:
+                if pd.isna(value):
+                    return None
+                return float(value)
+            except Exception:
+                return None
+
+        rooms_oh = _safe_float(daily_rows.get("asof_oh_rooms_display", daily_rows.get("asof_oh_rooms")).sum())
+        pax_oh = _safe_float(daily_rows.get("asof_oh_pax_display", daily_rows.get("asof_oh_pax")).sum())
+        rev_oh = _safe_float(daily_rows.get("revenue_oh_now").sum())
+
+        rooms_forecast_display = daily_rows.get("forecast_rooms_display", daily_rows.get("forecast_rooms"))
+        pax_forecast_display = daily_rows.get("forecast_pax_display", daily_rows.get("forecast_pax"))
+        actual_rooms_display = daily_rows.get("actual_rooms_display", daily_rows.get("actual_rooms"))
+        actual_pax_display = daily_rows.get("actual_pax_display", daily_rows.get("actual_pax"))
+
+        stay_dates = pd.to_datetime(daily_rows["stay_date"], errors="coerce").dt.normalize()
+        if asof_ts is None:
+            asof_ts = stay_dates.min()
+
+        mask_past = stay_dates < asof_ts
+        future_days = int((stay_dates >= asof_ts).sum())
+
+        if future_days == 0:
+            rooms_fc = None
+            pax_fc = None
+            rev_fc = None
+        else:
+            rooms_past = actual_rooms_display.where(actual_rooms_display.notna(), daily_rows.get("asof_oh_rooms"))
+            rooms_past = rooms_past.where(rooms_past.notna(), daily_rows.get("forecast_rooms"))
+            pax_past = actual_pax_display.where(actual_pax_display.notna(), daily_rows.get("asof_oh_pax"))
+            pax_past = pax_past.where(pax_past.notna(), daily_rows.get("forecast_pax"))
+            rev_past = daily_rows.get("revenue_oh_now").where(daily_rows.get("revenue_oh_now").notna(), daily_rows.get("forecast_revenue"))
+
+            projected_rooms = pd.Series(index=daily_rows.index, dtype=float)
+            projected_pax = pd.Series(index=daily_rows.index, dtype=float)
+            projected_rev = pd.Series(index=daily_rows.index, dtype=float)
+            projected_rooms.loc[mask_past] = rooms_past.loc[mask_past]
+            projected_pax.loc[mask_past] = pax_past.loc[mask_past]
+            projected_rev.loc[mask_past] = rev_past.loc[mask_past]
+            projected_rooms.loc[~mask_past] = rooms_forecast_display.loc[~mask_past]
+            projected_pax.loc[~mask_past] = pax_forecast_display.loc[~mask_past]
+            projected_rev.loc[~mask_past] = daily_rows.get("forecast_revenue").loc[~mask_past]
+
+            rooms_fc = _safe_float(projected_rooms.fillna(0).sum())
+            pax_fc = _safe_float(projected_pax.fillna(0).sum())
+            rev_fc = None
+            if total_row is not None:
+                rev_fc = _safe_float(total_row.get("forecast_revenue_display"))
+            if rev_fc is None:
+                rev_fc = _safe_float(projected_rev.fillna(0).sum())
+
+        adr_oh = _safe_float(total_row.get("adr_oh_now") if total_row is not None else None)
+        if adr_oh is None:
+            adr_oh = _safe_ratio(rev_oh, rooms_oh)
+
+        dor_oh = _safe_ratio(pax_oh, rooms_oh)
+        if future_days == 0:
+            dor_fc = None
+            adr_fc = None
+        else:
+            dor_fc = _safe_ratio(pax_fc, rooms_fc)
+            adr_fc = _safe_ratio(rev_fc, rooms_fc)
+
+        if rooms_oh is not None and occ_capacity > 0 and num_days > 0:
+            occ_oh = rooms_oh / (occ_capacity * num_days) * 100.0
+        else:
+            occ_oh = None
+
+        if future_days == 0:
+            occ_fc = None
+        else:
+            if rooms_fc is not None and occ_capacity > 0 and num_days > 0:
+                occ_fc = rooms_fc / (occ_capacity * num_days) * 100.0
+            else:
+                occ_fc = None
+
+        revpar_oh = None
+        revpar_fc = None
+        if rev_oh is not None and occ_capacity > 0 and num_days > 0:
+            revpar_oh = rev_oh / (occ_capacity * num_days)
+        if future_days != 0 and rev_fc is not None and occ_capacity > 0 and num_days > 0:
+            revpar_fc = rev_fc / (occ_capacity * num_days)
+
+        if future_days == 0:
+            pickup_rooms = None
+            pickup_pax = None
+            pickup_rev = None
+            pickup_adr = None
+            pickup_dor = None
+            pickup_occ = None
+            pickup_revpar = None
+        else:
+            pickup_rooms = None
+            pickup_pax = None
+            pickup_rev = None
+            if rooms_fc is not None and rooms_oh is not None:
+                pickup_rooms = rooms_fc - rooms_oh
+            if pax_fc is not None and pax_oh is not None:
+                pickup_pax = pax_fc - pax_oh
+            if rev_fc is not None and rev_oh is not None:
+                pickup_rev = rev_fc - rev_oh
+
+            pickup_adr = _safe_ratio(pickup_rev, pickup_rooms)
+            pickup_dor = _safe_ratio(pickup_pax, pickup_rooms)
+            if pickup_rooms is not None and occ_capacity > 0 and num_days > 0:
+                pickup_occ = pickup_rooms / (occ_capacity * num_days) * 100.0
+            else:
+                pickup_occ = None
+            if pickup_rev is not None and occ_capacity > 0 and num_days > 0:
+                pickup_revpar = pickup_rev / (occ_capacity * num_days)
+            else:
+                pickup_revpar = None
+
+        ly = get_daily_forecast_ly_summary(hotel_tag=hotel, target_month=target_month, capacity=occ_capacity)
+        ly_occ = None
+        if ly.get("rooms") is not None and occ_capacity > 0 and num_days > 0:
+            ly_occ = float(ly["rooms"]) / (occ_capacity * num_days) * 100.0
+
+        def _fmt_metric(metric: str, value: float | None, empty_label: str = "N/A") -> str:
+            if value is None or pd.isna(value):
+                return empty_label
+            if metric in ("Rooms", "Pax", "Rev"):
+                return _fmt_num(value)
+            if metric in ("ADR", "RevPAR"):
+                return _fmt_num(value)
+            if metric == "DOR":
+                return f"{float(value):.2f}"
+            if metric == "OCC":
+                return f"{float(value):.1f}%"
+            return _fmt_num(value)
+
+        self.df_summary_vars["oh"]["Rooms"].set(_fmt_metric("Rooms", rooms_oh))
+        forecast_empty_label = "-" if future_days == 0 else "N/A"
+        self.df_summary_vars["forecast"]["Rooms"].set(_fmt_metric("Rooms", rooms_fc, empty_label=forecast_empty_label))
+        self.df_summary_vars["pickup"]["Rooms"].set(_fmt_metric("Rooms", pickup_rooms, empty_label="-"))
+        self.df_summary_vars["ly"]["Rooms"].set(_fmt_metric("Rooms", ly.get("rooms"), empty_label="-"))
+
+        self.df_summary_vars["oh"]["Pax"].set(_fmt_metric("Pax", pax_oh))
+        self.df_summary_vars["forecast"]["Pax"].set(_fmt_metric("Pax", pax_fc, empty_label=forecast_empty_label))
+        self.df_summary_vars["pickup"]["Pax"].set(_fmt_metric("Pax", pickup_pax, empty_label="-"))
+        self.df_summary_vars["ly"]["Pax"].set(_fmt_metric("Pax", ly.get("pax"), empty_label="-"))
+
+        self.df_summary_vars["oh"]["Rev"].set(_fmt_metric("Rev", rev_oh))
+        self.df_summary_vars["forecast"]["Rev"].set(_fmt_metric("Rev", rev_fc, empty_label=forecast_empty_label))
+        self.df_summary_vars["pickup"]["Rev"].set(_fmt_metric("Rev", pickup_rev, empty_label="-"))
+        self.df_summary_vars["ly"]["Rev"].set(_fmt_metric("Rev", ly.get("revenue"), empty_label="-"))
+
+        self.df_summary_vars["oh"]["OCC"].set(_fmt_metric("OCC", occ_oh))
+        self.df_summary_vars["forecast"]["OCC"].set(_fmt_metric("OCC", occ_fc, empty_label=forecast_empty_label))
+        self.df_summary_vars["pickup"]["OCC"].set(_fmt_metric("OCC", pickup_occ, empty_label="-"))
+        self.df_summary_vars["ly"]["OCC"].set(_fmt_metric("OCC", ly_occ, empty_label="-"))
+
+        self.df_summary_vars["oh"]["ADR"].set(_fmt_metric("ADR", adr_oh))
+        self.df_summary_vars["forecast"]["ADR"].set(_fmt_metric("ADR", adr_fc, empty_label=forecast_empty_label))
+        self.df_summary_vars["pickup"]["ADR"].set(_fmt_metric("ADR", pickup_adr, empty_label="-"))
+        self.df_summary_vars["ly"]["ADR"].set(_fmt_metric("ADR", ly.get("adr"), empty_label="-"))
+
+        self.df_summary_vars["oh"]["DOR"].set(_fmt_metric("DOR", dor_oh))
+        self.df_summary_vars["forecast"]["DOR"].set(_fmt_metric("DOR", dor_fc, empty_label=forecast_empty_label))
+        self.df_summary_vars["pickup"]["DOR"].set(_fmt_metric("DOR", pickup_dor, empty_label="-"))
+        self.df_summary_vars["ly"]["DOR"].set(_fmt_metric("DOR", ly.get("dor"), empty_label="-"))
+
+        self.df_summary_vars["oh"]["RevPAR"].set(_fmt_metric("RevPAR", revpar_oh))
+        self.df_summary_vars["forecast"]["RevPAR"].set(_fmt_metric("RevPAR", revpar_fc, empty_label=forecast_empty_label))
+        self.df_summary_vars["pickup"]["RevPAR"].set(_fmt_metric("RevPAR", pickup_revpar, empty_label="-"))
+        self.df_summary_vars["ly"]["RevPAR"].set(_fmt_metric("RevPAR", ly.get("revpar"), empty_label="-"))
+
+        if hasattr(self, "df_status_var"):
+            self.df_status_var.set("表示中")
+
     def _update_daily_forecast_scenario_label(
         self,
         best_3m: dict | None,
@@ -759,6 +1102,7 @@ class BookingCurveApp(tk.Tk):
     def _on_df_shift_month(self, delta_months: int) -> None:
         self._shift_month_var(self.df_month_var, delta_months)
         self._update_df_latest_asof_label(False)
+        self._refresh_phase_overrides_ui()
 
     def _on_bc_shift_month(self, delta_months: int) -> None:
         self._shift_month_var(self.bc_month_var, delta_months)
@@ -779,53 +1123,162 @@ class BookingCurveApp(tk.Tk):
 
         # ------- カレンダー設定 -------
         calendar_frame = ttk.LabelFrame(frame, text="カレンダー")
-        calendar_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
+        calendar_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=UI_SECTION_PADY)
 
         ttk.Label(calendar_frame, text="ホテル:").grid(row=0, column=0, sticky="w")
         self.hotel_combo = ttk.Combobox(calendar_frame, textvariable=self.hotel_var, state="readonly")
         self.hotel_combo["values"] = sorted(HOTEL_CONFIG.keys())
-        self.hotel_combo.grid(row=0, column=1, padx=4, pady=2, sticky="w")
+        self.hotel_combo.grid(row=0, column=1, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
         self.hotel_combo.bind("<<ComboboxSelected>>", self._on_hotel_changed)
 
         self.calendar_coverage_var = tk.StringVar()
         self.calendar_coverage_label = ttk.Label(calendar_frame, textvariable=self.calendar_coverage_var)
-        self.calendar_coverage_label.grid(row=1, column=0, columnspan=3, padx=4, pady=2, sticky="w")
+        self.calendar_coverage_label.grid(
+            row=1,
+            column=0,
+            columnspan=3,
+            padx=UI_GRID_PADX,
+            pady=UI_GRID_PADY,
+            sticky="w",
+        )
 
         self.calendar_build_button = ttk.Button(
             calendar_frame,
             text="カレンダー再生成",
             command=self._on_build_calendar_clicked,
         )
-        self.calendar_build_button.grid(row=1, column=3, padx=4, pady=2, sticky="e")
+        self.calendar_build_button.grid(row=1, column=3, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="e")
 
         # ------- 日別FC / ブッキング共通キャパ設定 -------
         caps_frame = ttk.LabelFrame(frame, text="日別フォーキャスト / ブッキングカーブ共通設定")
-        caps_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 8))
+        caps_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, UI_SECTION_PADY))
 
-        ttk.Label(caps_frame, text="予測キャップ:").grid(row=0, column=0, sticky="w", padx=4, pady=2)
+        ttk.Label(caps_frame, text="予測キャップ:").grid(
+            row=0,
+            column=0,
+            sticky="w",
+            padx=UI_GRID_PADX,
+            pady=UI_GRID_PADY,
+        )
         self.master_fc_cap_var = tk.StringVar()
-        ttk.Entry(caps_frame, textvariable=self.master_fc_cap_var, width=8).grid(row=0, column=1, padx=4, pady=2, sticky="w")
+        ttk.Entry(caps_frame, textvariable=self.master_fc_cap_var, width=8).grid(
+            row=0,
+            column=1,
+            padx=UI_GRID_PADX,
+            pady=UI_GRID_PADY,
+            sticky="w",
+        )
 
-        ttk.Label(caps_frame, text="稼働率キャパ:").grid(row=0, column=2, sticky="w", padx=12, pady=2)
+        ttk.Label(caps_frame, text="稼働率キャパ:").grid(
+            row=0,
+            column=2,
+            sticky="w",
+            padx=UI_GRID_PADX * 2,
+            pady=UI_GRID_PADY,
+        )
         self.master_occ_cap_var = tk.StringVar()
-        ttk.Entry(caps_frame, textvariable=self.master_occ_cap_var, width=8).grid(row=0, column=3, padx=4, pady=2, sticky="w")
+        ttk.Entry(caps_frame, textvariable=self.master_occ_cap_var, width=8).grid(
+            row=0,
+            column=3,
+            padx=UI_GRID_PADX,
+            pady=UI_GRID_PADY,
+            sticky="w",
+        )
 
         ttk.Button(
             caps_frame,
             text="保存（このホテルのみ）",
             command=self._on_save_master_daily_caps,
-        ).grid(row=0, column=4, padx=12, pady=2, sticky="e")
+        ).grid(row=0, column=4, padx=UI_GRID_PADX * 2, pady=UI_GRID_PADY, sticky="e")
+
+        # ------- 月次丸め単位 -------
+        rounding_frame = ttk.LabelFrame(frame, text="月次丸め単位")
+        rounding_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, UI_SECTION_PADY))
+
+        ttk.Label(rounding_frame, text="Rooms:").grid(
+            row=0,
+            column=0,
+            sticky="w",
+            padx=UI_GRID_PADX,
+            pady=UI_GRID_PADY,
+        )
+        self.master_round_rooms_var = tk.StringVar()
+        round_rooms_spin = ttk.Spinbox(
+            rounding_frame,
+            from_=1,
+            to=1000000,
+            increment=1,
+            textvariable=self.master_round_rooms_var,
+            width=8,
+        )
+        round_rooms_spin.grid(row=0, column=1, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
+
+        ttk.Label(rounding_frame, text="Pax:").grid(
+            row=0,
+            column=2,
+            sticky="w",
+            padx=UI_GRID_PADX * 2,
+            pady=UI_GRID_PADY,
+        )
+        self.master_round_pax_var = tk.StringVar()
+        round_pax_spin = ttk.Spinbox(
+            rounding_frame,
+            from_=1,
+            to=1000000,
+            increment=1,
+            textvariable=self.master_round_pax_var,
+            width=8,
+        )
+        round_pax_spin.grid(row=0, column=3, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
+
+        ttk.Label(rounding_frame, text="Rev:").grid(
+            row=0,
+            column=4,
+            sticky="w",
+            padx=UI_GRID_PADX * 2,
+            pady=UI_GRID_PADY,
+        )
+        self.master_round_rev_var = tk.StringVar()
+        round_rev_spin = ttk.Spinbox(
+            rounding_frame,
+            from_=1,
+            to=100000000,
+            increment=1,
+            textvariable=self.master_round_rev_var,
+            width=10,
+        )
+        round_rev_spin.grid(row=0, column=5, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
+
+        round_save_btn = ttk.Button(
+            rounding_frame,
+            text="保存（このホテルのみ）",
+            command=self._on_save_master_rounding_units,
+        )
+        round_save_btn.grid(row=0, column=6, padx=UI_GRID_PADX * 2, pady=UI_GRID_PADY, sticky="e")
+
+        self.master_rounding_widgets = [
+            round_rooms_spin,
+            round_pax_spin,
+            round_rev_spin,
+            round_save_btn,
+        ]
 
         # ------- RAW取込元（このPCのみ） -------
         raw_root_frame = ttk.LabelFrame(frame, text="RAW取込元（このPCのみ）")
-        raw_root_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 8))
+        raw_root_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, UI_SECTION_PADY))
 
         ttk.Label(
             raw_root_frame,
             text="この設定はこのPCのみ有効です（hotels.jsonは変更しません）。",
-        ).grid(row=0, column=0, columnspan=3, padx=4, pady=(2, 6), sticky="w")
+        ).grid(row=0, column=0, columnspan=3, padx=UI_GRID_PADX, pady=(UI_GRID_PADY, UI_GRID_PADY + 2), sticky="w")
 
-        ttk.Label(raw_root_frame, text="現在のRAW取込元:").grid(row=1, column=0, sticky="nw", padx=4, pady=2)
+        ttk.Label(raw_root_frame, text="現在のRAW取込元:").grid(
+            row=1,
+            column=0,
+            sticky="nw",
+            padx=UI_GRID_PADX,
+            pady=UI_GRID_PADY,
+        )
         self.master_raw_root_dir_var = tk.StringVar()
         self.master_raw_root_dir_label = ttk.Label(
             raw_root_frame,
@@ -833,18 +1286,25 @@ class BookingCurveApp(tk.Tk):
             wraplength=800,
             justify="left",
         )
-        self.master_raw_root_dir_label.grid(row=1, column=1, columnspan=2, padx=4, pady=2, sticky="w")
+        self.master_raw_root_dir_label.grid(
+            row=1,
+            column=1,
+            columnspan=2,
+            padx=UI_GRID_PADX,
+            pady=UI_GRID_PADY,
+            sticky="w",
+        )
 
         ttk.Button(
             raw_root_frame,
             text="変更...",
             command=self._on_change_master_raw_root_dir,
-        ).grid(row=2, column=1, padx=4, pady=4, sticky="w")
+        ).grid(row=2, column=1, padx=UI_GRID_PADX, pady=UI_GRID_PADY + 1, sticky="w")
         ttk.Button(
             raw_root_frame,
             text="初期値に戻す",
             command=self._on_clear_master_raw_root_dir,
-        ).grid(row=2, column=2, padx=4, pady=4, sticky="w")
+        ).grid(row=2, column=2, padx=UI_GRID_PADX, pady=UI_GRID_PADY + 1, sticky="w")
 
         local_overrides_path = get_local_overrides_path()
         ttk.Label(
@@ -853,10 +1313,10 @@ class BookingCurveApp(tk.Tk):
             foreground="#555555",
             wraplength=800,
             justify="left",
-        ).grid(row=3, column=0, columnspan=3, padx=4, pady=(2, 4), sticky="w")
+        ).grid(row=3, column=0, columnspan=3, padx=UI_GRID_PADX, pady=(UI_GRID_PADY, UI_GRID_PADY + 1), sticky="w")
 
         output_frame = ttk.LabelFrame(frame, text="出力フォルダ")
-        output_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 8))
+        output_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, UI_SECTION_PADY))
 
         ttk.Label(
             output_frame,
@@ -864,16 +1324,16 @@ class BookingCurveApp(tk.Tk):
             foreground="#555555",
             wraplength=800,
             justify="left",
-        ).grid(row=0, column=0, padx=4, pady=2, sticky="w")
+        ).grid(row=0, column=0, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
 
         ttk.Button(
             output_frame,
             text="出力フォルダを開く",
             command=self._on_open_output_dir,
-        ).grid(row=0, column=1, padx=8, pady=2, sticky="w")
+        ).grid(row=0, column=1, padx=UI_GRID_PADX * 2, pady=UI_GRID_PADY, sticky="w")
 
         config_frame = ttk.LabelFrame(frame, text="設定フォルダ")
-        config_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 8))
+        config_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, UI_SECTION_PADY))
 
         ttk.Label(
             config_frame,
@@ -881,65 +1341,77 @@ class BookingCurveApp(tk.Tk):
             foreground="#555555",
             wraplength=800,
             justify="left",
-        ).grid(row=0, column=0, padx=4, pady=2, sticky="w")
+        ).grid(row=0, column=0, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
 
         ttk.Button(
             config_frame,
             text="設定フォルダを開く",
             command=self._on_open_config_dir,
-        ).grid(row=0, column=1, padx=8, pady=2, sticky="w")
+        ).grid(row=0, column=1, padx=UI_GRID_PADX * 2, pady=UI_GRID_PADY, sticky="w")
 
         ttk.Button(
             config_frame,
             text="設定を再読み込み",
             command=self._on_reload_settings_clicked,
-        ).grid(row=0, column=2, padx=8, pady=2, sticky="w")
+        ).grid(row=0, column=2, padx=UI_GRID_PADX * 2, pady=UI_GRID_PADY, sticky="w")
 
         advanced_frame = ttk.LabelFrame(frame, text="Advanced / Daily snapshots")
-        advanced_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 8))
+        advanced_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, UI_SECTION_PADY))
 
         ttk.Label(
             advanced_frame,
             text="FULL_ALL は大量処理です。事前確認のうえ実行してください。",
-        ).grid(row=0, column=0, columnspan=2, padx=4, pady=2, sticky="w")
+        ).grid(row=0, column=0, columnspan=2, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
         self.full_all_button = ttk.Button(
             advanced_frame,
             text="Daily snapshots 全量再生成（危険）",
             command=self._on_run_full_all_snapshots,
         )
-        self.full_all_button.grid(row=1, column=0, padx=4, pady=4, sticky="w")
+        self.full_all_button.grid(row=1, column=0, padx=UI_GRID_PADX, pady=UI_GRID_PADY + 1, sticky="w")
         self.full_all_status_var = tk.StringVar(value="")
-        ttk.Label(advanced_frame, textvariable=self.full_all_status_var).grid(row=1, column=1, padx=4, pady=4, sticky="w")
+        ttk.Label(advanced_frame, textvariable=self.full_all_status_var).grid(
+            row=1,
+            column=1,
+            padx=UI_GRID_PADX,
+            pady=UI_GRID_PADY + 1,
+            sticky="w",
+        )
 
         self.lt_all_button = ttk.Button(
             advanced_frame,
             text="LT_DATA 全期間生成（危険）",
             command=self._on_run_lt_all,
         )
-        self.lt_all_button.grid(row=2, column=0, padx=4, pady=4, sticky="w")
+        self.lt_all_button.grid(row=2, column=0, padx=UI_GRID_PADX, pady=UI_GRID_PADY + 1, sticky="w")
         self.lt_all_status_var = tk.StringVar(value="")
-        ttk.Label(advanced_frame, textvariable=self.lt_all_status_var).grid(row=2, column=1, padx=4, pady=4, sticky="w")
+        ttk.Label(advanced_frame, textvariable=self.lt_all_status_var).grid(
+            row=2,
+            column=1,
+            padx=UI_GRID_PADX,
+            pady=UI_GRID_PADY + 1,
+            sticky="w",
+        )
 
         ttk.Button(
             advanced_frame,
             text="欠損チェック（運用）",
             command=self._on_run_missing_check,
-        ).grid(row=3, column=0, padx=4, pady=4, sticky="w")
+        ).grid(row=3, column=0, padx=UI_GRID_PADX, pady=UI_GRID_PADY + 1, sticky="w")
         ttk.Button(
             advanced_frame,
             text="欠損一覧（運用）",
             command=self._on_open_missing_ops_list,
-        ).grid(row=3, column=1, padx=4, pady=4, sticky="w")
+        ).grid(row=3, column=1, padx=UI_GRID_PADX, pady=UI_GRID_PADY + 1, sticky="w")
         ttk.Button(
             advanced_frame,
             text="欠損監査（全期間）",
             command=self._on_run_missing_audit,
-        ).grid(row=4, column=0, padx=4, pady=4, sticky="w")
+        ).grid(row=4, column=0, padx=UI_GRID_PADX, pady=UI_GRID_PADY + 1, sticky="w")
         ttk.Button(
             advanced_frame,
             text="欠損だけ取り込み",
             command=self._on_run_import_missing_only,
-        ).grid(row=5, column=0, padx=4, pady=4, sticky="w")
+        ).grid(row=5, column=0, padx=UI_GRID_PADX, pady=UI_GRID_PADY + 1, sticky="w")
 
         self.master_missing_check_status_var = tk.StringVar(value="欠損検査：未実施")
         self.master_missing_check_status_label = ttk.Label(
@@ -947,11 +1419,20 @@ class BookingCurveApp(tk.Tk):
             textvariable=self.master_missing_check_status_var,
             foreground="#555555",
         )
-        self.master_missing_check_status_label.grid(row=6, column=0, columnspan=2, padx=4, pady=(8, 4), sticky="w")
+        self.master_missing_check_status_label.grid(
+            row=6,
+            column=0,
+            columnspan=2,
+            padx=UI_GRID_PADX,
+            pady=(UI_GRID_PADY + 3, UI_GRID_PADY + 1),
+            sticky="w",
+        )
 
         # 初期表示
         self._refresh_calendar_coverage()
         self._refresh_master_daily_caps()
+        self._refresh_master_rounding_units()
+        self._update_master_rounding_units_state()
         self._refresh_master_raw_root_dir()
         self._update_master_missing_check_status()
 
@@ -959,6 +1440,8 @@ class BookingCurveApp(tk.Tk):
         # マスタ設定タブのホテル変更時に、カレンダー範囲とキャパ設定を両方更新
         self._refresh_calendar_coverage()
         self._refresh_master_daily_caps()
+        self._refresh_master_rounding_units()
+        self._update_master_rounding_units_state()
         self._refresh_master_raw_root_dir()
         self._update_master_missing_check_status()
 
@@ -974,12 +1457,15 @@ class BookingCurveApp(tk.Tk):
 
         self._refresh_calendar_coverage()
         self._refresh_master_daily_caps()
+        self._refresh_master_rounding_units()
+        self._update_master_rounding_units_state()
         self._refresh_master_raw_root_dir()
         self._update_master_missing_check_status()
 
         if hasattr(self, "df_hotel_var"):
-            fc_cap, occ_cap = self._get_daily_caps_for_hotel(hotel_tag)
+            fc_cap, pax_cap, occ_cap = self._get_daily_caps_for_hotel(hotel_tag)
             self.df_forecast_cap_var.set(str(fc_cap))
+            self.df_forecast_cap_pax_var.set("" if pax_cap is None else str(pax_cap))
             self.df_occ_cap_var.set(str(occ_cap))
             self._update_df_latest_asof_label(update_asof_if_empty=False)
             self._update_df_best_model_label()
@@ -992,7 +1478,7 @@ class BookingCurveApp(tk.Tk):
             self.df_table_df = None
 
         if hasattr(self, "bc_hotel_var"):
-            fc_cap, _ = self._get_daily_caps_for_hotel(hotel_tag)
+            fc_cap, _, _ = self._get_daily_caps_for_hotel(hotel_tag)
             self.bc_forecast_cap_var.set(str(fc_cap))
             self._update_bc_latest_asof_label(update_asof_if_empty=False)
             self._update_bc_best_model_label()
@@ -1079,7 +1565,7 @@ class BookingCurveApp(tk.Tk):
             self.master_occ_cap_var.set("")
             return
 
-        fc_cap, occ_cap = self._get_daily_caps_for_hotel(hotel_tag)
+        fc_cap, _, occ_cap = self._get_daily_caps_for_hotel(hotel_tag)
         # 整数っぽい値は整数表示、それ以外はそのまま
         try:
             self.master_fc_cap_var.set(str(int(fc_cap)))
@@ -1089,6 +1575,65 @@ class BookingCurveApp(tk.Tk):
             self.master_occ_cap_var.set(str(int(occ_cap)))
         except Exception:
             self.master_occ_cap_var.set(str(occ_cap))
+
+    def _refresh_master_rounding_units(self) -> None:
+        if not hasattr(self, "master_round_rooms_var"):
+            return
+
+        hotel_tag = self.hotel_var.get().strip()
+        if not hotel_tag:
+            self.master_round_rooms_var.set("")
+            self.master_round_pax_var.set("")
+            self.master_round_rev_var.set("")
+            return
+
+        rounding_units = get_hotel_rounding_units(hotel_tag)
+        self.master_round_rooms_var.set(str(rounding_units["rooms"]))
+        self.master_round_pax_var.set(str(rounding_units["pax"]))
+        self.master_round_rev_var.set(str(rounding_units["revenue"]))
+
+    def _update_master_rounding_units_state(self) -> None:
+        if not hasattr(self, "master_rounding_widgets"):
+            return
+        is_enabled = True
+        if hasattr(self, "df_monthly_rounding_var"):
+            is_enabled = bool(self.df_monthly_rounding_var.get())
+        state = "normal" if is_enabled else "disabled"
+        for widget in self.master_rounding_widgets:
+            try:
+                widget.configure(state=state)
+            except Exception:
+                pass
+
+    def _on_save_master_rounding_units(self) -> None:
+        hotel_tag = self.hotel_var.get().strip()
+        if not hotel_tag:
+            messagebox.showerror("エラー", "ホテルが選択されていません。")
+            return
+
+        try:
+            rooms_unit = int(self.master_round_rooms_var.get().strip())
+            pax_unit = int(self.master_round_pax_var.get().strip())
+            rev_unit = int(self.master_round_rev_var.get().strip())
+        except Exception:
+            messagebox.showerror("エラー", "月次丸め単位には整数を入力してください。")
+            return
+
+        if rooms_unit <= 0 or pax_unit <= 0 or rev_unit <= 0:
+            messagebox.showerror("エラー", "月次丸め単位は 1 以上の整数を入力してください。")
+            return
+
+        try:
+            update_hotel_rounding_units(
+                hotel_tag,
+                {"rooms": rooms_unit, "pax": pax_unit, "revenue": rev_unit},
+            )
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("エラー", f"月次丸め単位の保存に失敗しました。\n{exc}")
+            return
+
+        self._refresh_master_rounding_units()
+        messagebox.showinfo("保存完了", "月次丸め単位を保存しました。")
 
     def _refresh_master_raw_root_dir(self) -> None:
         if not hasattr(self, "master_raw_root_dir_var"):
@@ -1224,8 +1769,10 @@ class BookingCurveApp(tk.Tk):
             messagebox.showerror("エラー", "キャパシティには数値を入力してください。")
             return
 
+        _, pax_cap, _ = self._get_daily_caps_for_hotel(hotel_tag)
+
         # 永続化
-        self._set_daily_caps_for_hotel(hotel_tag, fc_val, occ_val)
+        self._set_daily_caps_for_hotel(hotel_tag, fc_val, occ_val, pax_cap)
 
         # 日別フォーキャストタブに反映（同じホテルを見ている場合のみ）
         if hasattr(self, "df_hotel_var") and self.df_hotel_var.get().strip() == hotel_tag:
@@ -1756,169 +2303,340 @@ class BookingCurveApp(tk.Tk):
         frame = self.tab_daily_forecast
 
         # 上部入力フォーム
-        form = ttk.Frame(frame)
-        form.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
+        header_frame = ttk.Frame(frame)
+        header_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(UI_GRID_PADY + 1, 1))
+        header_frame.grid_columnconfigure(0, weight=0)
+        header_frame.grid_columnconfigure(1, weight=1)
+        header_frame.grid_columnconfigure(2, weight=0)
+
+        left_zone = ttk.Frame(header_frame)
+        left_zone.grid(row=0, column=0, sticky="nw")
+        ttk.Frame(header_frame).grid(row=0, column=1, sticky="nsew")
+        right_zone = ttk.Frame(header_frame)
+        right_zone.grid(row=0, column=2, sticky="ne", padx=(UI_GRID_PADX * 2, 0))
+
+        left_row1 = ttk.Frame(left_zone)
+        left_row1.pack(side=tk.TOP, anchor="w")
+        left_row2 = ttk.Frame(left_zone)
+        left_row2.pack(side=tk.TOP, anchor="w")
+        left_row3 = ttk.Frame(left_zone)
+        left_row3.pack(side=tk.TOP, anchor="w")
+        left_row4 = ttk.Frame(left_zone)
+        left_row4.pack(side=tk.TOP, anchor="w")
 
         # ホテル
-        ttk.Label(form, text="ホテル:").grid(row=0, column=0, sticky="w")
+        ttk.Label(left_row1, text="ホテル:").pack(side=tk.LEFT)
         self.df_hotel_var = self.hotel_var
-        hotel_combo = ttk.Combobox(form, textvariable=self.df_hotel_var, state="readonly")
+        hotel_combo = ttk.Combobox(left_row1, textvariable=self.df_hotel_var, state="readonly", width=11)
         hotel_combo["values"] = sorted(HOTEL_CONFIG.keys())
-        hotel_combo.grid(row=0, column=1, padx=4, pady=2)
+        hotel_combo.pack(side=tk.LEFT, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
         hotel_combo.bind("<<ComboboxSelected>>", self._on_df_hotel_changed)
 
         # 対象月
-        ttk.Label(form, text="対象月 (YYYYMM):").grid(row=0, column=2, sticky="w")
+        ttk.Label(left_row1, text="対象月 (YYYYMM):").pack(side=tk.LEFT)
         current_month = date.today().strftime("%Y%m")
         self.df_month_var = tk.StringVar(value=current_month)
-        ttk.Entry(form, textvariable=self.df_month_var, width=8).grid(row=0, column=3, padx=4, pady=2)
+        ttk.Entry(left_row1, textvariable=self.df_month_var, width=8).pack(
+            side=tk.LEFT,
+            padx=UI_GRID_PADX,
+            pady=UI_GRID_PADY,
+        )
+        self.df_month_var.trace_add("write", lambda *_: self._refresh_phase_overrides_ui())
+
+        nav_frame = ttk.Frame(left_row1)
+        nav_frame.pack(side=tk.LEFT, padx=(UI_GRID_PADX, 0), pady=UI_GRID_PADY)
+        ttk.Label(nav_frame, text="月移動:").pack(side=tk.LEFT, padx=(0, UI_GRID_PADX))
+        ttk.Button(
+            nav_frame,
+            text="-1Y",
+            width=4,
+            command=lambda: self._on_df_shift_month(-12),
+        ).pack(side=tk.LEFT, padx=1)
+        ttk.Button(
+            nav_frame,
+            text="-1M",
+            width=4,
+            command=lambda: self._on_df_shift_month(-1),
+        ).pack(side=tk.LEFT, padx=1)
+        ttk.Button(
+            nav_frame,
+            text="+1M",
+            width=4,
+            command=lambda: self._on_df_shift_month(+1),
+        ).pack(side=tk.LEFT, padx=1)
+        ttk.Button(
+            nav_frame,
+            text="+1Y",
+            width=4,
+            command=lambda: self._on_df_shift_month(+12),
+        ).pack(side=tk.LEFT, padx=1)
 
         # as_of
-        ttk.Label(form, text="AS OF (YYYY-MM-DD):").grid(row=0, column=4, sticky="w")
+        ttk.Label(left_row2, text="AS OF (YYYY-MM-DD):").pack(side=tk.LEFT)
         self.df_asof_var = tk.StringVar(value="")
         if DateEntry is not None:
             self.df_asof_entry = DateEntry(
-                form,
+                left_row2,
                 textvariable=self.df_asof_var,
                 date_pattern="yyyy-mm-dd",
                 width=12,
             )
         else:
             self.df_asof_entry = ttk.Entry(
-                form,
+                left_row2,
                 textvariable=self.df_asof_var,
                 width=12,
             )
-        self.df_asof_entry.grid(row=0, column=5, padx=4, pady=2)
+        self.df_asof_entry.pack(side=tk.LEFT, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
 
         self.df_latest_asof_var = tk.StringVar(value="")
-        ttk.Label(form, text="最新ASOF:").grid(row=0, column=6, sticky="w")
-        self.df_latest_asof_label = tk.Label(form, textvariable=self.df_latest_asof_var, width=12, anchor="w")
+        ttk.Label(left_row2, text="最新ASOF:").pack(side=tk.LEFT)
+        self.df_latest_asof_label = tk.Label(left_row2, textvariable=self.df_latest_asof_var, width=12, anchor="w")
         self._latest_asof_label_defaults[self.df_latest_asof_label] = (
             self.df_latest_asof_label.cget("background"),
             self.df_latest_asof_label.cget("foreground"),
         )
-        self.df_latest_asof_label.grid(row=0, column=7, padx=4, pady=2, sticky="w")
-        ttk.Button(form, text="最新に反映", command=self._on_df_set_asof_to_latest).grid(row=0, column=8, padx=4, pady=2, sticky="w")
+        self.df_latest_asof_label.pack(side=tk.LEFT, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        ttk.Button(left_row2, text="最新に反映", command=self._on_df_set_asof_to_latest).pack(
+            side=tk.LEFT,
+            padx=UI_GRID_PADX,
+            pady=UI_GRID_PADY,
+        )
 
         # モデル
-        ttk.Label(form, text="モデル:").grid(row=1, column=0, sticky="w", pady=(4, 2))
-        self.df_model_var = tk.StringVar(value="recent90w")
-        model_combo = ttk.Combobox(
-            form,
-            textvariable=self.df_model_var,
-            state="readonly",
-            width=14,
-        )
-        model_combo["values"] = [
+        ttk.Label(left_row3, text="モデル:").pack(side=tk.LEFT, pady=(UI_GRID_PADY + 1, UI_GRID_PADY))
+        model_values = [
             "recent90",
             "recent90w",
             "pace14",
             "pace14_market",
         ]
-        model_combo.grid(row=1, column=1, padx=4, pady=(4, 2))
+        general_settings = self._settings.get("general") or {}
+        default_model = "recent90w"
+        saved_model = general_settings.get("last_df_model")
+        initial_model = saved_model if saved_model in model_values else default_model
+        self.df_model_var = tk.StringVar(value=initial_model)
+        model_combo = ttk.Combobox(
+            left_row3,
+            textvariable=self.df_model_var,
+            state="readonly",
+            width=16,
+        )
+        model_combo["values"] = model_values
+        model_combo.pack(side=tk.LEFT, padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 1, UI_GRID_PADY))
+        self.df_model_var.trace_add("write", lambda *_: self._on_df_model_changed(model_values))
+
+        # 実行ボタン
+        forecast_btn = ttk.Button(
+            left_row3,
+            text="Forecast実行",
+            command=self._on_run_daily_forecast,
+        )
+        forecast_btn.pack(side=tk.LEFT, padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 1, UI_GRID_PADY))
+        ttk.Button(
+            left_row3,
+            text="TopDown RevPAR",
+            command=self._open_topdown_revpar_popup,
+        ).pack(side=tk.LEFT, padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 1, UI_GRID_PADY))
+        export_btn = ttk.Button(left_row3, text="CSV出力", command=self._on_export_daily_forecast_csv)
+        export_btn.pack(side=tk.LEFT, padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 1, UI_GRID_PADY))
+
+        self.df_monthly_rounding_var = tk.BooleanVar(value=True)
+        df_rounding_checkbox = ttk.Checkbutton(
+            left_row4,
+            text="月次丸め（Forecast整合）",
+            variable=self.df_monthly_rounding_var,
+            command=self._on_df_monthly_rounding_changed,
+        )
+        df_rounding_checkbox.pack(side=tk.LEFT, padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 1, UI_GRID_PADY))
+
+        ttk.Label(left_row4, text="表示:").pack(side=tk.LEFT, padx=(UI_GRID_PADX, 1))
+        self.df_display_mode_var = tk.StringVar(value="Standard")
+        df_display_combo = ttk.Combobox(
+            left_row4,
+            textvariable=self.df_display_mode_var,
+            values=["Standard", "Detail"],
+            state="readonly",
+            width=8,
+        )
+        df_display_combo.pack(side=tk.LEFT, padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 1, UI_GRID_PADY))
+        df_display_combo.bind("<<ComboboxSelected>>", self._on_df_display_mode_changed)
+
+        right_row = ttk.Frame(right_zone)
+        right_row.pack(side=tk.TOP, anchor="e", fill=tk.X, pady=(UI_GRID_PADY, 0))
 
         # 予測キャップ / 稼働率キャパ
         # 現在選択されているホテルのキャパを取得
         current_hotel = self.hotel_var.get().strip() or DEFAULT_HOTEL
-        fc_cap, occ_cap = self._get_daily_caps_for_hotel(current_hotel)
+        fc_cap, pax_cap, occ_cap = self._get_daily_caps_for_hotel(current_hotel)
 
-        ttk.Label(form, text="予測キャップ:").grid(row=1, column=2, sticky="w")
+        phase_frame = ttk.LabelFrame(right_row, text="フェーズ補正（売上）")
+        phase_frame.pack(side=tk.LEFT, anchor="n", fill=tk.X)
+
+        caps_frame = ttk.LabelFrame(right_row, text="キャップ設定")
+        caps_frame.pack(side=tk.LEFT, anchor="n", fill=tk.X, padx=(UI_GRID_PADX * 2, 0))
+
+        rm_cap_row = ttk.Frame(caps_frame)
+        rm_cap_row.pack(side=tk.TOP, fill=tk.X, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        ttk.Label(rm_cap_row, text="予測キャップ(Rm):").pack(side=tk.LEFT)
         self.df_forecast_cap_var = tk.StringVar(value=str(fc_cap))
-        ttk.Entry(form, textvariable=self.df_forecast_cap_var, width=6).grid(row=1, column=3, padx=4, pady=2)
-
-        nav_frame = ttk.Frame(form)
-        nav_frame.grid(row=2, column=2, columnspan=6, sticky="w", pady=(4, 0))
-
-        ttk.Label(nav_frame, text="月移動:").pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(
-            nav_frame,
-            text="-1Y",
-            command=lambda: self._on_df_shift_month(-12),
-        ).pack(side=tk.LEFT, padx=2)
-        ttk.Button(
-            nav_frame,
-            text="-1M",
-            command=lambda: self._on_df_shift_month(-1),
-        ).pack(side=tk.LEFT, padx=2)
-        ttk.Button(
-            nav_frame,
-            text="+1M",
-            command=lambda: self._on_df_shift_month(+1),
-        ).pack(side=tk.LEFT, padx=2)
-        ttk.Button(
-            nav_frame,
-            text="+1Y",
-            command=lambda: self._on_df_shift_month(+12),
-        ).pack(side=tk.LEFT, padx=2)
-
-        # 実行ボタン
-        forecast_btn = ttk.Button(
-            form,
-            text="Forecast実行",
-            command=self._on_run_daily_forecast,
+        ttk.Entry(rm_cap_row, textvariable=self.df_forecast_cap_var, width=6).pack(
+            side=tk.LEFT,
+            padx=UI_GRID_PADX,
         )
-        forecast_btn.grid(row=1, column=4, padx=4, pady=2, sticky="e")
-        export_btn = ttk.Button(form, text="CSV出力", command=self._on_export_daily_forecast_csv)
-        export_btn.grid(row=1, column=5, padx=4, pady=2, sticky="e")
-        ttk.Label(form, text="稼働率キャパ:").grid(row=1, column=6, sticky="w")
+
+        pax_cap_row = ttk.Frame(caps_frame)
+        pax_cap_row.pack(side=tk.TOP, fill=tk.X, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        ttk.Label(pax_cap_row, text="予測キャップ(Px):").pack(side=tk.LEFT)
+        self.df_forecast_cap_pax_var = tk.StringVar(value="" if pax_cap is None else str(pax_cap))
+        ttk.Entry(pax_cap_row, textvariable=self.df_forecast_cap_pax_var, width=6).pack(
+            side=tk.LEFT,
+            padx=UI_GRID_PADX,
+        )
+
+        occ_cap_row = ttk.Frame(caps_frame)
+        occ_cap_row.pack(side=tk.TOP, fill=tk.X, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        ttk.Label(occ_cap_row, text="稼働率キャパ(Occ):").pack(side=tk.LEFT)
         self.df_occ_cap_var = tk.StringVar(value=str(occ_cap))
-        ttk.Entry(form, textvariable=self.df_occ_cap_var, width=6).grid(row=1, column=7, padx=4, pady=2)
+        ttk.Entry(occ_cap_row, textvariable=self.df_occ_cap_var, width=6).pack(
+            side=tk.LEFT,
+            padx=UI_GRID_PADX,
+        )
+
+        clip_frame = ttk.Frame(phase_frame)
+        clip_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_GRID_PADX, pady=(UI_GRID_PADY, 0))
+        ttk.Label(clip_frame, text="補正幅（最大±）:").pack(side=tk.LEFT)
+        self.df_phase_clip_var = tk.StringVar(value=self._format_phase_clip_pct(PHASE_CLIP_DEFAULT))
+        clip_combo = ttk.Combobox(
+            clip_frame,
+            textvariable=self.df_phase_clip_var,
+            values=[self._format_phase_clip_pct(value) for value in PHASE_CLIP_OPTIONS],
+            state="readonly",
+            width=6,
+        )
+        clip_combo.pack(side=tk.LEFT, padx=(UI_GRID_PADX, 0))
+        clip_combo.bind("<<ComboboxSelected>>", self._on_phase_clip_changed)
+
+        self.df_phase_entries = []
+        self.df_phase_month_labels = []
+
+        for idx in range(3):
+            row_frame = ttk.Frame(phase_frame)
+            row_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+
+            month_label = ttk.Label(row_frame, text="YYYYMM", width=8)
+            month_label.pack(side=tk.LEFT, padx=(0, UI_GRID_PADX))
+
+            phase_var = tk.StringVar(value="中立")
+            phase_combo = ttk.Combobox(
+                row_frame,
+                textvariable=phase_var,
+                values=PHASE_OPTIONS,
+                state="readonly",
+                width=5,
+            )
+            phase_combo.pack(side=tk.LEFT, padx=(0, UI_GRID_PADX))
+
+            strength_var = tk.StringVar(value="中")
+            strength_combo = ttk.Combobox(
+                row_frame,
+                textvariable=strength_var,
+                values=PHASE_STRENGTH_OPTIONS,
+                state="readonly",
+                width=3,
+            )
+            strength_combo.pack(side=tk.LEFT, padx=(0, UI_GRID_PADX))
+
+            phase_combo.bind("<<ComboboxSelected>>", self._on_phase_override_changed)
+            strength_combo.bind("<<ComboboxSelected>>", self._on_phase_override_changed)
+
+            self.df_phase_entries.append(
+                {
+                    "month": "",
+                    "phase_var": phase_var,
+                    "strength_var": strength_var,
+                    "phase_combo": phase_combo,
+                    "strength_combo": strength_combo,
+                }
+            )
+            self.df_phase_month_labels.append(month_label)
+            self._update_phase_strength_combo_state(self.df_phase_entries[-1])
+
+        summary_controls = ttk.Frame(frame)
+        summary_controls.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, 0))
+        self.df_summary_visible_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            summary_controls,
+            text="サマリ表示",
+            variable=self.df_summary_visible_var,
+            command=self._toggle_df_summary_visibility,
+        ).pack(side=tk.LEFT)
+
+        summary_container = ttk.Frame(frame)
+        summary_container.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, 1))
+        summary_container.grid_columnconfigure(0, weight=1)
+        summary_container.grid_columnconfigure(1, weight=1)
+        self.df_summary_container = summary_container
+
+        summary_frame = ttk.LabelFrame(summary_container, text="サマリ")
+        summary_frame.grid(row=0, column=0, sticky="nw", padx=(0, UI_GRID_PADX))
+        self.df_summary_frame = summary_frame
+
+        metrics = ["Rooms", "Pax", "Rev", "OCC", "ADR", "DOR", "RevPAR"]
+        for col in range(len(metrics) + 1):
+            summary_frame.grid_columnconfigure(col, weight=0)
+
+        status_frame = ttk.Frame(summary_frame)
+        status_frame.grid(row=0, column=0, columnspan=len(metrics) + 1, sticky="w", padx=2, pady=1)
+        ttk.Label(status_frame, text="ステータス:").pack(side=tk.LEFT)
+        self.df_status_var = tk.StringVar(value="")
+        ttk.Label(status_frame, textvariable=self.df_status_var).pack(side=tk.LEFT, padx=(2, 0))
+
+        ttk.Label(summary_frame, text="").grid(row=1, column=0, sticky="w", padx=2)
+        for col_idx, metric in enumerate(metrics, start=1):
+            ttk.Label(summary_frame, text=metric, width=8).grid(row=1, column=col_idx, sticky="e", padx=1)
+
+        self.df_summary_vars = {"oh": {}, "forecast": {}, "pickup": {}, "ly": {}}
+        row_labels = [("oh", "OH"), ("forecast", "Forecast"), ("pickup", "Pickup"), ("ly", "LY ACT")]
+        for row_idx, (row_key, label) in enumerate(row_labels, start=2):
+            ttk.Label(summary_frame, text=label, width=8).grid(row=row_idx, column=0, sticky="w", padx=2)
+            for col_idx, metric in enumerate(metrics, start=1):
+                var = tk.StringVar(value="")
+                self.df_summary_vars[row_key][metric] = var
+                ttk.Label(summary_frame, textvariable=var, anchor="e", width=10).grid(
+                    row=row_idx,
+                    column=col_idx,
+                    sticky="e",
+                    padx=1,
+                )
+
+        eval_frame = ttk.LabelFrame(summary_container, text="評価")
+        eval_frame.grid(row=0, column=1, sticky="ne")
+        eval_frame.grid_columnconfigure(0, weight=1)
+
+        self.df_best_model_label = ttk.Label(
+            eval_frame,
+            text="最適モデル: 評価データなし",
+            anchor="w",
+            justify="left",
+        )
+        self.df_best_model_label.pack(side=tk.TOP, anchor="w", padx=UI_GRID_PADX, pady=(UI_GRID_PADY, 0))
+
+        self.df_scenario_label = ttk.Label(
+            eval_frame,
+            text="",
+            anchor="w",
+            justify="left",
+        )
+        self.df_scenario_label.pack(side=tk.TOP, anchor="w", padx=UI_GRID_PADX, pady=(0, UI_GRID_PADY))
 
         # テーブル用コンテナ
         table_container = ttk.Frame(frame)
-        table_container.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+        table_container.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=UI_SECTION_PADX, pady=(0, UI_SECTION_PADY))
+        self.df_table_container = table_container
 
-        columns = [
-            "stay_date",
-            "weekday",
-            "actual_rooms",
-            "asof_oh_rooms",
-            "forecast_rooms",
-            "diff_rooms_vs_actual",
-            "diff_pct_vs_actual",
-            "pickup_expected_from_asof",
-            "diff_rooms",
-            "diff_pct",
-            "occ_actual_pct",
-            "occ_asof_pct",
-            "occ_forecast_pct",
-        ]
-
-        self.df_tree = ttk.Treeview(table_container, columns=columns, show="headings", height=25)
-        for col in columns:
-            header = col
-            if col == "stay_date":
-                width = 100
-                anchor = "center"
-            elif col == "weekday":
-                width = 70
-                anchor = "center"
-            elif col in (
-                "actual_rooms",
-                "asof_oh_rooms",
-                "forecast_rooms",
-                "diff_rooms_vs_actual",
-                "pickup_expected_from_asof",
-                "diff_rooms",
-            ):
-                width = 90
-                anchor = "e"
-            elif col in (
-                "diff_pct_vs_actual",
-                "diff_pct",
-                "occ_actual_pct",
-                "occ_asof_pct",
-                "occ_forecast_pct",
-            ):
-                width = 90
-                anchor = "e"
-            else:
-                width = 90
-                anchor = "e"
-
-            self.df_tree.heading(col, text=header)
-            self.df_tree.column(col, width=width, anchor=anchor)
+        self.df_tree = ttk.Treeview(table_container, columns=[], show="headings", height=25)
+        self._setup_df_tree_columns(self.df_display_mode_var.get())
 
         self.df_tree.tag_configure("oddrow", background="#F7F7F7")
 
@@ -1931,27 +2649,6 @@ class BookingCurveApp(tk.Tk):
         table_container.rowconfigure(0, weight=1)
         table_container.columnconfigure(0, weight=1)
 
-        df_label_frame = ttk.Frame(frame)
-        df_label_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 4))
-        df_label_frame.grid_columnconfigure(0, weight=1)
-        df_label_frame.grid_columnconfigure(1, weight=1)
-
-        self.df_best_model_label = ttk.Label(
-            df_label_frame,
-            text="最適モデル: 評価データなし",
-            anchor="w",
-            justify="left",
-        )
-        self.df_best_model_label.grid(row=0, column=0, sticky="w")
-
-        self.df_scenario_label = ttk.Label(
-            df_label_frame,
-            text="",
-            anchor="e",
-            justify="right",
-        )
-        self.df_scenario_label.grid(row=0, column=1, sticky="e")
-
         # セル選択状態
         self._df_cell_anchor = None
         self._df_cell_end = None
@@ -1962,6 +2659,799 @@ class BookingCurveApp(tk.Tk):
         self.df_tree.bind("<Control-c>", self._on_df_tree_copy, add="+")
 
         self._update_df_latest_asof_label(update_asof_if_empty=True)
+        self._refresh_phase_overrides_ui()
+
+    def _get_fiscal_year_for_month(self, yyyymm: str, fiscal_year_start_month: int = 6) -> int:
+        try:
+            year = int(yyyymm[:4])
+            month = int(yyyymm[4:])
+        except Exception:
+            today = date.today()
+            year = today.year
+            month = today.month
+        if month >= fiscal_year_start_month:
+            return year
+        return year - 1
+
+    def _ensure_topdown_year_options(self, fiscal_year: int) -> None:
+        years = list(range(fiscal_year - 5, fiscal_year + 1))
+        year_vars = getattr(self, "_topdown_year_vars", {})
+        if list(year_vars.keys()) == years:
+            return
+
+        self._topdown_year_vars = {year: tk.BooleanVar(value=True) for year in years}
+        frame = getattr(self, "_topdown_year_frame", None)
+        if frame is None:
+            return
+        for child in frame.winfo_children():
+            child.destroy()
+        for idx, year in enumerate(years):
+            ttk.Checkbutton(
+                frame,
+                text=f"{year}年度",
+                variable=self._topdown_year_vars[year],
+            ).grid(row=0, column=idx, padx=4, pady=2, sticky="w")
+
+    def _get_topdown_selected_years(self) -> list[int]:
+        year_vars = getattr(self, "_topdown_year_vars", {})
+        return [year for year, var in year_vars.items() if var.get()]
+
+    def _collect_phase_factors_for_months(
+        self,
+        hotel: str,
+        months: list[str],
+    ) -> tuple[dict[str, float] | None, float]:
+        clip_pct = self._get_phase_clip_pct_for_hotel(hotel)
+        overrides = self._phase_overrides.get(hotel, {})
+        phase_factors: dict[str, float] = {}
+        for month in months:
+            override = overrides.get(month)
+            if not override:
+                continue
+            phase_factors[month] = self._phase_override_to_factor(
+                override.get("phase", "中立"),
+                override.get("strength", "中"),
+                clip_pct,
+            )
+        return (phase_factors if phase_factors else None, clip_pct)
+
+    def _open_topdown_revpar_popup(self) -> None:
+        popup = getattr(self, "_topdown_popup", None)
+        if popup is not None and popup.winfo_exists():
+            popup.lift()
+            return
+
+        popup = tk.Toplevel(self)
+        popup.title("TopDown RevPAR")
+        popup.geometry("1100x760")
+        popup.minsize(900, 600)
+        popup.columnconfigure(0, weight=1)
+        popup.rowconfigure(2, weight=1)
+        popup.rowconfigure(3, weight=1)
+        self._topdown_popup = popup
+
+        control_frame = ttk.Frame(popup)
+        control_frame.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
+        control_frame.columnconfigure(0, weight=1)
+
+        left_controls = ttk.Frame(control_frame)
+        left_controls.grid(row=0, column=0, sticky="w")
+
+        right_controls = ttk.Frame(control_frame)
+        right_controls.grid(row=0, column=1, sticky="e")
+
+        ttk.Label(left_controls, text="予測範囲（月数）: (最新ASOF+90日固定)").grid(row=0, column=0, sticky="w")
+        self._topdown_horizon_var = tk.StringVar(value="3")
+        horizon_spin = ttk.Spinbox(
+            left_controls,
+            from_=1,
+            to=12,
+            textvariable=self._topdown_horizon_var,
+            width=5,
+            state="disabled",
+        )
+        horizon_spin.grid(row=0, column=1, padx=(4, 12), sticky="w")
+
+        self._topdown_show_band_latest_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            right_controls,
+            text="p10–p90帯(A): 直近着地月アンカー",
+            variable=self._topdown_show_band_latest_var,
+            command=self._rerender_topdown_if_panel_exists,
+        ).grid(row=1, column=0, sticky="e")
+        self._topdown_show_band_prev_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            right_controls,
+            text="p10–p90帯(C): 前月アンカー",
+            variable=self._topdown_show_band_prev_var,
+            command=self._rerender_topdown_if_panel_exists,
+        ).grid(row=2, column=0, sticky="e")
+
+        ttk.Label(left_controls, text="表示モード:").grid(row=1, column=0, sticky="w", pady=(4, 0))
+        self._topdown_view_mode_var = tk.StringVar(value="年度固定")
+        view_mode_combo = ttk.Combobox(
+            left_controls,
+            textvariable=self._topdown_view_mode_var,
+            values=["年度固定", "回転（対象月を中央寄せ）"],
+            state="readonly",
+            width=26,
+        )
+        view_mode_combo.grid(row=1, column=1, padx=(4, 8), sticky="w", pady=(4, 0))
+        view_mode_combo.bind("<<ComboboxSelected>>", lambda _event: self._on_topdown_view_mode_changed())
+
+        ttk.Label(
+            left_controls,
+            text=(
+                "p10–p90帯(A): 直近着地月を基準に、過去年(表示年度)の"
+                "月次比率分布(10–90%)を掛けた参考レンジ。"
+                "p10–p90帯(C): 前月→当月の比率分布を使う前月アンカー帯。"
+                "⚠は FcRevPAR が帯の範囲外 (A/C別) を示す。"
+            ),
+            wraplength=700,
+            justify="left",
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
+
+        update_btn = ttk.Button(
+            right_controls,
+            text="更新",
+            command=self._on_topdown_revpar_update,
+        )
+        update_btn.grid(row=0, column=0, padx=(0, 8), sticky="e")
+
+        self._topdown_status_var = tk.StringVar(value="")
+        ttk.Label(right_controls, textvariable=self._topdown_status_var).grid(row=0, column=1, sticky="e")
+
+        year_frame = ttk.LabelFrame(popup, text="表示年度")
+        year_frame.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 6))
+        self._topdown_year_frame = year_frame
+
+        current_month = (self.df_month_var.get() or "").strip()
+        fiscal_year = self._get_fiscal_year_for_month(current_month)
+        self._ensure_topdown_year_options(fiscal_year)
+
+        fig_frame = ttk.Frame(popup)
+        fig_frame.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 6))
+        fig_frame.rowconfigure(0, weight=1)
+        fig_frame.columnconfigure(0, weight=1)
+
+        self._topdown_fig = Figure(figsize=(8, 4))
+        self._topdown_ax = self._topdown_fig.add_subplot(111)
+        self._topdown_canvas = FigureCanvasTkAgg(self._topdown_fig, master=fig_frame)
+        self._topdown_canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew")
+
+        diag_frame = ttk.LabelFrame(popup, text="Forecast RevPAR と p10–p90 比較 (A/C)")
+        diag_frame.grid(row=3, column=0, sticky="nsew", padx=8, pady=(0, 8))
+        diag_frame.rowconfigure(0, weight=1)
+        diag_frame.columnconfigure(0, weight=1)
+
+        self._topdown_diag_text = tk.Text(diag_frame, height=6, wrap="none", font=("Courier New", 9))
+        self._topdown_diag_text.grid(row=0, column=0, sticky="nsew")
+        diag_scroll = ttk.Scrollbar(diag_frame, orient="vertical", command=self._topdown_diag_text.yview)
+        diag_scroll.grid(row=0, column=1, sticky="ns")
+        self._topdown_diag_text.configure(yscrollcommand=diag_scroll.set)
+        self._topdown_diag_text.insert("1.0", "更新ボタンを押すと結果が表示されます。")
+        self._topdown_diag_text.configure(state="disabled")
+
+        self._on_topdown_revpar_update()
+
+    def _rerender_topdown_if_panel_exists(self) -> None:
+        panel = getattr(self, "_topdown_panel", None)
+        if panel is None:
+            return
+        self._render_topdown_revpar_panel(panel, skip_forecast_update=True)
+
+    def _on_topdown_view_mode_changed(self) -> None:
+        panel = getattr(self, "_topdown_last_panel", None)
+        if panel is not None:
+            self._render_topdown_revpar_panel(panel)
+            return
+        self._on_topdown_revpar_update()
+
+    def _on_topdown_revpar_update(self) -> None:
+        popup = getattr(self, "_topdown_popup", None)
+        if popup is None or not popup.winfo_exists():
+            return
+
+        hotel = (self.df_hotel_var.get() or "").strip() or DEFAULT_HOTEL
+        month = (self.df_month_var.get() or "").strip()
+        asof = (self.df_asof_var.get() or "").strip()
+        model = (self.df_model_var.get() or "").strip()
+
+        if not month:
+            messagebox.showerror("エラー", "対象月(YYYYMM)を入力してください。")
+            return
+
+        try:
+            pd.to_datetime(asof)
+        except Exception:
+            messagebox.showerror("エラー", f"AS OF 日付の形式が不正です: {asof}")
+            return
+
+        try:
+            horizon = int(self._topdown_horizon_var.get())
+        except Exception:
+            messagebox.showerror("エラー", "予測範囲（月数）には数値を入力してください。")
+            return
+        if horizon <= 0:
+            messagebox.showerror("エラー", "予測範囲（月数）は1以上で指定してください。")
+            return
+
+        fiscal_year = self._get_fiscal_year_for_month(month)
+        self._ensure_topdown_year_options(fiscal_year)
+        selected_years = self._get_topdown_selected_years()
+        if not selected_years:
+            messagebox.showerror("エラー", "表示する年度を1つ以上選択してください。")
+            return
+
+        rooms_cap = HOTEL_CONFIG.get(hotel, {}).get("capacity")
+        if rooms_cap is None:
+            rooms_cap = self.df_occ_cap_var.get().strip()
+        try:
+            rooms_cap_value = float(rooms_cap)
+        except Exception:
+            messagebox.showerror("エラー", "RevPAR計算用キャパシティが取得できません。")
+            return
+
+        latest_asof_raw = (self.df_latest_asof_var.get() or "").strip()
+        latest_asof_ts = None
+        latest_asof_for_panel = None
+        if latest_asof_raw and latest_asof_raw not in {"なし", "(未取得)"}:
+            try:
+                latest_asof_ts = pd.to_datetime(latest_asof_raw).normalize()
+                latest_asof_for_panel = latest_asof_raw
+            except Exception:
+                latest_asof_ts = None
+        if latest_asof_ts is None:
+            try:
+                latest_asof_ts = pd.to_datetime(asof).normalize()
+            except Exception:
+                latest_asof_ts = pd.to_datetime(date.today()).normalize()
+
+        end_ts = latest_asof_ts + timedelta(days=90)
+        start_period = pd.Period(latest_asof_ts, freq="M")
+        end_period = pd.Period(end_ts, freq="M")
+        if start_period > end_period:
+            end_period = start_period
+
+        forecast_months = []
+        cursor = start_period
+        while cursor <= end_period:
+            candidate = cursor.strftime("%Y%m")
+            if self._get_fiscal_year_for_month(candidate) == fiscal_year:
+                forecast_months.append(candidate)
+            cursor += 1
+
+        phase_factors, clip_pct = self._collect_phase_factors_for_months(hotel, forecast_months)
+
+        token = getattr(self, "_topdown_update_token", 0) + 1
+        self._topdown_update_token = token
+        self._topdown_status_var.set("更新中...")
+
+        def _worker() -> None:
+            try:
+                panel = build_topdown_revpar_panel(
+                    hotel_tag=hotel,
+                    target_month=month,
+                    as_of_date=asof,
+                    model_key=model,
+                    rooms_cap=rooms_cap_value,
+                    phase_factors=phase_factors,
+                    phase_clip_pct=clip_pct,
+                    forecast_horizon_months=horizon,
+                    latest_asof_date=latest_asof_for_panel,
+                    show_years=selected_years,
+                    fiscal_year_start_month=6,
+                )
+                error = None
+            except Exception as exc:  # noqa: BLE001
+                panel = None
+                error = exc
+
+            def _finish() -> None:
+                if token != getattr(self, "_topdown_update_token", 0):
+                    return
+                try:
+                    if error is not None or panel is None:
+                        self._topdown_status_var.set("")
+                        messagebox.showerror("エラー", f"TopDown RevPAR の更新に失敗しました。\n{error}")
+                        return
+                    self._render_topdown_revpar_panel(panel)
+                except Exception as render_exc:  # noqa: BLE001
+                    self._topdown_status_var.set("")
+                    messagebox.showerror("エラー", f"TopDown RevPAR の描画に失敗しました。\n{render_exc}")
+                finally:
+                    if token == getattr(self, "_topdown_update_token", 0) and error is None:
+                        status = self._topdown_status_var.get()
+                        if status == "更新中...":
+                            self._topdown_status_var.set("更新完了")
+
+            self.after(0, _finish)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _render_topdown_revpar_panel(
+        self,
+        panel: dict[str, object] | None,
+        *,
+        skip_forecast_update: bool = False,
+    ) -> None:
+        if panel is None:
+            return
+
+        ax = getattr(self, "_topdown_ax", None)
+        canvas = getattr(self, "_topdown_canvas", None)
+        if ax is None or canvas is None:
+            return
+
+        ax.clear()
+        labels = panel.get("fiscal_month_labels", [])
+        lines_by_fy = panel.get("lines_by_fy", {})
+        current_fy = panel.get("current_fy")
+        target_idx = panel.get("target_month_index", 0)
+        band_p10 = panel.get("band_p10", [])
+        band_p90 = panel.get("band_p90", [])
+        band_by_month = panel.get("band_by_month", {})
+        band_p10_prev_anchor = panel.get("band_p10_prev_anchor", [])
+        band_p90_prev_anchor = panel.get("band_p90_prev_anchor", [])
+        band_by_month_prev_anchor = panel.get("band_by_month_prev_anchor", {})
+        band_prev_segments = panel.get("band_prev_segments")
+        rotation_month_strs = panel.get("rotation_month_strs", [])
+        fiscal_month_strs = panel.get("fiscal_month_strs", [])
+        current_actual = panel.get("current_fy_actual", [])
+        current_forecast = panel.get("current_fy_forecast", [])
+        anchor_idx = panel.get("anchor_idx")
+        show_band_latest = getattr(self, "_topdown_show_band_latest_var", tk.BooleanVar(value=True)).get()
+        show_band_prev = getattr(self, "_topdown_show_band_prev_var", tk.BooleanVar(value=False)).get()
+        view_mode_label = getattr(self, "_topdown_view_mode_var", tk.StringVar(value="年度固定")).get()
+        if view_mode_label == "回転（対象月を中央寄せ）":
+            view_month_strs = list(rotation_month_strs)
+        else:
+            view_month_strs = list(fiscal_month_strs) if fiscal_month_strs else list(rotation_month_strs)
+
+        def _rotate_sequence(seq: list[object], shift: int) -> list[object]:
+            if not seq:
+                return seq
+            shift = shift % len(seq)
+            if shift == 0:
+                return list(seq)
+            return list(seq[-shift:] + seq[:-shift])
+
+        x = np.arange(12)
+
+        seam_idx = None
+        shift = 0
+        orig_current_actual = list(current_actual)
+        orig_current_forecast = list(current_forecast)
+        if view_mode_label == "回転（対象月を中央寄せ）":
+            try:
+                target_idx = int(target_idx)
+            except Exception:
+                target_idx = 0
+            shift = 5 - target_idx
+            shift_mod = shift % 12
+            labels = _rotate_sequence(list(labels), shift)
+            lines_by_fy = {fy: _rotate_sequence(list(values), shift) for fy, values in lines_by_fy.items()}
+            current_actual = _rotate_sequence(list(current_actual), shift)
+            current_forecast = _rotate_sequence(list(current_forecast), shift)
+
+            def _band_from_month_map(
+                months: list[str],
+                band_map: dict[str, tuple[float, float]],
+            ) -> tuple[list[float | None], list[float | None]]:
+                p10_values: list[float | None] = []
+                p90_values: list[float | None] = []
+                for month_str in months:
+                    band_values = band_map.get(month_str)
+                    if band_values is None:
+                        p10_values.append(None)
+                        p90_values.append(None)
+                    else:
+                        p10_values.append(band_values[0])
+                        p90_values.append(band_values[1])
+                return p10_values, p90_values
+
+            if isinstance(band_by_month, dict) and rotation_month_strs:
+                band_p10, band_p90 = _band_from_month_map(rotation_month_strs, band_by_month)
+            else:
+                band_p10 = _rotate_sequence(list(band_p10), shift)
+                band_p90 = _rotate_sequence(list(band_p90), shift)
+
+            if isinstance(band_by_month_prev_anchor, dict) and rotation_month_strs:
+                band_p10_prev_anchor, band_p90_prev_anchor = _band_from_month_map(
+                    rotation_month_strs,
+                    band_by_month_prev_anchor,
+                )
+            else:
+                band_p10_prev_anchor = _rotate_sequence(list(band_p10_prev_anchor), shift)
+                band_p90_prev_anchor = _rotate_sequence(list(band_p90_prev_anchor), shift)
+            target_idx = (target_idx + shift) % 12
+            if shift_mod != 0:
+                seam_idx = shift_mod
+
+        def _plot_segmented_line(
+            y_values: list[float | None],
+            *,
+            label: str | None = None,
+            **kwargs: object,
+        ) -> object | None:
+            y = [np.nan if v is None else float(v) for v in y_values]
+            if seam_idx in (None, 0):
+                lines = ax.plot(x, y, label=label, **kwargs)
+                return lines[0] if lines else None
+            first = ax.plot(x[:seam_idx], y[:seam_idx], label=label, **kwargs)
+            color = first[0].get_color() if first else None
+            kwargs2 = dict(kwargs)
+            kwargs2.pop("color", None)
+            ax.plot(
+                x[seam_idx:],
+                y[seam_idx:],
+                label="_nolegend_",
+                color=color,
+                **kwargs2,
+            )
+            return first[0] if first else None
+
+        for fy, values in lines_by_fy.items():
+            if fy == current_fy:
+                continue
+            _plot_segmented_line(values, label=f"{fy}年度")
+
+        actual_line = _plot_segmented_line(
+            list(current_actual),
+            label=f"{current_fy}年度(確定)",
+            linestyle="-",
+            linewidth=2.2,
+        )
+        line_color = actual_line.get_color() if actual_line is not None else None
+
+        has_forecast = any(value is not None for value in current_forecast)
+        if has_forecast:
+            dashed_orig = [None] * len(orig_current_actual)
+            first_forecast_idx_orig = None
+            for idx, value in enumerate(orig_current_forecast):
+                if value is not None:
+                    if first_forecast_idx_orig is None or idx < first_forecast_idx_orig:
+                        first_forecast_idx_orig = idx
+                    dashed_orig[idx] = value
+            last_actual_idx_orig = None
+            if isinstance(anchor_idx, int) and 0 <= anchor_idx < len(orig_current_actual):
+                if orig_current_actual[anchor_idx] is not None:
+                    last_actual_idx_orig = anchor_idx
+            if last_actual_idx_orig is None:
+                if first_forecast_idx_orig is not None:
+                    for idx in range(first_forecast_idx_orig):
+                        if orig_current_actual[idx] is not None:
+                            last_actual_idx_orig = idx
+                else:
+                    for idx, value in enumerate(orig_current_actual):
+                        if value is not None:
+                            last_actual_idx_orig = idx
+            if last_actual_idx_orig is not None:
+                dashed_orig[last_actual_idx_orig] = orig_current_actual[last_actual_idx_orig]
+            if last_actual_idx_orig is not None and first_forecast_idx_orig is not None and first_forecast_idx_orig > last_actual_idx_orig + 1:
+                start_value = orig_current_actual[last_actual_idx_orig]
+                end_value = orig_current_forecast[first_forecast_idx_orig]
+                if start_value is not None and end_value is not None:
+                    steps = first_forecast_idx_orig - last_actual_idx_orig
+                    for step in range(1, steps):
+                        interp = start_value + (end_value - start_value) * (step / steps)
+                        dashed_orig[last_actual_idx_orig + step] = interp
+            if view_mode_label == "回転（対象月を中央寄せ）":
+                dashed_series = _rotate_sequence(dashed_orig, shift)
+            else:
+                dashed_series = dashed_orig
+            y_dashed = np.array([np.nan if v is None else float(v) for v in dashed_series])
+            if np.isfinite(y_dashed).any():
+                forecast_kwargs = {"linestyle": "--", "linewidth": 2.2, "label": f"{current_fy}年度(予測)"}
+                if line_color is not None:
+                    forecast_kwargs["color"] = line_color
+                _plot_segmented_line(dashed_series, **forecast_kwargs)
+
+        try:
+            idx = int(target_idx)
+        except Exception:
+            idx = 0
+        ax.axvspan(idx - 0.5, idx + 0.5, color="gold", alpha=0.15, label="対象月")
+
+        def _plot_band(
+            low: list[float | None],
+            high: list[float | None],
+            *,
+            label: str,
+            alpha: float,
+            color: str | None = None,
+            apply_anchor_mask: bool = False,
+        ) -> None:
+            band_low = np.array([np.nan if v is None else float(v) for v in low])
+            band_high = np.array([np.nan if v is None else float(v) for v in high])
+            mask = np.isfinite(band_low) & np.isfinite(band_high)
+            if apply_anchor_mask and view_mode_label == "年度固定" and isinstance(anchor_idx, int) and 0 <= anchor_idx < len(band_low):
+                mask &= np.arange(len(band_low)) >= anchor_idx
+            if not mask.any():
+                return
+            seam_idx_for_band = None if view_mode_label == "回転（対象月を中央寄せ）" else seam_idx
+            if seam_idx_for_band in (None, 0):
+                ax.fill_between(
+                    x,
+                    band_low,
+                    band_high,
+                    where=mask,
+                    interpolate=True,
+                    alpha=alpha,
+                    label=label,
+                    color=color,
+                )
+                return
+            left_mask = mask[:seam_idx_for_band]
+            right_mask = mask[seam_idx_for_band:]
+            left_collection = None
+            if left_mask.any():
+                left_collection = ax.fill_between(
+                    x[:seam_idx_for_band],
+                    band_low[:seam_idx_for_band],
+                    band_high[:seam_idx_for_band],
+                    where=left_mask,
+                    interpolate=True,
+                    alpha=alpha,
+                    label=label,
+                    color=color,
+                )
+            if right_mask.any():
+                facecolor = color
+                if left_collection is not None and color is None:
+                    colors = left_collection.get_facecolor()
+                    if len(colors):
+                        facecolor = colors[0]
+                right_label = "_nolegend_" if left_mask.any() else label
+                ax.fill_between(
+                    x[seam_idx_for_band:],
+                    band_low[seam_idx_for_band:],
+                    band_high[seam_idx_for_band:],
+                    where=right_mask,
+                    interpolate=True,
+                    alpha=alpha,
+                    label=right_label,
+                    facecolor=facecolor,
+                    edgecolor=facecolor,
+                )
+
+        if show_band_latest:
+            _plot_band(
+                list(band_p10),
+                list(band_p90),
+                label="p10–p90(直近着地)",
+                alpha=0.18,
+                apply_anchor_mask=True,
+            )
+
+        if show_band_prev:
+            if isinstance(band_prev_segments, list) and band_prev_segments:
+                band_label = "p10–p90(前月アンカー)"
+                for segment in band_prev_segments:
+                    if not isinstance(segment, dict):
+                        continue
+                    if "months" in segment and view_month_strs:
+                        months = segment.get("months", [])
+                        segment_low = segment.get("low", [])
+                        segment_high = segment.get("high", [])
+                        if not (isinstance(months, list) and isinstance(segment_low, list) and isinstance(segment_high, list)):
+                            continue
+                        mapped_points = []
+                        for month_str, low_value, high_value in zip(months, segment_low, segment_high):
+                            if month_str in view_month_strs:
+                                mapped_points.append((view_month_strs.index(month_str), low_value, high_value))
+                        if len(mapped_points) < 2:
+                            continue
+                        mapped_points.sort(key=lambda item: item[0])
+                        segment_x = np.array([item[0] for item in mapped_points], dtype=float)
+                        segment_low = np.array([item[1] for item in mapped_points], dtype=float)
+                        segment_high = np.array([item[2] for item in mapped_points], dtype=float)
+                    else:
+                        segment_x = np.array(segment.get("x", []), dtype=float)
+                        segment_low = np.array(segment.get("low", []), dtype=float)
+                        segment_high = np.array(segment.get("high", []), dtype=float)
+                    if segment_x.size == 0:
+                        continue
+                    mask = np.isfinite(segment_x) & np.isfinite(segment_low) & np.isfinite(segment_high)
+                    if mask.sum() < 2:
+                        continue
+                    ax.fill_between(
+                        segment_x[mask],
+                        segment_low[mask],
+                        segment_high[mask],
+                        alpha=0.12,
+                        color="tab:orange",
+                        label=band_label,
+                    )
+                    band_label = None
+            else:
+                _plot_band(
+                    list(band_p10_prev_anchor),
+                    list(band_p90_prev_anchor),
+                    label="p10–p90(前月アンカー)",
+                    alpha=0.12,
+                    color="tab:orange",
+                )
+
+        if view_mode_label == "回転（対象月を中央寄せ）":
+
+            def _month_from_label(label_value: object) -> int | None:
+                if not isinstance(label_value, str):
+                    return None
+                match = re.search(r"(\d+)", label_value)
+                if not match:
+                    return None
+                try:
+                    return int(match.group(1))
+                except ValueError:
+                    return None
+
+            month_positions: dict[int, int] = {}
+            for idx, label in enumerate(labels):
+                month_number = _month_from_label(label)
+                if month_number is not None and month_number not in month_positions:
+                    month_positions[month_number] = idx
+
+            may_idx = month_positions.get(5)
+            jun_idx = month_positions.get(6)
+            if may_idx is not None and jun_idx is not None:
+                series_by_fy = {fy: list(values) for fy, values in lines_by_fy.items()}
+                if current_fy is not None:
+                    combined_current = []
+                    for actual_value, forecast_value in zip(current_actual, current_forecast):
+                        combined_current.append(actual_value if actual_value is not None else forecast_value)
+                    series_by_fy[current_fy] = combined_current
+
+                series_by_fy_numeric: dict[int, list[float | None]] = {}
+                for fy, series in series_by_fy.items():
+                    try:
+                        fy_int = int(fy)
+                    except (TypeError, ValueError):
+                        continue
+                    series_by_fy_numeric[fy_int] = series
+
+                fy_list = sorted(series_by_fy_numeric)
+                if fy_list:
+                    x_may = x[may_idx]
+                    x_jun = x[jun_idx]
+                    for fy in fy_list:
+                        next_fy = fy + 1
+                        if next_fy not in series_by_fy_numeric:
+                            continue
+                        series = series_by_fy_numeric[fy]
+                        next_series = series_by_fy_numeric[next_fy]
+                        if may_idx >= len(series) or jun_idx >= len(next_series):
+                            continue
+                        y_may = series[may_idx]
+                        y_jun = next_series[jun_idx]
+                        y_may_val = np.nan if y_may is None else float(y_may)
+                        y_jun_val = np.nan if y_jun is None else float(y_jun)
+                        if np.isfinite(y_may_val) and np.isfinite(y_jun_val):
+                            ax.plot(
+                                [x_may, x_jun],
+                                [y_may_val, y_jun_val],
+                                color="lightgray",
+                                linewidth=1.2,
+                                linestyle="-",
+                                label="_nolegend_",
+                            )
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels)
+        ax.set_ylabel("RevPAR")
+        ax.set_title("RevPAR 月次推移（TopDown）")
+        ax.grid(True, axis="y", linestyle=":", alpha=0.5)
+        fig = getattr(self, "_topdown_fig", None)
+        if fig is not None:
+            fig.subplots_adjust(left=0.08, right=0.72)
+        ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), borderaxespad=0, frameon=False, fontsize=9)
+        canvas.draw()
+
+        diagnostics = panel.get("diagnostics", [])
+        skipped = panel.get("skipped_months", {})
+        self._topdown_last_panel = panel
+        self._topdown_panel = panel
+        self._update_topdown_diagnostics(diagnostics, skipped)
+        if not skip_forecast_update:
+            self._topdown_status_var.set("更新完了")
+
+    def _update_topdown_diagnostics(
+        self,
+        diagnostics: list[dict[str, object]] | object,
+        skipped_months: dict[str, str] | None = None,
+    ) -> None:
+        text = getattr(self, "_topdown_diag_text", None)
+        if text is None:
+            return
+        lines = []
+        header = " ".join(
+            [
+                f"{'YYYYMM':<8}",
+                f"{'FcRevPAR':>10}",
+                f"{'A:p10':>10}",
+                f"{'A:p90':>10}",
+                f"{'C:p10':>10}",
+                f"{'C:p90':>10}",
+                "notes",
+            ]
+        )
+        lines.append(header)
+        lines.append("-" * len(header))
+        if isinstance(diagnostics, list):
+            for row in diagnostics:
+                month = row.get("month")
+                revpar = row.get("revpar")
+                p10_latest = row.get("p10_latest")
+                p90_latest = row.get("p90_latest")
+                p10_prev = row.get("p10_prev")
+                p90_prev = row.get("p90_prev")
+                notes = row.get("notes")
+                out_latest = row.get("out_of_range_latest")
+                out_prev = row.get("out_of_range_prev")
+                flags = []
+                if out_latest:
+                    flags.append("⚠A")
+                if out_prev:
+                    flags.append("⚠C")
+                note_items = []
+                if isinstance(notes, list) and notes:
+                    note_items.extend(str(note) for note in notes if note)
+                if flags:
+                    note_items.extend(flags)
+                note_text = " ".join(note_items)
+                p10_latest_str = "-" if p10_latest is None else f"{p10_latest:,.0f}"
+                p90_latest_str = "-" if p90_latest is None else f"{p90_latest:,.0f}"
+                p10_prev_str = "-" if p10_prev is None else f"{p10_prev:,.0f}"
+                p90_prev_str = "-" if p90_prev is None else f"{p90_prev:,.0f}"
+                revpar_str = "-" if revpar is None else f"{revpar:,.0f}"
+                month_str = "-" if month is None else str(month)
+                lines.append(
+                    " ".join(
+                        [
+                            f"{month_str:<8}",
+                            f"{revpar_str:>10}",
+                            f"{p10_latest_str:>10}",
+                            f"{p90_latest_str:>10}",
+                            f"{p10_prev_str:>10}",
+                            f"{p90_prev_str:>10}",
+                            note_text,
+                        ]
+                    )
+                )
+
+        if skipped_months:
+            for month, error_msg in skipped_months.items():
+                err = str(error_msg).splitlines()[0].strip()
+                if len(err) > 80:
+                    err = f"{err[:77]}..."
+                lines.append(f"SKIP: {month} ({err})")
+
+        if not lines:
+            lines = ["表示可能な診断情報がありません。"]
+
+        text.configure(state="normal")
+        text.delete("1.0", tk.END)
+        text.insert("1.0", "\n".join(lines))
+        text.configure(state="disabled")
+
+    def _toggle_df_summary_visibility(self) -> None:
+        container = getattr(self, "df_summary_container", None)
+        if container is None:
+            return
+        if self.df_summary_visible_var.get():
+            before_widget = getattr(self, "df_table_container", None)
+            if before_widget is not None:
+                container.pack(
+                    side=tk.TOP,
+                    fill=tk.X,
+                    padx=UI_SECTION_PADX,
+                    pady=(0, 1),
+                    before=before_widget,
+                )
+            else:
+                container.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, 1))
+        else:
+            container.pack_forget()
 
     def _apply_latest_asof_freshness(self, label: tk.Label, latest_asof_str: str) -> None:
         default_bg, default_fg = self._latest_asof_label_defaults.get(
@@ -2008,6 +3498,226 @@ class BookingCurveApp(tk.Tk):
 
         self._apply_latest_asof_freshness(self.df_latest_asof_label, self.df_latest_asof_var.get())
         self._update_df_best_model_label()
+
+    def _get_df_column_defs(self, mode: str) -> list[tuple[str, str, int, str]]:
+        if mode == "Standard":
+            return [
+                ("stay_date", "Date", 100, "center"),
+                ("weekday", "Wk", 55, "center"),
+                ("asof_oh_rooms_display", "OH(Rm)", 80, "e"),
+                ("forecast_rooms_display", "FcRm", 80, "e"),
+                ("asof_oh_pax_display", "OH(Px)", 80, "e"),
+                ("forecast_pax_display", "FcPx", 80, "e"),
+                ("revenue_oh_now", "OHRev", 90, "e"),
+                ("forecast_revenue_display", "FcRev", 90, "e"),
+                ("occ_forecast_pct_display", "Occ Fc", 75, "e"),
+                ("adr_oh_now", "OH ADR", 80, "e"),
+                ("forecast_adr_display", "Fc ADR", 80, "e"),
+                ("forecast_revpar_display", "Fc RevPAR", 90, "e"),
+                ("pickup_expected_from_asof_display", "PU Exp", 80, "e"),
+            ]
+
+        return [
+            ("stay_date", "Date", 100, "center"),
+            ("weekday", "Wk", 55, "center"),
+            ("actual_rooms_display", "ActRm", 80, "e"),
+            ("asof_oh_rooms_display", "OH(Rm)", 80, "e"),
+            ("forecast_rooms_display", "FcRm", 80, "e"),
+            ("actual_pax_display", "ActPx", 80, "e"),
+            ("asof_oh_pax_display", "OH(Px)", 80, "e"),
+            ("forecast_pax_display", "FcPx", 80, "e"),
+            ("forecast_revenue_display", "FcRev", 80, "e"),
+            ("revenue_oh_now", "OHRev", 80, "e"),
+            ("occ_forecast_pct_display", "Occ Fc", 75, "e"),
+            ("adr_oh_now", "OH ADR", 80, "e"),
+            ("forecast_adr_display", "Fc ADR", 80, "e"),
+            ("adr_pickup_est", "ADR PU", 80, "e"),
+            ("forecast_revpar_display", "Fc RevPAR", 80, "e"),
+            ("diff_rooms_vs_actual", "ΔRm(Act)", 80, "e"),
+            ("diff_pct_vs_actual", "Δ%(Act)", 75, "e"),
+            ("pickup_expected_from_asof_display", "PU Exp", 80, "e"),
+            ("diff_rooms", "ΔRm", 80, "e"),
+            ("diff_pct", "Δ%", 75, "e"),
+            ("occ_actual_pct", "Occ Act", 75, "e"),
+            ("occ_asof_pct", "Occ OH", 75, "e"),
+        ]
+
+    def _setup_df_tree_columns(self, mode: str) -> None:
+        defs = self._get_df_column_defs(mode)
+        columns = [col for col, _, _, _ in defs]
+        self.df_tree.configure(columns=columns)
+        for col, header, width, anchor in defs:
+            self.df_tree.heading(col, text=header)
+            self.df_tree.column(col, width=width, anchor=anchor)
+        self.df_tree_columns = columns
+
+    def _format_df_cell(self, row: pd.Series, col: str) -> str:
+        if col == "stay_date":
+            stay_date = row.get("stay_date")
+            if pd.isna(stay_date):
+                return "TOTAL"
+            return pd.to_datetime(stay_date).strftime("%Y-%m-%d")
+        if col == "weekday":
+            weekday = row.get("weekday")
+            if pd.isna(weekday):
+                return ""
+            if isinstance(weekday, (int, float)) and not pd.isna(weekday) and 0 <= int(weekday) <= 6:
+                weekday_idx = int(weekday)
+                return ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][weekday_idx]
+            return str(weekday)
+
+        pct_cols = {
+            "diff_pct_vs_actual",
+            "diff_pct",
+            "occ_actual_pct",
+            "occ_asof_pct",
+            "occ_forecast_pct",
+            "occ_forecast_pct_display",
+        }
+        if col in pct_cols:
+            return _fmt_pct(row.get(col))
+
+        return _fmt_num(row.get(col))
+
+    def _on_df_display_mode_changed(self, event=None) -> None:
+        mode = self.df_display_mode_var.get().strip()
+        self._setup_df_tree_columns(mode)
+        self._reload_daily_forecast_table()
+
+    def _get_phase_months(self, base_month: str) -> list[str]:
+        try:
+            period = pd.Period(base_month, freq="M")
+        except Exception:
+            period = pd.Period(date.today().strftime("%Y-%m"), freq="M")
+        months = [period + offset for offset in range(3)]
+        return [m.strftime("%Y%m") for m in months]
+
+    def _format_phase_clip_pct(self, value: float) -> str:
+        try:
+            return f"±{round(value * 100)}%"
+        except Exception:
+            return f"±{round(PHASE_CLIP_DEFAULT * 100)}%"
+
+    def _parse_phase_clip_pct(self, value: str) -> float | None:
+        if not value:
+            return None
+        match = re.search(r"([0-9]+(?:\.[0-9]+)?)", value)
+        if not match:
+            return None
+        try:
+            return float(match.group(1)) / 100.0
+        except Exception:
+            return None
+
+    def _get_phase_clip_pct_for_hotel(self, hotel: str) -> float:
+        phase_bias = self._settings.get("phase_bias") or {}
+        clip_map = phase_bias.get("clip_pct") or {}
+        if isinstance(clip_map, dict):
+            value = clip_map.get(hotel)
+            try:
+                if value is None:
+                    return PHASE_CLIP_DEFAULT
+                return float(value)
+            except (TypeError, ValueError):
+                return PHASE_CLIP_DEFAULT
+        return PHASE_CLIP_DEFAULT
+
+    def _set_phase_clip_pct_for_hotel(self, hotel: str, value: float) -> None:
+        phase_bias = self._settings.setdefault("phase_bias", {})
+        clip_map = phase_bias.setdefault("clip_pct", {})
+        if not isinstance(clip_map, dict):
+            phase_bias["clip_pct"] = {}
+            clip_map = phase_bias["clip_pct"]
+        try:
+            clip_map[hotel] = float(value)
+        except (TypeError, ValueError):
+            return
+        self._save_settings()
+
+    def _phase_override_to_factor(self, phase: str, strength: str, clip_pct: float) -> float:
+        if phase == "中立":
+            return 1.0
+        ratio = PHASE_STRENGTH_FACTORS.get(strength, PHASE_STRENGTH_FACTORS["中"])
+        bias = clip_pct * ratio
+        if phase == "悪化":
+            return 1.0 - bias
+        if phase == "回復":
+            return 1.0 + bias
+        return 1.0
+
+    def _update_phase_strength_combo_state(self, entry: dict) -> None:
+        strength_combo = entry.get("strength_combo")
+        if strength_combo is None:
+            return
+        phase = entry.get("phase_var").get()
+        if phase == "中立":
+            entry.get("strength_var").set("中")
+            strength_combo.configure(state="disabled")
+        else:
+            strength_combo.configure(state="readonly")
+
+    def _refresh_phase_overrides_ui(self) -> None:
+        if not hasattr(self, "df_phase_entries"):
+            return
+        hotel = (self.df_hotel_var.get() or "").strip() or DEFAULT_HOTEL
+        base_month = (self.df_month_var.get() or "").strip()
+        months = self._get_phase_months(base_month)
+
+        self._phase_override_loading = True
+        try:
+            hotel_overrides = self._phase_overrides.get(hotel, {})
+            clip_pct = self._get_phase_clip_pct_for_hotel(hotel)
+            if hasattr(self, "df_phase_clip_var"):
+                self.df_phase_clip_var.set(self._format_phase_clip_pct(clip_pct))
+            for idx, month in enumerate(months):
+                if idx >= len(self.df_phase_entries):
+                    break
+                entry = self.df_phase_entries[idx]
+                label = self.df_phase_month_labels[idx]
+                label.config(text=month)
+                entry["month"] = month
+
+                payload = hotel_overrides.get(month, {})
+                phase = payload.get("phase", "中立")
+                strength = payload.get("strength", "中")
+
+                entry["phase_var"].set(phase)
+                entry["strength_var"].set(strength)
+                self._update_phase_strength_combo_state(entry)
+        finally:
+            self._phase_override_loading = False
+
+    def _on_phase_clip_changed(self, event=None) -> None:
+        if self._phase_override_loading:
+            return
+        hotel = (self.df_hotel_var.get() or "").strip() or DEFAULT_HOTEL
+        selected = self.df_phase_clip_var.get()
+        clip_pct = self._parse_phase_clip_pct(selected)
+        if clip_pct is None:
+            clip_pct = PHASE_CLIP_DEFAULT
+            if hasattr(self, "df_phase_clip_var"):
+                self.df_phase_clip_var.set(self._format_phase_clip_pct(clip_pct))
+        self._set_phase_clip_pct_for_hotel(hotel, clip_pct)
+
+    def _on_phase_override_changed(self, event=None) -> None:
+        if self._phase_override_loading:
+            return
+        hotel = (self.df_hotel_var.get() or "").strip() or DEFAULT_HOTEL
+        hotel_overrides = self._phase_overrides.setdefault(hotel, {})
+
+        for entry in getattr(self, "df_phase_entries", []):
+            month = entry.get("month")
+            if not month:
+                continue
+            phase = entry["phase_var"].get()
+            strength = entry["strength_var"].get()
+            if phase == "中立":
+                strength = "中"
+                entry["strength_var"].set(strength)
+            self._update_phase_strength_combo_state(entry)
+            hotel_overrides[month] = {"phase": phase, "strength": strength}
+
+        write_phase_overrides(self._phase_overrides)
 
     def _update_df_best_model_label(self) -> None:
         hotel = (self.df_hotel_var.get() or "").strip() or DEFAULT_HOTEL
@@ -2075,7 +3785,7 @@ class BookingCurveApp(tk.Tk):
 
     def _on_bc_hotel_changed(self, event=None) -> None:
         hotel = self.bc_hotel_var.get().strip()
-        fc_cap, _ = self._get_daily_caps_for_hotel(hotel)
+        fc_cap, _, _ = self._get_daily_caps_for_hotel(hotel)
         self.bc_forecast_cap_var.set(str(fc_cap))
         self._update_bc_latest_asof_label(False)
 
@@ -2083,6 +3793,86 @@ class BookingCurveApp(tk.Tk):
         latest = self.bc_latest_asof_var.get().strip()
         if latest and latest not in ("なし", "(未取得)"):
             self.bc_asof_var.set(latest)
+
+    def _on_df_monthly_rounding_changed(self) -> None:
+        self._update_master_rounding_units_state()
+        self._reload_daily_forecast_table()
+
+    def _reload_daily_forecast_table(self) -> None:
+        hotel = self.df_hotel_var.get()
+        month = self.df_month_var.get()
+        asof = self.df_asof_var.get()
+        model = self.df_model_var.get()
+        occ_cap_str = self.df_occ_cap_var.get().strip()
+        pax_cap_str = self.df_forecast_cap_pax_var.get().strip() if hasattr(self, "df_forecast_cap_pax_var") else ""
+
+        if not month:
+            messagebox.showerror("エラー", "対象月(YYYYMM)を入力してください。")
+            return
+
+        if not occ_cap_str:
+            messagebox.showerror("エラー", "稼働率キャパを入力してください。")
+            return
+
+        try:
+            occ_capacity = float(occ_cap_str)
+        except Exception:
+            messagebox.showerror("エラー", "稼働率キャパには数値を入力してください。")
+            return
+
+        if pax_cap_str:
+            try:
+                pax_capacity = float(pax_cap_str)
+            except Exception:
+                messagebox.showerror("エラー", "予測キャップ(Px)には数値を入力してください。")
+                return
+        else:
+            pax_capacity = None
+
+        try:
+            df = get_daily_forecast_table(
+                hotel_tag=hotel,
+                target_month=month,
+                as_of_date=asof,
+                gui_model=model,
+                capacity=occ_capacity,
+                pax_capacity=pax_capacity,
+                apply_monthly_rounding=self.df_monthly_rounding_var.get(),
+            )
+        except FileNotFoundError:
+            self.df_daily_forecast_df = pd.DataFrame()
+            self.df_table_df = self.df_daily_forecast_df
+            for row_id in self.df_tree.get_children():
+                self.df_tree.delete(row_id)
+            self._clear_daily_forecast_summary("未作成")
+            return
+        except Exception as e:
+            self.df_daily_forecast_df = None
+            messagebox.showerror("エラー", f"日別フォーキャスト読み込みに失敗しました:\n{e}")
+            return
+
+        self._reset_df_selection_state()
+
+        # 既存行クリア
+        for row_id in self.df_tree.get_children():
+            self.df_tree.delete(row_id)
+
+        self._setup_df_tree_columns(self.df_display_mode_var.get().strip())
+
+        # DataFrame を Treeview に流し込む
+        for idx, (_, row) in enumerate(df.iterrows()):
+            values = [self._format_df_cell(row, col) for col in self.df_tree_columns]
+            tags: tuple[str, ...] = ()
+            if idx % 2 == 1:
+                tags = ("oddrow",)
+
+            self.df_tree.insert("", tk.END, values=values, tags=tags)
+
+        self.df_daily_forecast_df = df
+        self.df_table_df = df
+        self._update_daily_forecast_summary(df, hotel, month, occ_capacity, asof)
+
+        self._update_df_best_model_label()
 
     def _on_run_daily_forecast(self) -> None:
         """現在の設定で Forecast を実行し、テーブルを再読み込みする。"""
@@ -2092,6 +3882,7 @@ class BookingCurveApp(tk.Tk):
         asof = self.df_asof_var.get()
         model = self.df_model_var.get()
         fc_cap_str = self.df_forecast_cap_var.get().strip()
+        pax_cap_str = self.df_forecast_cap_pax_var.get().strip()
         occ_cap_str = self.df_occ_cap_var.get().strip()
 
         if not month:
@@ -2108,6 +3899,15 @@ class BookingCurveApp(tk.Tk):
         except Exception:
             messagebox.showerror("エラー", "キャパシティには数値を入力してください。")
             return
+
+        if pax_cap_str:
+            try:
+                pax_capacity = float(pax_cap_str)
+            except Exception:
+                messagebox.showerror("エラー", "予測キャップ(Px)には数値を入力してください。")
+                return
+        else:
+            pax_capacity = None
 
         # ASOF 日付の簡易検証
         try:
@@ -2133,84 +3933,63 @@ class BookingCurveApp(tk.Tk):
         # 現時点では「1ヶ月のみ」実行。将来的に複数月対応する場合は
         # ここで month 周辺のリストを組み立てて渡す。
         target_months = [month]
+        phase_factor = None
+        hotel_overrides = self._phase_overrides.get(hotel, {})
+        override = hotel_overrides.get(month)
+        clip_pct = self._get_phase_clip_pct_for_hotel(hotel)
+        if override:
+            phase_factor = self._phase_override_to_factor(
+                override.get("phase", "中立"),
+                override.get("strength", "中"),
+                clip_pct,
+            )
+        phase_factors = {month: phase_factor} if phase_factor is not None else None
 
         try:
+            phase_label = override.get("phase", "unknown") if isinstance(override, dict) else "none"
+            strength_label = override.get("strength", "unknown") if isinstance(override, dict) else "none"
+            logging.info(
+                "Forecast inputs: hotel=%s, target_months=%s, asof=%s, model=%s, capacity=%s, pax_capacity=%s, "
+                "phase_override=%s, strength=%s, clip_pct=%s",
+                hotel,
+                target_months,
+                asof,
+                model,
+                forecast_cap,
+                pax_capacity,
+                phase_label,
+                strength_label,
+                clip_pct,
+            )
             run_forecast_for_gui(
                 hotel_tag=hotel,
                 target_months=target_months,
                 as_of_date=asof,
                 gui_model=model,
                 capacity=forecast_cap,
+                pax_capacity=pax_capacity,
+                phase_factors=phase_factors,
+                phase_clip_pct=clip_pct,
             )
-        except FileNotFoundError as e:
-            messagebox.showerror("エラー", f"Forecast実行に必要な LT_DATA が見つかりません:\n{e}")
-            return
-        except Exception as e:
-            messagebox.showerror("エラー", f"Forecast実行に失敗しました:\n{e}")
-            return
-
-        try:
-            df = get_daily_forecast_table(
-                hotel_tag=hotel,
-                target_month=month,
-                as_of_date=asof,
-                gui_model=model,
-                capacity=occ_capacity,
+        except FileNotFoundError:
+            logging.exception("Forecast input data not found")
+            messagebox.showerror(
+                "エラー",
+                "Forecast実行に必要な LT_DATA が見つかりません。\n(ログファイル: gui_app.log)",
             )
-
-            self._set_daily_caps_for_hotel(hotel, forecast_cap, occ_capacity)
-        except Exception as e:
-            self.df_daily_forecast_df = None
-            messagebox.showerror("エラー", f"日別フォーキャスト読み込みに失敗しました:\n{e}")
+            _offer_open_logs_dir("ログ確認")
+            return
+        except Exception:
+            logging.exception("Forecast execution failed")
+            messagebox.showerror(
+                "エラー",
+                "Forecast実行に失敗しました。\n(ログファイル: gui_app.log)",
+            )
+            _offer_open_logs_dir("ログ確認")
             return
 
-        self._reset_df_selection_state()
-
-        # 既存行クリア
-        for row_id in self.df_tree.get_children():
-            self.df_tree.delete(row_id)
-
-        # DataFrame を Treeview に流し込む
-        for idx, (_, row) in enumerate(df.iterrows()):
-            # TOTAL 行は stay_date が NaT なので、表示用に "TOTAL" とする
-            stay_date = row["stay_date"]
-            if pd.isna(stay_date):
-                stay_str = "TOTAL"
-            else:
-                stay_str = pd.to_datetime(stay_date).strftime("%Y-%m-%d")
-
-            weekday = row["weekday"]
-            if isinstance(weekday, (int, float)) and not pd.isna(weekday) and 0 <= int(weekday) <= 6:
-                weekday_idx = int(weekday)
-                weekday_str = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][weekday_idx]
-            else:
-                weekday_str = str(weekday)
-
-            values = [
-                stay_str,
-                weekday_str,
-                _fmt_num(row.get("actual_rooms")),
-                _fmt_num(row.get("asof_oh_rooms")),
-                _fmt_num(row.get("forecast_rooms")),
-                _fmt_num(row.get("diff_rooms_vs_actual")),
-                _fmt_pct(row.get("diff_pct_vs_actual")),
-                _fmt_num(row.get("pickup_expected_from_asof")),
-                _fmt_num(row.get("diff_rooms")),
-                _fmt_pct(row.get("diff_pct")),
-                _fmt_pct(row.get("occ_actual_pct")),
-                _fmt_pct(row.get("occ_asof_pct")),
-                _fmt_pct(row.get("occ_forecast_pct")),
-            ]
-            tags: tuple[str, ...] = ()
-            if idx % 2 == 1:
-                tags = ("oddrow",)
-
-            self.df_tree.insert("", tk.END, values=values, tags=tags)
-
-        self.df_daily_forecast_df = df
-        self.df_table_df = df
-
-        self._update_df_best_model_label()
+        self._set_daily_caps_for_hotel(hotel, forecast_cap, occ_capacity, pax_capacity)
+        self._reload_daily_forecast_table()
 
     def _df_get_row_col_index(self, row_id: str, col_id: str) -> tuple[int, int]:
         """row_id と '#n' 形式の col_id から (row_index, col_index) を返す。"""
@@ -2355,11 +4134,13 @@ class BookingCurveApp(tk.Tk):
 
     def _on_df_hotel_changed(self, event=None) -> None:
         hotel = self.df_hotel_var.get().strip()
-        fc_cap, occ_cap = self._get_daily_caps_for_hotel(hotel)
+        fc_cap, pax_cap, occ_cap = self._get_daily_caps_for_hotel(hotel)
         self.df_forecast_cap_var.set(str(fc_cap))
+        self.df_forecast_cap_pax_var.set("" if pax_cap is None else str(pax_cap))
         self.df_occ_cap_var.set(str(occ_cap))
 
         self._update_df_latest_asof_label(False)
+        self._refresh_phase_overrides_ui()
 
     def _on_export_daily_forecast_csv(self) -> None:
         df = getattr(self, "df_daily_forecast_df", None)
@@ -2367,14 +4148,32 @@ class BookingCurveApp(tk.Tk):
             messagebox.showerror("エラー", "先にForecast実行をしてください。")
             return
 
-        columns = list(self.df_tree["columns"])
-        tree_rows = [self.df_tree.item(row_id, "values") for row_id in self.df_tree.get_children("")]
-        df_export = pd.DataFrame(tree_rows, columns=columns)
+        df_export = df.copy()
+        display_cols = [col for col in df_export.columns if col.endswith("_display")]
+        if display_cols:
+            for col in display_cols:
+                base_col = col.removesuffix("_display")
+                if base_col in df_export.columns:
+                    df_export[base_col] = df_export[col]
+            df_export = df_export.drop(columns=display_cols, errors="ignore")
+
+        def _needs_int_rounding(col: str) -> bool:
+            if "revenue" in col or "adr" in col or col.startswith("occ_"):
+                return False
+            return "rooms" in col or "pax" in col
+
+        for col in df_export.columns:
+            if _needs_int_rounding(col):
+                df_export[col] = pd.to_numeric(df_export[col], errors="coerce").round().astype("Int64")
 
         hotel = self.df_hotel_var.get().strip()
         month = self.df_month_var.get().strip()
         asof = self.df_asof_var.get().strip()
         model = self.df_model_var.get().strip()
+        rounding_units = get_hotel_rounding_units(hotel)
+        df_export["round_unit_rooms"] = rounding_units["rooms"]
+        df_export["round_unit_pax"] = rounding_units["pax"]
+        df_export["round_unit_revenue"] = rounding_units["revenue"]
 
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         out_path = OUTPUT_DIR / f"daily_forecast_{hotel}_{month}_{model}_asof_{asof.replace('-', '')}.csv"
@@ -2426,28 +4225,28 @@ class BookingCurveApp(tk.Tk):
         frame = self.tab_model_eval
 
         top = ttk.Frame(frame)
-        top.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
+        top.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=UI_SECTION_PADY)
 
         ttk.Label(top, text="ホテル:").grid(row=0, column=0, sticky="w")
         self.me_hotel_var = self.hotel_var
         hotel_combo = ttk.Combobox(top, textvariable=self.me_hotel_var, state="readonly")
         hotel_combo["values"] = sorted(HOTEL_CONFIG.keys())
-        hotel_combo.grid(row=0, column=1, padx=4, pady=2)
+        hotel_combo.grid(row=0, column=1, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
 
         run_btn = ttk.Button(top, text="評価読み込み", command=self._on_load_model_eval)
-        run_btn.grid(row=0, column=2, padx=4, pady=2)
+        run_btn.grid(row=0, column=2, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
 
-        ttk.Label(top, text="開始月(YYYYMM):").grid(row=0, column=3, sticky="w", padx=(8, 4))
-        ttk.Entry(top, textvariable=self.me_from_var, width=8).grid(row=0, column=4, padx=4, pady=2)
+        ttk.Label(top, text="開始月(YYYYMM):").grid(row=0, column=3, sticky="w", padx=(UI_GRID_PADX * 2, UI_GRID_PADX))
+        ttk.Entry(top, textvariable=self.me_from_var, width=8).grid(row=0, column=4, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
 
-        ttk.Label(top, text="終了月(YYYYMM):").grid(row=0, column=5, sticky="w", padx=(8, 4))
-        ttk.Entry(top, textvariable=self.me_to_var, width=8).grid(row=0, column=6, padx=4, pady=2)
+        ttk.Label(top, text="終了月(YYYYMM):").grid(row=0, column=5, sticky="w", padx=(UI_GRID_PADX * 2, UI_GRID_PADX))
+        ttk.Entry(top, textvariable=self.me_to_var, width=8).grid(row=0, column=6, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
 
-        ttk.Button(top, text="前月", command=self._on_me_prev_month_clicked).grid(row=0, column=7, padx=4, pady=2)
-        ttk.Button(top, text="直近3ヶ月", command=self._on_me_last3_clicked).grid(row=0, column=8, padx=4, pady=2)
-        ttk.Button(top, text="直近12ヶ月", command=self._on_me_last12_clicked).grid(row=0, column=9, padx=4, pady=2)
-        ttk.Button(top, text="CSV出力", command=self._on_export_model_eval_csv).grid(row=0, column=10, padx=4, pady=2)
-        ttk.Button(top, text="評価再計算", command=self._on_rebuild_evaluation_csv).grid(row=0, column=11, padx=4, pady=2)
+        ttk.Button(top, text="前月", command=self._on_me_prev_month_clicked).grid(row=0, column=7, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        ttk.Button(top, text="直近3ヶ月", command=self._on_me_last3_clicked).grid(row=0, column=8, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        ttk.Button(top, text="直近12ヶ月", command=self._on_me_last12_clicked).grid(row=0, column=9, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        ttk.Button(top, text="CSV出力", command=self._on_export_model_eval_csv).grid(row=0, column=10, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        ttk.Button(top, text="評価再計算", command=self._on_rebuild_evaluation_csv).grid(row=0, column=11, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
 
         columns = [
             "target_month",
@@ -2470,7 +4269,7 @@ class BookingCurveApp(tk.Tk):
         self.me_tree.tag_configure("me_odd", background="#f5f5f5")
         self.me_tree.tag_configure("me_total", background="#fff4d8")
         self.me_tree.tag_configure("me_best", background="#e0f2ff")
-        self.me_tree.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=8)
+        self.me_tree.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=UI_SECTION_PADX, pady=UI_SECTION_PADY)
 
         vsb = ttk.Scrollbar(frame, orient="vertical", command=self.me_tree.yview)
         self.me_tree.configure(yscrollcommand=vsb.set)
@@ -2694,32 +4493,32 @@ class BookingCurveApp(tk.Tk):
 
         # 上部フィルタフォーム
         top = ttk.Frame(frame)
-        top.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
+        top.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=UI_SECTION_PADY)
 
         self.asof_hotel_var = self.hotel_var
         ttk.Label(top, text="ホテル:").grid(row=0, column=0, sticky="w")
         hotel_combo = ttk.Combobox(top, textvariable=self.asof_hotel_var, state="readonly")
         hotel_combo["values"] = sorted(HOTEL_CONFIG.keys())
-        hotel_combo.grid(row=0, column=1, padx=4, pady=2)
+        hotel_combo.grid(row=0, column=1, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
 
         self.asof_from_ym_var = tk.StringVar()
         self.asof_to_ym_var = tk.StringVar()
         ttk.Label(top, text="期間From (YYYYMM):").grid(row=0, column=2, sticky="w")
-        ttk.Entry(top, textvariable=self.asof_from_ym_var, width=8).grid(row=0, column=3, padx=4, pady=2)
+        ttk.Entry(top, textvariable=self.asof_from_ym_var, width=8).grid(row=0, column=3, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
         ttk.Label(top, text="期間To (YYYYMM):").grid(row=0, column=4, sticky="w")
-        ttk.Entry(top, textvariable=self.asof_to_ym_var, width=8).grid(row=0, column=5, padx=4, pady=2)
+        ttk.Entry(top, textvariable=self.asof_to_ym_var, width=8).grid(row=0, column=5, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
 
         run_btn = ttk.Button(top, text="評価読み込み", command=self._on_load_asof_eval)
-        run_btn.grid(row=0, column=6, padx=4, pady=2)
+        run_btn.grid(row=0, column=6, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
 
         ttk.Checkbutton(
             top,
             text="最適モデルのみ表示",
             variable=self._asof_best_only_var,
             command=self._refresh_asof_eval_tables,
-        ).grid(row=0, column=7, padx=4, pady=2, sticky="w")
+        ).grid(row=0, column=7, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
 
-        ttk.Label(top, text="ASOFフィルタ:").grid(row=0, column=8, padx=(12, 0), pady=2, sticky="w")
+        ttk.Label(top, text="ASOFフィルタ:").grid(row=0, column=8, padx=(UI_GRID_PADX * 2, 0), pady=UI_GRID_PADY, sticky="w")
         asof_filter_combo = ttk.Combobox(
             top,
             textvariable=self._asof_filter_var,
@@ -2727,15 +4526,19 @@ class BookingCurveApp(tk.Tk):
             values=["(すべて)", "M-2_END", "M-1_END", "M10", "M20"],
             width=10,
         )
-        asof_filter_combo.grid(row=0, column=9, padx=4, pady=2, sticky="w")
+        asof_filter_combo.grid(row=0, column=9, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
         asof_filter_combo.bind("<<ComboboxSelected>>", lambda *_: self._refresh_asof_eval_tables())
 
-        ttk.Button(top, text="CSV出力(サマリ)", command=self._on_export_asof_overview_csv).grid(row=0, column=10, padx=4, pady=2)
-        ttk.Button(top, text="CSV出力(月別ログ)", command=self._on_export_asof_detail_csv).grid(row=0, column=11, padx=4, pady=2)
+        ttk.Button(top, text="CSV出力(サマリ)", command=self._on_export_asof_overview_csv).grid(
+            row=0, column=10, padx=UI_GRID_PADX, pady=UI_GRID_PADY
+        )
+        ttk.Button(top, text="CSV出力(月別ログ)", command=self._on_export_asof_detail_csv).grid(
+            row=0, column=11, padx=UI_GRID_PADX, pady=UI_GRID_PADY
+        )
 
         # ASOF別サマリテーブル
         overview_frame = ttk.LabelFrame(frame, text="ASOF別サマリ")
-        overview_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=(0, 4))
+        overview_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=UI_SECTION_PADX, pady=(0, UI_GRID_PADY + 1))
 
         columns = ["model", "asof_type", "mean_error_pct", "mae_pct", "rmse_pct", "n_samples"]
         self.asof_overview_tree = ttk.Treeview(overview_frame, columns=columns, show="headings", height=8)
@@ -2758,7 +4561,7 @@ class BookingCurveApp(tk.Tk):
 
         # 月別ログテーブル
         detail_frame = ttk.LabelFrame(frame, text="月別ログ")
-        detail_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+        detail_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=UI_SECTION_PADX, pady=(0, UI_SECTION_PADY))
 
         detail_columns = ["target_month", "asof_type", "model", "error_pct", "abs_error_pct"]
         self.asof_detail_tree = ttk.Treeview(detail_frame, columns=detail_columns, show="headings", height=12)
@@ -2992,24 +4795,205 @@ class BookingCurveApp(tk.Tk):
     def _init_booking_curve_tab(self) -> None:
         frame = self.tab_booking_curve
 
-        form = ttk.Frame(frame)
-        form.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
+        header_frame = ttk.Frame(frame)
+        header_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=UI_SECTION_PADY)
+        header_frame.grid_columnconfigure(0, weight=0)
+        header_frame.grid_columnconfigure(1, weight=1)
+        header_frame.grid_columnconfigure(2, weight=0)
 
-        ttk.Label(form, text="ホテル:").grid(row=0, column=0, sticky="w")
+        left_zone = ttk.Frame(header_frame)
+        left_zone.grid(row=0, column=0, sticky="nw")
+        ttk.Frame(header_frame).grid(row=0, column=1, sticky="nsew")
+        right_zone = ttk.Frame(header_frame)
+        right_zone.grid(row=0, column=2, sticky="ne")
+
+        left_row1 = ttk.Frame(left_zone)
+        left_row1.pack(side=tk.TOP, anchor="w")
+        left_row2 = ttk.Frame(left_zone)
+        left_row2.pack(side=tk.TOP, anchor="w")
+        left_row3 = ttk.Frame(left_zone)
+        left_row3.pack(side=tk.TOP, anchor="w")
+        left_row4 = ttk.Frame(left_zone)
+        left_row4.pack(side=tk.TOP, anchor="w")
+
+        right_row1 = ttk.Frame(right_zone)
+        right_row1.pack(side=tk.TOP, anchor="e")
+        right_row2 = ttk.Frame(right_zone)
+        right_row2.pack(side=tk.TOP, anchor="e", fill=tk.X)
+
+        ttk.Label(left_row1, text="ホテル:").pack(side=tk.LEFT)
         self.bc_hotel_var = self.hotel_var
-        hotel_combo = ttk.Combobox(form, textvariable=self.bc_hotel_var, state="readonly")
+        hotel_combo = ttk.Combobox(left_row1, textvariable=self.bc_hotel_var, state="readonly")
         hotel_combo["values"] = sorted(HOTEL_CONFIG.keys())
-        hotel_combo.grid(row=0, column=1, padx=4, pady=2)
+        hotel_combo.pack(side=tk.LEFT, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
         hotel_combo.bind("<<ComboboxSelected>>", self._on_bc_hotel_changed)
 
-        ttk.Label(form, text="対象月 (YYYYMM):").grid(row=0, column=2, sticky="w")
+        ttk.Label(left_row1, text="対象月 (YYYYMM):").pack(side=tk.LEFT)
         current_month = date.today().strftime("%Y%m")
         self.bc_month_var = tk.StringVar(value=current_month)
-        ttk.Entry(form, textvariable=self.bc_month_var, width=8).grid(row=0, column=3, padx=4, pady=2)
+        ttk.Entry(left_row1, textvariable=self.bc_month_var, width=8).pack(
+            side=tk.LEFT,
+            padx=UI_GRID_PADX,
+            pady=UI_GRID_PADY,
+        )
 
-        ttk.Label(form, text="曜日:").grid(row=0, column=4, sticky="w")
+        nav_frame = ttk.Frame(left_row1)
+        nav_frame.pack(side=tk.LEFT, padx=(UI_GRID_PADX, 0), pady=UI_GRID_PADY)
+        ttk.Label(nav_frame, text="月移動:").pack(side=tk.LEFT, padx=(0, UI_GRID_PADX))
+        ttk.Button(
+            nav_frame,
+            text="-1Y",
+            width=4,
+            command=lambda: self._on_bc_shift_month(-12),
+        ).pack(side=tk.LEFT, padx=1)
+        ttk.Button(
+            nav_frame,
+            text="-1M",
+            width=4,
+            command=lambda: self._on_bc_shift_month(-1),
+        ).pack(side=tk.LEFT, padx=1)
+        ttk.Button(
+            nav_frame,
+            text="+1M",
+            width=4,
+            command=lambda: self._on_bc_shift_month(+1),
+        ).pack(side=tk.LEFT, padx=1)
+        ttk.Button(
+            nav_frame,
+            text="+1Y",
+            width=4,
+            command=lambda: self._on_bc_shift_month(+12),
+        ).pack(side=tk.LEFT, padx=1)
+
+        ttk.Label(left_row2, text="AS OF (YYYY-MM-DD):").pack(
+            side=tk.LEFT,
+            pady=(UI_GRID_PADY + 1, UI_GRID_PADY),
+        )
+        self.bc_asof_var = tk.StringVar(value="")  # 今日ではなく空で初期化
+        if DateEntry is not None:
+            self.bc_asof_entry = DateEntry(
+                left_row2,
+                textvariable=self.bc_asof_var,
+                date_pattern="yyyy-mm-dd",
+                width=12,
+            )
+        else:
+            self.bc_asof_entry = ttk.Entry(
+                left_row2,
+                textvariable=self.bc_asof_var,
+                width=12,
+            )
+        self.bc_asof_entry.pack(
+            side=tk.LEFT,
+            padx=UI_GRID_PADX,
+            pady=(UI_GRID_PADY + 1, UI_GRID_PADY),
+        )
+
+        self.bc_latest_asof_var = tk.StringVar(value="")
+        ttk.Label(left_row2, text="最新ASOF:").pack(side=tk.LEFT, pady=(UI_GRID_PADY + 1, UI_GRID_PADY))
+        self.bc_latest_asof_label = tk.Label(left_row2, textvariable=self.bc_latest_asof_var, width=12, anchor="w")
+        self._latest_asof_label_defaults[self.bc_latest_asof_label] = (
+            self.bc_latest_asof_label.cget("background"),
+            self.bc_latest_asof_label.cget("foreground"),
+        )
+        self.bc_latest_asof_label.pack(
+            side=tk.LEFT,
+            padx=UI_GRID_PADX,
+            pady=(UI_GRID_PADY + 1, UI_GRID_PADY),
+        )
+        ttk.Button(left_row2, text="最新に反映", command=self._on_bc_set_asof_to_latest).pack(
+            side=tk.LEFT,
+            padx=UI_GRID_PADX,
+            pady=(UI_GRID_PADY + 1, UI_GRID_PADY),
+        )
+
+        ttk.Label(left_row3, text="モデル:").pack(
+            side=tk.LEFT,
+            pady=(UI_GRID_PADY + 1, UI_GRID_PADY),
+        )
+        model_values = ["recent90", "recent90w", "pace14", "pace14_market"]
+        general_settings = self._settings.get("general") or {}
+        default_model = "recent90w"
+        saved_model = general_settings.get("last_bc_model")
+        initial_model = saved_model if saved_model in model_values else default_model
+        self.bc_model_var = tk.StringVar(value=initial_model)
+        model_combo = ttk.Combobox(left_row3, textvariable=self.bc_model_var, state="readonly", width=16)
+        model_combo["values"] = model_values
+        model_combo.pack(side=tk.LEFT, padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 1, UI_GRID_PADY))
+        self.bc_model_var.trace_add("write", lambda *_: self._on_bc_model_changed(model_values))
+
+        save_btn = ttk.Button(left_row3, text="PNG保存", command=self._on_save_booking_curve_png)
+        save_btn.pack(side=tk.LEFT, padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 1, UI_GRID_PADY))
+
+        ttk.Label(left_row4, text="LTソース:").pack(side=tk.LEFT, padx=(0, 1), pady=(UI_GRID_PADY + 1, 0))
+        self.lt_source_combo = ttk.Combobox(
+            left_row4,
+            textvariable=self.lt_source_var,
+            state="readonly",
+            width=13,
+        )
+        self.lt_source_combo["values"] = ("daily_snapshots", "timeseries")
+        self.lt_source_combo.pack(side=tk.LEFT, padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 1, 0))
+
+        self.chk_update_snapshots = ttk.Checkbutton(
+            left_row4,
+            text="LT生成時にdaily snapshots更新",
+            variable=self.update_daily_snapshots_var,
+        )
+        self.chk_update_snapshots.pack(side=tk.LEFT, padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 1, 0))
+
+        self.btn_build_lt = ttk.Button(left_row4, text="LT_DATA(4ヶ月)", command=self._on_build_lt_data)
+        self.btn_build_lt.pack(side=tk.LEFT, padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 1, 0))
+
+        self.btn_build_lt_range = ttk.Button(left_row4, text="LT_DATA(期間指定)", command=self._on_build_lt_data_range)
+        self.btn_build_lt_range.pack(side=tk.LEFT, padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 1, 0))
+
+        draw_btn = ttk.Button(left_row4, text="描画", command=self._on_draw_booking_curve)
+        draw_btn.pack(side=tk.LEFT, padx=UI_GRID_PADX * 2, pady=(UI_GRID_PADY + 1, 0))
+
+        self.bc_fill_missing_var = tk.BooleanVar(value=True)
+        self.bc_fill_missing_chk = ttk.Checkbutton(
+            right_row1,
+            text="欠損補完(NOCB)",
+            variable=self.bc_fill_missing_var,
+        )
+        self.bc_fill_missing_chk.pack(side=tk.LEFT, padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 1, UI_GRID_PADY))
+
+        # 現在選択されているホテルのキャパを取得
+        current_hotel = self.hotel_var.get().strip() or DEFAULT_HOTEL
+        fc_cap, _, _ = self._get_daily_caps_for_hotel(current_hotel)
+        self.bc_forecast_cap_var = tk.StringVar(value=str(fc_cap))
+
+        ttk.Label(right_row1, text="予測キャップ:").pack(side=tk.LEFT, pady=(UI_GRID_PADY + 1, UI_GRID_PADY))
+        ttk.Entry(right_row1, textvariable=self.bc_forecast_cap_var, width=6).pack(
+            side=tk.LEFT,
+            padx=UI_GRID_PADX,
+            pady=(UI_GRID_PADY + 1, UI_GRID_PADY),
+        )
+
+        self.lt_source_var.trace_add("write", self._on_lt_source_changed)
+        self.lt_source_combo.bind("<<ComboboxSelected>>", self._on_lt_source_changed)
+        self._sync_daily_snapshots_checkbox_state()
+
+        self.bc_best_model_label = ttk.Label(
+            right_row2,
+            text="最適モデル: 評価データなし",
+            anchor="w",
+            justify="left",
+        )
+        self.bc_best_model_label.pack(side=tk.LEFT, anchor="w", padx=UI_GRID_PADX, pady=(0, UI_GRID_PADY + 1))
+
+        plot_toolbar = ttk.Frame(frame)
+        plot_toolbar.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, UI_GRID_PADY))
+        toolbar_spacer = ttk.Frame(plot_toolbar)
+        toolbar_spacer.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        weekday_toolbar = ttk.Frame(plot_toolbar)
+        weekday_toolbar.pack(side=tk.RIGHT, anchor="e")
+
+        ttk.Label(weekday_toolbar, text="曜日:").pack(side=tk.LEFT, padx=(0, UI_GRID_PADX))
         self.bc_weekday_var = tk.StringVar(value="5:Sat")
-        weekday_combo = ttk.Combobox(form, textvariable=self.bc_weekday_var, state="readonly", width=7)
+        weekday_combo = ttk.Combobox(weekday_toolbar, textvariable=self.bc_weekday_var, state="readonly", width=6)
         weekday_combo["values"] = [
             "0:Mon",
             "1:Tue",
@@ -3019,10 +5003,10 @@ class BookingCurveApp(tk.Tk):
             "5:Sat",
             "6:Sun",
         ]
-        weekday_combo.grid(row=0, column=5, padx=4, pady=2)
+        weekday_combo.pack(side=tk.LEFT, padx=(0, UI_GRID_PADX), pady=UI_GRID_PADY)
 
-        wd_btn_frame = ttk.Frame(form)
-        wd_btn_frame.grid(row=0, column=6, columnspan=7, padx=4, pady=2, sticky="w")
+        weekday_quick_frame = ttk.Frame(weekday_toolbar)
+        weekday_quick_frame.pack(side=tk.LEFT)
 
         for text, value in [
             ("Sun", "6:Sun"),
@@ -3034,139 +5018,14 @@ class BookingCurveApp(tk.Tk):
             ("Sat", "5:Sat"),
         ]:
             ttk.Button(
-                wd_btn_frame,
+                weekday_quick_frame,
                 text=text,
                 width=4,
                 command=lambda v=value: self._on_bc_quick_weekday(v),
             ).pack(side=tk.LEFT, padx=1)
 
-        ttk.Label(form, text="AS OF (YYYY-MM-DD):").grid(row=1, column=0, sticky="w", pady=(4, 2))
-        self.bc_asof_var = tk.StringVar(value="")  # 今日ではなく空で初期化
-        if DateEntry is not None:
-            self.bc_asof_entry = DateEntry(
-                form,
-                textvariable=self.bc_asof_var,
-                date_pattern="yyyy-mm-dd",
-                width=12,
-            )
-        else:
-            self.bc_asof_entry = ttk.Entry(
-                form,
-                textvariable=self.bc_asof_var,
-                width=12,
-            )
-        self.bc_asof_entry.grid(row=1, column=1, padx=4, pady=(4, 2))
-
-        self.bc_latest_asof_var = tk.StringVar(value="")
-        ttk.Label(form, text="最新ASOF:").grid(row=1, column=2, sticky="w", pady=(4, 2))
-        self.bc_latest_asof_label = tk.Label(form, textvariable=self.bc_latest_asof_var, width=12, anchor="w")
-        self._latest_asof_label_defaults[self.bc_latest_asof_label] = (
-            self.bc_latest_asof_label.cget("background"),
-            self.bc_latest_asof_label.cget("foreground"),
-        )
-        self.bc_latest_asof_label.grid(row=1, column=3, padx=4, pady=(4, 2), sticky="w")
-        ttk.Button(form, text="最新に反映", command=self._on_bc_set_asof_to_latest).grid(row=1, column=4, padx=4, pady=(4, 2), sticky="w")
-
-        ttk.Label(form, text="モデル:").grid(row=1, column=5, sticky="w", pady=(4, 2))
-        self.bc_model_var = tk.StringVar(value="recent90w")
-        model_combo = ttk.Combobox(form, textvariable=self.bc_model_var, state="readonly", width=12)
-        model_combo["values"] = ["recent90", "recent90w", "pace14", "pace14_market"]
-        model_combo.grid(row=1, column=6, padx=4, pady=(4, 2))
-
-        self.bc_fill_missing_var = tk.BooleanVar(value=True)
-        self.bc_fill_missing_chk = ttk.Checkbutton(
-            form,
-            text="欠損補完(NOCB)",
-            variable=self.bc_fill_missing_var,
-        )
-        self.bc_fill_missing_chk.grid(row=1, column=8, padx=4, pady=(4, 2), sticky="w")
-
-        # 現在選択されているホテルのキャパを取得
-        current_hotel = self.hotel_var.get().strip() or DEFAULT_HOTEL
-        fc_cap, _ = self._get_daily_caps_for_hotel(current_hotel)
-        self.bc_forecast_cap_var = tk.StringVar(value=str(fc_cap))
-
-        ttk.Label(form, text="予測キャップ:").grid(row=1, column=11, sticky="w", pady=(4, 2))
-        ttk.Entry(form, textvariable=self.bc_forecast_cap_var, width=6).grid(row=1, column=12, padx=2, pady=(4, 2), sticky="w")
-
-        save_btn = ttk.Button(form, text="PNG保存", command=self._on_save_booking_curve_png)
-        save_btn.grid(row=1, column=7, padx=4, pady=(4, 2))
-
-        nav_frame = ttk.Frame(form)
-        nav_frame.grid(row=2, column=2, columnspan=8, sticky="w", pady=(4, 0))
-
-        nav_left = ttk.Frame(nav_frame)
-        nav_left.pack(side=tk.LEFT)
-        nav_right = ttk.Frame(nav_frame)
-        nav_right.pack(side=tk.LEFT, padx=16, fill=tk.X, expand=True)
-
-        row1_frame = ttk.Frame(nav_right)
-        row1_frame.pack(side=tk.TOP, fill=tk.X, anchor="w")
-        row2_frame = ttk.Frame(nav_right)
-        row2_frame.pack(side=tk.TOP, fill=tk.X, anchor="e", pady=(4, 0))
-
-        ttk.Label(nav_left, text="月移動:").pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(
-            nav_left,
-            text="-1Y",
-            command=lambda: self._on_bc_shift_month(-12),
-        ).pack(side=tk.LEFT, padx=2)
-        ttk.Button(
-            nav_left,
-            text="-1M",
-            command=lambda: self._on_bc_shift_month(-1),
-        ).pack(side=tk.LEFT, padx=2)
-        ttk.Button(
-            nav_left,
-            text="+1M",
-            command=lambda: self._on_bc_shift_month(+1),
-        ).pack(side=tk.LEFT, padx=2)
-        ttk.Button(
-            nav_left,
-            text="+1Y",
-            command=lambda: self._on_bc_shift_month(+12),
-        ).pack(side=tk.LEFT, padx=2)
-
-        ttk.Label(row1_frame, text="LTソース:").pack(side=tk.LEFT, padx=(4, 2))
-        self.lt_source_combo = ttk.Combobox(
-            row1_frame,
-            textvariable=self.lt_source_var,
-            state="readonly",
-            width=14,
-        )
-        self.lt_source_combo["values"] = ("daily_snapshots", "timeseries")
-        self.lt_source_combo.pack(side=tk.LEFT, padx=2)
-
-        self.chk_update_snapshots = ttk.Checkbutton(
-            row1_frame,
-            text="LT生成時にdaily snapshots更新",
-            variable=self.update_daily_snapshots_var,
-        )
-        self.chk_update_snapshots.pack(side=tk.LEFT, padx=4)
-
-        self.btn_build_lt = ttk.Button(row2_frame, text="LT_DATA(4ヶ月)", command=self._on_build_lt_data)
-        self.btn_build_lt.pack(side=tk.LEFT, padx=4)
-
-        self.btn_build_lt_range = ttk.Button(row2_frame, text="LT_DATA(期間指定)", command=self._on_build_lt_data_range)
-        self.btn_build_lt_range.pack(side=tk.LEFT, padx=4)
-
-        draw_btn = ttk.Button(row2_frame, text="描画", command=self._on_draw_booking_curve)
-        draw_btn.pack(side=tk.LEFT, padx=8)
-
-        self.lt_source_var.trace_add("write", self._on_lt_source_changed)
-        self.lt_source_combo.bind("<<ComboboxSelected>>", self._on_lt_source_changed)
-        self._sync_daily_snapshots_checkbox_state()
-
-        self.bc_best_model_label = ttk.Label(
-            frame,
-            text="最適モデル: 評価データなし",
-            anchor="w",
-            justify="left",
-        )
-        self.bc_best_model_label.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 4))
-
         plot_frame = ttk.Frame(frame)
-        plot_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=8)
+        plot_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=UI_SECTION_PADX, pady=UI_SECTION_PADY)
 
         self.bc_fig = Figure(figsize=(10, 5))
         # 左余白は詰めたまま、凡例用に右側に少しスペースを残す
@@ -3180,7 +5039,7 @@ class BookingCurveApp(tk.Tk):
 
         # --- ブッキングカーブ用テーブル (stay_date × LT) ---
         table_frame = ttk.Frame(frame)
-        table_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=False, padx=8, pady=(0, 8))
+        table_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=False, padx=UI_SECTION_PADX, pady=(0, UI_SECTION_PADY))
 
         # 初期状態では列は空。データ取得時に動的に columns を設定する。
         self.bc_tree = ttk.Treeview(table_frame, columns=(), show="headings", height=8)
@@ -3511,8 +5370,8 @@ class BookingCurveApp(tk.Tk):
             messagebox.showerror("Error", "予測キャップには数値を入力してください。")
             return
 
-        _, occ_cap = self._get_daily_caps_for_hotel(hotel_tag)
-        self._set_daily_caps_for_hotel(hotel_tag, forecast_cap, occ_cap)
+        _, pax_cap, occ_cap = self._get_daily_caps_for_hotel(hotel_tag)
+        self._set_daily_caps_for_hotel(hotel_tag, forecast_cap, occ_cap, pax_cap)
 
         # ASOF と最新ASOFの比較
         latest_str = self.bc_latest_asof_var.get().strip()
@@ -3886,64 +5745,70 @@ class BookingCurveApp(tk.Tk):
         frame = self.tab_monthly_curve
 
         form = ttk.Frame(frame)
-        form.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
+        form.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=UI_SECTION_PADY)
 
         ttk.Label(form, text="ホテル:").grid(row=0, column=0, sticky="w")
         self.mc_hotel_var = self.hotel_var
         mc_combo = ttk.Combobox(form, textvariable=self.mc_hotel_var, state="readonly")
         mc_combo["values"] = sorted(HOTEL_CONFIG.keys())
-        mc_combo.grid(row=0, column=1, padx=4, pady=2)
+        mc_combo.grid(row=0, column=1, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
 
         ttk.Label(form, text="対象月 (YYYYMM):").grid(row=0, column=2, sticky="w")
         current_month = date.today().strftime("%Y%m")
         self.mc_month_var = tk.StringVar(value=current_month)
-        ttk.Entry(form, textvariable=self.mc_month_var, width=8).grid(row=0, column=3, padx=4, pady=2)
+        ttk.Entry(form, textvariable=self.mc_month_var, width=8).grid(row=0, column=3, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
 
         self.mc_show_prev_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(form, text="前年同月を重ねる", variable=self.mc_show_prev_var).grid(row=0, column=4, padx=8, pady=2, sticky="w")
+        ttk.Checkbutton(form, text="前年同月を重ねる", variable=self.mc_show_prev_var).grid(
+            row=0,
+            column=4,
+            padx=UI_GRID_PADX * 2,
+            pady=UI_GRID_PADY,
+            sticky="w",
+        )
 
         self.mc_fill_missing_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(form, text="欠損補完（線形）", variable=self.mc_fill_missing_var).grid(
             row=0,
             column=5,
-            padx=8,
-            pady=2,
+            padx=UI_GRID_PADX * 2,
+            pady=UI_GRID_PADY,
             sticky="w",
         )
 
         save_btn = ttk.Button(form, text="PNG保存", command=self._on_save_monthly_curve_png)
-        save_btn.grid(row=0, column=6, padx=4, pady=2)
+        save_btn.grid(row=0, column=6, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
 
         draw_btn = ttk.Button(form, text="描画", command=self._on_draw_monthly_curve)
-        draw_btn.grid(row=0, column=7, padx=4, pady=2)
+        draw_btn.grid(row=0, column=7, padx=UI_GRID_PADX, pady=UI_GRID_PADY)
 
         nav_frame = ttk.Frame(form)
-        nav_frame.grid(row=1, column=2, columnspan=5, sticky="w", pady=(4, 0))
+        nav_frame.grid(row=1, column=2, columnspan=5, sticky="w", pady=(UI_GRID_PADY + 1, 0))
 
-        ttk.Label(nav_frame, text="月移動:").pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(nav_frame, text="月移動:").pack(side=tk.LEFT, padx=(0, UI_GRID_PADX))
         ttk.Button(
             nav_frame,
             text="-1Y",
             command=lambda: self._shift_month_var(self.mc_month_var, -12),
-        ).pack(side=tk.LEFT, padx=2)
+        ).pack(side=tk.LEFT, padx=UI_GRID_PADX)
         ttk.Button(
             nav_frame,
             text="-1M",
             command=lambda: self._shift_month_var(self.mc_month_var, -1),
-        ).pack(side=tk.LEFT, padx=2)
+        ).pack(side=tk.LEFT, padx=UI_GRID_PADX)
         ttk.Button(
             nav_frame,
             text="+1M",
             command=lambda: self._shift_month_var(self.mc_month_var, +1),
-        ).pack(side=tk.LEFT, padx=2)
+        ).pack(side=tk.LEFT, padx=UI_GRID_PADX)
         ttk.Button(
             nav_frame,
             text="+1Y",
             command=lambda: self._shift_month_var(self.mc_month_var, +12),
-        ).pack(side=tk.LEFT, padx=2)
+        ).pack(side=tk.LEFT, padx=UI_GRID_PADX)
 
         plot_frame = ttk.Frame(frame)
-        plot_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=8)
+        plot_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=UI_SECTION_PADX, pady=UI_SECTION_PADY)
 
         self.mc_fig = Figure(figsize=(10, 5))
         self.mc_ax = self.mc_fig.add_subplot(111)
@@ -4117,9 +5982,7 @@ class BookingCurveApp(tk.Tk):
             return
 
         if skipped_months:
-            warn_parts: list[str] = [
-                "取得できなかった月次カーブ: " + ", ".join(sorted(skipped_months))
-            ]
+            warn_parts: list[str] = ["取得できなかった月次カーブ: " + ", ".join(sorted(skipped_months))]
             if skipped_prev_months:
                 warn_parts.append("取得できなかった前年同月: " + ", ".join(sorted(skipped_prev_months)))
             warn_parts.append("必要なら daily snapshots を更新してください。")
@@ -4218,7 +6081,7 @@ def _fmt_num(v) -> str:
     if pd.isna(v):
         return ""
     try:
-        return f"{float(v):.0f}"
+        return f"{round(float(v)):,}"
     except Exception:
         return str(v)
 

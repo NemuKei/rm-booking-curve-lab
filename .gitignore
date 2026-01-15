@@ -17,8 +17,7 @@ venv/
 # Build
 dist/
 build/
-*.spec
-!src/BookingCurveLab.spec
+
 
 # OS
 .DS_Store

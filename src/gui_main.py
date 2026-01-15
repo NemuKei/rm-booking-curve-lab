@@ -97,17 +97,51 @@ def _apply_window_icon(window: tk.Tk | tk.Toplevel) -> None:
             ICON_BIG = 1
             IMAGE_ICON = 1
             LR_LOADFROMFILE = 0x0010
+            SM_CXICON = 11
+            SM_CYICON = 12
+            SM_CXSMICON = 49
+            SM_CYSMICON = 50
 
             hwnd = window.winfo_id()
-            load_image = ctypes.windll.user32.LoadImageW
-            send_message = ctypes.windll.user32.SendMessageW
+            user32 = ctypes.windll.user32
+            load_image = user32.LoadImageW
+            load_image.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_wchar_p,
+                ctypes.c_uint,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_uint,
+            ]
+            load_image.restype = ctypes.c_void_p
+            send_message = user32.SendMessageW
+            send_message.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_uint,
+                ctypes.c_size_t,
+                ctypes.c_void_p,
+            ]
+            send_message.restype = ctypes.c_void_p
+            get_system_metrics = user32.GetSystemMetrics
+            get_system_metrics.argtypes = [ctypes.c_int]
+            get_system_metrics.restype = ctypes.c_int
+
+            cx_small = get_system_metrics(SM_CXSMICON)
+            cy_small = get_system_metrics(SM_CYSMICON)
+            cx_big = get_system_metrics(SM_CXICON)
+            cy_big = get_system_metrics(SM_CYICON)
+
+            if cx_small <= 0 or cy_small <= 0:
+                cx_small, cy_small = 32, 32
+            if cx_big <= 0 or cy_big <= 0:
+                cx_big, cy_big = 256, 256
 
             small_icon = load_image(
                 None,
                 str(icon_path),
                 IMAGE_ICON,
-                32,
-                32,
+                cx_small,
+                cy_small,
                 LR_LOADFROMFILE,
             )
             if small_icon:
@@ -117,8 +151,8 @@ def _apply_window_icon(window: tk.Tk | tk.Toplevel) -> None:
                 None,
                 str(icon_path),
                 IMAGE_ICON,
-                256,
-                256,
+                cx_big,
+                cy_big,
                 LR_LOADFROMFILE,
             )
             if big_icon:

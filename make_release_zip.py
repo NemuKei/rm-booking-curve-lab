@@ -22,6 +22,7 @@ INCLUDE_GLOBS = [
     "AGENTS.md",
     "make_release_zip.py",
     "BookingCurveLab.spec",
+    "assets/**/*",
 ]
 
 # 「サンプル出力」を入れるときだけ追加する（git管理外でも入る想定）

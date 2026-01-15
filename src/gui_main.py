@@ -69,7 +69,7 @@ def _set_windows_appusermodel_id(app_id: str) -> None:
         return
 
 
-DEFAULT_APP_USER_MODEL_ID = "WorldHeritage.BookingCurveLab"
+DEFAULT_APP_USER_MODEL_ID = "BookingCurveLab.App"
 
 
 def _init_windows_app_identity() -> None:

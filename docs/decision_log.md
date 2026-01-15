@@ -175,3 +175,114 @@
   * docs/spec_data_layer.md: なし
   * docs/spec_evaluation.md: （ベストモデル定義、M-1_END固定、UI表示方針）
 * Status: 未反映
+
+## D-20260109-XXX Revenue予測V1の定義（税抜宿泊売上＋OH基準ADR×phase）
+
+* Decision:
+
+  * revenue（ADR定義A）は **税抜宿泊売上のみ**（朝食等は含めない）で統一する。
+  * revenue予測（V1）は **`OH売上 + remaining_rooms × adr_pickup_est`** で算出する。
+  * `adr_pickup_est` は **`OH ADR × phase_factor`**（phase_bias）を基本とし、当面はこの形をV1として固定する（DOR収束/曜日差はV2）。
+* Why:
+
+  * まず破綻しにくい最小V1を固定し、運用・評価を回せる土台を先に作るため。
+* Spec link:
+
+  * docs/spec_overview.md: 売上予測のスコープ（rooms/pax/revenue）追記予定
+  * docs/spec_models.md: 売上予測V1（ADR推定/式/対象外売上）追記予定
+  * docs/spec_data_layer.md: revenue系Forecast列（定義・単位・raw出力）追記予定
+  * docs/spec_evaluation.md: （必要なら）revenue評価の対象/指標の扱い追記予定
+* Status: 未反映
+
+## D-20260109-XXX phase_biasの適用範囲と保存先（revenueのみ・local_overrides）
+
+* Decision:
+
+  * phase_bias は **手動UI入力（3ヶ月×3フェーズ×強度3）** を基本とし、保存先は **local_overrides（端末ローカル）** とする。
+  * 適用先は **当面 revenue のみ**（rooms予測とは独立）とし、影響範囲を固定する。
+* Why:
+
+  * roomsへ波及させると事故率が上がるため、まずは意思決定で効くrevenueに限定して導入する。
+* Spec link:
+
+  * docs/spec_overview.md: local_overrides運用（端末ローカル設定）追記予定
+  * docs/spec_models.md: phase_bias UI仕様／適用範囲（revenueのみ）追記予定
+  * docs/spec_data_layer.md: phase_bias保存データ（場所・キー）追記予定
+  * docs/spec_evaluation.md: （必要なら）phase_bias適用有無の評価条件追記予定
+* Status: 未反映
+
+## D-20260109-XXX 「CSVはraw」「丸めはGUI」＋月次丸めは配分整合で行う
+
+* Decision:
+
+  * 「CSVは生値（raw）」を運用ルールとして固定し、資料用の大きい丸め（例：rooms/pax=100単位、rev=10万円単位）を **CSVに焼かない**。
+  * 月次丸めは **GUIチェックボックスでON/OFF**できるものとし、ON時は「月次丸めゴール」に合わせて **日別へ配分して整合**を取る（末日だけ調整はしない）。
+  * 丸め後は派生指標（例：PU Exp / OCC等）を **再計算**する前提を固定する。
+* Why:
+
+  * 再現性（評価/検証）と現場資料（丸め表示）を分離し、誤読とデータ劣化を防ぐため。
+* Spec link:
+
+  * docs/spec_overview.md: 出力と表示の責務分離（raw vs 表示丸め）追記予定
+  * docs/spec_models.md: 月次丸め（整合配分）と派生指標再計算の扱い追記予定
+  * docs/spec_data_layer.md: Forecast CSVはraw、GUIのみ丸め・表示単位の規約追記予定
+  * docs/spec_evaluation.md: （必要なら）丸めON/OFF時の評価の扱い注意追記予定
+* Status: 未反映
+
+## D-20260109-XXX pax_capの既定（未入力時は直近6ヶ月ACT paxのp99）
+
+* Decision:
+
+  * paxには理論上のcapを持たせる。
+  * pax_cap未入力時は max ではなく **p99（上位1%）** を採用する。
+  * p99の母集団は **直近Nヶ月の各日ACT pax**（運用は **直近6ヶ月** をデフォルト）とする。
+* Why:
+
+  * 外れ値（max）依存を避けつつ、満室近辺での“限界突破”を抑制するため。
+* Spec link:
+
+  * docs/spec_overview.md: cap概念（rooms/pax）追記予定
+  * docs/spec_models.md: pax_cap算出（p99、lookback=6ヶ月）追記予定
+  * docs/spec_data_layer.md: cap入力・既定値の取り扱い追記予定
+  * docs/spec_evaluation.md: （必要なら）cap適用時の評価条件追記予定
+* Status: 未反映
+
+## D-20260109-XXX TopDown（RevPAR）を別窓で提供し、予測範囲はASOF基準で固定
+
+* Decision:
+
+  * TopDown（RevPAR）は **別窓（ポップアップ）**で提供する（別タブではない）。
+  * 初期指標は **RevPARのみ**（ADR/OCCは後追い可）。
+  * 表示する過去年数はデフォルト **直近6年**。
+  * 予測範囲は **最新ASOF基準**で固定し、
+
+    * 下限（月）は **「最新ASOFが属する月」起点**
+    * 上限は **「最新ASOF + 90日後にかかる月まで」**
+  * Forecast CSVが存在しない月は **載せない（欠損扱い）** をTopDown/日別で共通ルール化する。
+* Why:
+
+  * 座標系（基準）を固定して形状比較の違和感検知を強め、月選択で範囲がズレる混入バグを避けるため。
+* Spec link:
+
+  * docs/spec_overview.md: TopDown機能（別窓・対象指標・既定表示年数）追記予定
+  * docs/spec_models.md: TopDownの予測範囲定義（ASOF月起点〜ASOF+90日）追記予定
+  * docs/spec_data_layer.md: 「Forecast未作成月は欠損」規約追記予定
+  * docs/spec_evaluation.md: （必要なら）TopDownの利用目的（意思決定補助）注意追記予定
+* Status: 未反映
+
+## D-20260109-XXX 設定はホテル別を原則（丸め単位・TopDown期首月）
+
+* Decision:
+
+  * 月次丸め単位（rooms/pax/rev）は **ホテル別設定**で保持する方針とする（将来拡張を前提に固定）。
+  * TopDownの年度開始月（期首月、現状は6月固定）は **V2でホテル別設定化**する方針とする。
+* Why:
+
+  * マルチホテル/外部展開で差が出る前提を、コード分岐ではなく設定で吸収するため。
+* Spec link:
+
+  * docs/spec_overview.md: 設定の階層（ホテル別）追記予定
+  * docs/spec_models.md: 丸め単位・期首月のパラメータ化方針追記予定
+  * docs/spec_data_layer.md: hotels.json等の設定項目追加方針追記予定
+  * docs/spec_evaluation.md: 影響なし（原則不要）
+* Status: 未反映

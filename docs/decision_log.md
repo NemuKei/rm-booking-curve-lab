@@ -5,7 +5,7 @@
 
 ---
 
-## D-20260105-XXX rooms予測モデルの標準セットを4本に固定
+## D-20260105-001 rooms予測モデルの標準セットを4本に固定
 
 * Decision:
 
@@ -21,7 +21,7 @@
   * docs/spec_evaluation.md: （比較対象モデルの前提として追記）
 * Status: 未反映
 
-## D-20260105-XXX pace14のPF定義とclip初期値を固定（通常/スパイク）
+## D-20260105-002 pace14のPF定義とclip初期値を固定（通常/スパイク）
 
 * Decision:
 
@@ -39,7 +39,7 @@
   * docs/spec_evaluation.md: なし
 * Status: 未反映
 
-## D-20260105-XXX スパイク判定はSP-A（機械判定＋診断表示）を標準運用に固定
+## D-20260105-003 スパイク判定はSP-A（機械判定＋診断表示）を標準運用に固定
 
 * Decision:
 
@@ -56,7 +56,7 @@
   * docs/spec_evaluation.md: なし
 * Status: 未反映
 
-## D-20260105-XXX 予測曲線の生成方式と「日別Forecastとの最終着地一致」を必須要件に固定
+## D-20260105-004 予測曲線の生成方式と「日別Forecastとの最終着地一致」を必須要件に固定
 
 * Decision:
 
@@ -73,7 +73,7 @@
   * docs/spec_evaluation.md: なし
 * Status: 未反映
 
-## D-20260105-XXX BookingCurveのbaselineはrecent90、avg線は廃止に固定
+## D-20260105-005 BookingCurveのbaselineはrecent90、avg線は廃止に固定
 
 * Decision:
 
@@ -90,7 +90,7 @@
   * docs/spec_evaluation.md: なし
 * Status: 未反映
 
-## D-20260105-XXX 欠損補完は「表示用のみ」先行導入し、適用範囲を固定
+## D-20260105-006 欠損補完は「表示用のみ」先行導入し、適用範囲を固定
 
 * Decision:
 
@@ -107,7 +107,7 @@
   * docs/spec_evaluation.md: なし
 * Status: 未反映
 
-## D-20260105-XXX LT_DATAを rooms/pax/revenue の3ファイルへ拡張し、revenue定義を固定
+## D-20260105-007 LT_DATAを rooms/pax/revenue の3ファイルへ拡張し、revenue定義を固定
 
 * Decision:
 
@@ -124,7 +124,7 @@
   * docs/spec_evaluation.md: （rooms以外の評価指標の前提追記）
 * Status: 未反映
 
-## D-20260105-XXX phase_biasは「月別×フェーズ×強度3段階」、保存先はlocal_overrides、適用先はrevenueのみで固定
+## D-20260105-008 phase_biasは「月別×フェーズ×強度3段階」、保存先はlocal_overrides、適用先はrevenueのみで固定
 
 * Decision:
 
@@ -142,7 +142,7 @@
   * docs/spec_evaluation.md: （phase_bias有無の評価前提の追記）
 * Status: 未反映
 
-## D-20260105-XXX 出力は生値、丸めはGUI表示のみ（rooms/pax=100、revenue=10万円）に固定
+## D-20260105-009 出力は生値、丸めはGUI表示のみ（rooms/pax=100、revenue=10万円）に固定
 
 * Decision:
 
@@ -159,7 +159,7 @@
   * docs/spec_evaluation.md: （評価は生値ベースであることの明記）
 * Status: 未反映
 
-## D-20260105-XXX ベストモデル評価基準はM-1_END固定を優先し、UIは2段表示を採用
+## D-20260105-010 ベストモデル評価基準はM-1_END固定を優先し、UIは2段表示を採用
 
 * Decision:
 
@@ -176,7 +176,7 @@
   * docs/spec_evaluation.md: （ベストモデル定義、M-1_END固定、UI表示方針）
 * Status: 未反映
 
-## D-20260109-XXX Revenue予測V1の定義（税抜宿泊売上＋OH基準ADR×phase）
+## D-20260109-001 Revenue予測V1の定義（税抜宿泊売上＋OH基準ADR×phase）
 
 * Decision:
 
@@ -194,7 +194,7 @@
   * docs/spec_evaluation.md: （必要なら）revenue評価の対象/指標の扱い追記予定
 * Status: 未反映
 
-## D-20260109-XXX phase_biasの適用範囲と保存先（revenueのみ・local_overrides）
+## D-20260109-002 phase_biasの適用範囲と保存先（revenueのみ・local_overrides）
 
 * Decision:
 
@@ -211,7 +211,7 @@
   * docs/spec_evaluation.md: （必要なら）phase_bias適用有無の評価条件追記予定
 * Status: 未反映
 
-## D-20260109-XXX 「CSVはraw」「丸めはGUI」＋月次丸めは配分整合で行う
+## D-20260109-003 「CSVはraw」「丸めはGUI」＋月次丸めは配分整合で行う
 
 * Decision:
 
@@ -229,7 +229,7 @@
   * docs/spec_evaluation.md: （必要なら）丸めON/OFF時の評価の扱い注意追記予定
 * Status: 未反映
 
-## D-20260109-XXX pax_capの既定（未入力時は直近6ヶ月ACT paxのp99）
+## D-20260109-004 pax_capの既定（未入力時は直近6ヶ月ACT paxのp99）
 
 * Decision:
 
@@ -247,7 +247,7 @@
   * docs/spec_evaluation.md: （必要なら）cap適用時の評価条件追記予定
 * Status: 未反映
 
-## D-20260109-XXX TopDown（RevPAR）を別窓で提供し、予測範囲はASOF基準で固定
+## D-20260109-005 TopDown（RevPAR）を別窓で提供し、予測範囲はASOF基準で固定
 
 * Decision:
 
@@ -270,7 +270,7 @@
   * docs/spec_evaluation.md: （必要なら）TopDownの利用目的（意思決定補助）注意追記予定
 * Status: 未反映
 
-## D-20260109-XXX 設定はホテル別を原則（丸め単位・TopDown期首月）
+## D-20260109-006 設定はホテル別を原則（丸め単位・TopDown期首月）
 
 * Decision:
 
@@ -287,7 +287,7 @@
   * docs/spec_evaluation.md: 影響なし（原則不要）
 * Status: 未反映
 
-## D-20260110-XXX TopDown予測範囲は「最新ASOF+90日後にかかる月まで」＋描画対象は“全日程揃い”のみ
+## D-20260110-001 TopDown予測範囲は「最新ASOF+90日後にかかる月まで」＋描画対象は“全日程揃い”のみ
 
 * Decision:
 
@@ -304,7 +304,7 @@
   * docs/spec_evaluation.md: 影響なし
 * Status: 未反映
 
-## D-20260110-XXX 回転モードは「再計算なしの再描画」で切替する
+## D-20260110-002 回転モードは「再計算なしの再描画」で切替する
 
 * Decision:
 
@@ -320,7 +320,7 @@
   * docs/spec_evaluation.md: 影響なし
 * Status: 未反映
 
-## D-20260110-XXX p10–p90帯はA/Cの二本立て（ハイブリッド表示）を正式採用
+## D-20260110-003 p10–p90帯はA/Cの二本立て（ハイブリッド表示）を正式採用
 
 * Decision:
 
@@ -340,7 +340,7 @@
   * docs/spec_evaluation.md: 影響なし
 * Status: 未反映
 
-## D-20260110-XXX 前月アンカー（C）は「前月が予測でもOK」＋予測欠損は“最後の予測”を起点に延長
+## D-20260110-004 前月アンカー（C）は「前月が予測でもOK」＋予測欠損は“最後の予測”を起点に延長
 
 * Decision:
 

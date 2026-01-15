@@ -5,126 +5,173 @@
 
 ---
 
-## D-001 hotels.json テンプレ運用（v0.6.8）
-- Decision:
-  - 配布用hotels.jsonテンプレは「まっさら配布で安全な最小雛形」に寄せる
-  - テンプレデフォルト仮値は 0 ではなく固定整数 100
-  - capは「hotels.json」と「GUIローカル上書き」の二層運用
-- Why: 配布安全性・匿名性・事故防止
-- Spec link: spec_overview / README（要反映）
+## D-20260105-XXX rooms予測モデルの標準セットを4本に固定
 
-## D-002 GUI設定の保存先（v0.6.9）
-- Decision: GUIでの上書き設定は local_overrides/ に集約（output/ から移動）
-- Why: 端末ローカル上書きの置き場所統一、APP_BASE_DIR運用の一貫性
-- Spec link: spec_overview / README（要反映）
+* Decision:
 
----
+  * rooms予測の標準モデルは `recent90` / `recent90w` / `pace14` / `pace14_market` の4本を主軸とし、以後の比較・表示・運用はこの4本を基本とする（`adj` は主ライン外）。
+* Why:
 
-## D-010 roomsモデル整理（pace14系追加）
-- Decision:
-  - 主力モデルは recent90 / recent90w
-  - pace14 / pace14_market を追加し、比較の基本4本に整理
-  - adj系は重要度を下げる（曲線が描けない等の理由）
-- Why: 市況急変への追従力、運用の分かりやすさ
-- Spec link: spec_models（要反映）
+  * 市況急変で過去寄りモデルが過大予測になりやすく、直近ペース反映モデルを標準化して運用判断を安定させるため。
+* Spec link:
 
-## D-011 pace factor clip 初期値
-- Decision:
-  - 通常clip: 0.7〜1.3
-  - 強clip: 0.85〜1.15
-- Why: スパイクでの過補正抑制
-- Spec link: spec_models（要反映）
+  * docs/spec_overview.md: （予測モデル体系の概要・UI表示方針の追記）
+  * docs/spec_models.md: （roomsモデル一覧・推奨/非推奨の区分）
+  * docs/spec_data_layer.md: なし
+  * docs/spec_evaluation.md: （比較対象モデルの前提として追記）
+* Status: 未反映
 
-## D-012 スパイク判定（SP-A）
-- Decision: スパイクは機械判定し、UIに診断情報（Δ / q_hi q_lo / PF / clip種別等）を表示
-- Why: ブラックボックス化を避け、運用判断しやすくする
-- Spec link: spec_models / spec_overview（要反映）
+## D-20260105-XXX pace14のPF定義とclip初期値を固定（通常/スパイク）
 
-## D-013 予測曲線の生成（方法1）
-- Decision: 予測曲線は「最終着地 × 平均cum_ratio配分」から開始
-- Must: 日別Forecastの最終着地とBookingCurve予測曲線は一致必須
-- Spec link: spec_overview（要反映）
+* Decision:
 
----
+  * PF（pace factor）は差分の強弱ではなく **倍率（比率）**として扱う。
+  * PFの通常clip初期値は **0.7〜1.3** に固定する。
+  * スパイク時の強clip初期値は **0.85〜1.15** に固定する。
+* Why:
 
-## D-020 BookingCurve baseline定義変更
-- Decision: baseline（薄青）は avg ではなく recent90
-- Decision: avg線（3ヶ月平均）は表示不要（外す）
-- Why: 実務で使う基準として recent90 の方が妥当
-- Spec link: spec_overview（要反映）
+  * 倍率移植の方が安定し、clipで補正の暴れを抑えて事故率を下げられるため。
+* Spec link:
 
-## D-021 欠損補完の導入範囲
-- Decision: 欠損補完はまず「表示用のみ」導入（BookingCurve / MonthlyCurve）
-- Decision: 日別Forecastへの適用は後回し
-- Spec link: spec_overview（要反映）
+  * docs/spec_overview.md: （pace14導入の狙い・直感説明）
+  * docs/spec_models.md: （pace14/pace14_marketの計算定義、PF/clip既定値）
+  * docs/spec_data_layer.md: なし
+  * docs/spec_evaluation.md: なし
+* Status: 未反映
 
-## D-022 MonthlyCurve 欠損補完ON時の未着地扱い
-- Decision: 未着地範囲は描画対象外（補完線を伸ばさない）
-- Open: 中間値補完（前後中間）方式は候補だが未決
-- Spec link: spec_overview（要反映）
+## D-20260105-XXX スパイク判定はSP-A（機械判定＋診断表示）を標準運用に固定
 
-## D-023 月次カーブ：前年同月データ無しポップアップ廃止
-- Decision: ポップアップは運用ノイズなので廃止
-- Spec link: spec_overview（要反映）
+* Decision:
 
-## D-024 Kalman（状態空間モデル）
-- Decision: 今はやらない（優先度を落とす）
-- Why: 実装・説明負荷が高い
-- Spec link: spec_models（構想として書くなら“未実装”明記）
+  * スパイク判定は **SP-A**（機械判定）を標準とする。
+  * スパイク判定された日はフラグ表示し、診断情報（その日のΔ、q_hi/q_lo、PF、適用clip=通常/強）を表示する。
+* Why:
 
----
+  * 例外日を握りつぶさず透明化し、現場が「なぜこの日だけ挙動が違うか」を説明・判断できるようにして運用事故を減らすため。
+* Spec link:
 
-## D-030 評価の重心（best model）
-- Decision: 最も重視する評価基準は M-1_END（前月末時点）
-- Decision: Best model表示は「M-1_ENDベスト + ALL平均ベスト」の2段表示が誤解少ない
-- Spec link: spec_evaluation（要反映）
+  * docs/spec_overview.md: （例外処理を透明化する運用方針の追記）
+  * docs/spec_models.md: （スパイク判定SP-Aの定義、診断表示項目、強clip適用）
+  * docs/spec_data_layer.md: なし
+  * docs/spec_evaluation.md: なし
+* Status: 未反映
 
----
+## D-20260105-XXX 予測曲線の生成方式と「日別Forecastとの最終着地一致」を必須要件に固定
 
-## D-040 Revenue Forecast V1（rooms/pax/revenueへ）
-- Decision: LT_DATAは3系統（rooms/pax/revenue）へ拡張
-- Decision: ADR定義A＝税抜宿泊売上のみ（朝食等除外）
-- Decision: revenue V1式＝ revenue_oh_now + remaining_rooms × adr_pickup_est
-- Decision: phase_biasは当面 revenue のみに適用（roomsとは独立）
-- Spec link: spec_data_layer / spec_models（要反映）
+* Decision:
 
-## D-041 phase_bias UI（手動）
-- Decision: 3ヶ月（当月/翌月/翌々月）× フェーズ（悪化/中立/回復）× 強度（弱/中/強）
-- Decision: スライダー不採用
-- Decision: AUTO表示は矢印＋ラベル＋信頼度（数値詳細は後回し）
-- Decision: 保存先は local_overrides
-- Spec link: spec_models / spec_overview（要反映）
+  * BookingCurve等の予測曲線は **「最終着地 × baselineの累積比率（cum_ratio）配分」**で生成する（方法1）。
+  * **日別Forecastの最終着地と曲線の最終値を一致**させることを必須要件とする。
+* Why:
 
-## D-042 丸め（Forecast整合）の原則
-- Decision: 内部計算値は保持し、displayのみ丸める
-- Decision: 丸め単位はホテル別設定（rooms/pax/rev）
-- Decision: 着地済（stay_date < ASOF）は対象外
-- Decision: 配分は未来日（stay_date >= ASOF）のみ
-- Decision: 適用条件は未来日数 N>=20
-- Spec link: spec_models（要反映）
+  * 画面間で最終値がズレると誤解・運用事故の最大要因になるため、仕様として固定する必要がある。
+* Spec link:
 
-## D-043 Pax予測方針転換
-- Decision: PaxはDOR経由で予測しない。Paxを直接forecast（rooms同型）
-- Decision: DORは派生指標（Pax/Rooms）
-- Why: DOR/LTの構造変動でPaxが過大になりやすい
-- Spec link: spec_models（要反映）
+  * docs/spec_overview.md: （UI間整合の原則の追記）
+  * docs/spec_models.md: （曲線生成の方式・前提・一致要件）
+  * docs/spec_data_layer.md: なし
+  * docs/spec_evaluation.md: なし
+* Status: 未反映
 
-## D-044 着地済ターゲット月の扱い
-- Decision: 対象月が着地後ASOFの場合、forecast生成はSKIPし実績表示として扱う（ログで明示）
-- Spec link: spec_overview（要反映）
+## D-20260105-XXX BookingCurveのbaselineはrecent90、avg線は廃止に固定
 
----
+* Decision:
 
-## D-050 TopDown RevPAR（V1）
-- Decision: TopDownは別窓（ポップアップ）
-- Decision: 指標はRevPARのみから開始
-- Decision: 過去年数は直近6年
-- Decision: 年度開始月は6月固定（将来ホテル別設定）
-- Decision: 予測範囲は「最新ASOFが属する月」起点〜「最新ASOF+90日後にかかる月」まで
-- Decision: Forecast CSVが無い月はグラフに載せない（欠損扱い）
-- Spec link: spec_overview（要反映）
+  * BookingCurveタブのbaseline（薄青の基準カーブ）は **`recent90`** を採用する。
+  * `avg（3ヶ月平均）` の線は **表示不要として廃止**する。
+* Why:
 
-## D-051 p10–p90帯（A/C帯）の意味
-- Decision: A帯（直近着地月アンカー）とC帯（前月アンカー）は“連続しない”のが正しい
-- Decision: 帯は「過去年の月比率分布（p10–p90）の傾き幅」可視化
-- Spec link: spec_overview / spec_data_layer（必要なら前提追記）
+  * avgは悲観寄りになりやすく基準線として誤解を生むため、recent90に統一して判断のブレを減らす。
+* Spec link:
+
+  * docs/spec_overview.md: （画面上の線の意味の追記）
+  * docs/spec_models.md: （baselineの定義）
+  * docs/spec_data_layer.md: なし
+  * docs/spec_evaluation.md: なし
+* Status: 未反映
+
+## D-20260105-XXX 欠損補完は「表示用のみ」先行導入し、適用範囲を固定
+
+* Decision:
+
+  * 欠損補完の切替は **表示用のみ**として先行導入し、モデル計算には当面影響させない。
+  * 適用範囲は **BookingCurve＋MonthlyCurve** に固定し、日別Forecastは後回しとする。
+* Why:
+
+  * 計算に混ぜると再現性・評価が崩れやすいので、まず視覚補助として安全に導入するため。
+* Spec link:
+
+  * docs/spec_overview.md: （欠損補完の目的と適用範囲の追記）
+  * docs/spec_models.md: なし
+  * docs/spec_data_layer.md: （欠損の扱い・表示補完の位置づけ）
+  * docs/spec_evaluation.md: なし
+* Status: 未反映
+
+## D-20260105-XXX LT_DATAを rooms/pax/revenue の3ファイルへ拡張し、revenue定義を固定
+
+* Decision:
+
+  * LT_DATAは **rooms/pax/revenue の3ファイル**で運用する（データレイヤー変更を前提に進める）。
+  * revenue（ADR定義A）は **税抜宿泊売上のみ**で統一し、朝食等は混ぜない。
+* Why:
+
+  * roomsだけでは売上予測・評価の土台にならず、下流の整合（ADR/RevPAR等）にも拡張できないため。
+* Spec link:
+
+  * docs/spec_overview.md: （予測対象指標の拡張の追記）
+  * docs/spec_models.md: （revenue/ADR定義、指標の前提）
+  * docs/spec_data_layer.md: （LT_DATAの構造・命名・出力規約の更新）
+  * docs/spec_evaluation.md: （rooms以外の評価指標の前提追記）
+* Status: 未反映
+
+## D-20260105-XXX phase_biasは「月別×フェーズ×強度3段階」、保存先はlocal_overrides、適用先はrevenueのみで固定
+
+* Decision:
+
+  * phase_bias入力は **月別（当月/翌月/翌々月）×フェーズ（悪化/中立/回復）×強度3段階**（スライダー無し）で固定する。
+  * phase_biasの保存先は **local_overrides（端末ローカル）**に固定する。
+  * phase_biasの適用先は当面 **revenueのみ**（roomsのpace14_marketとは独立）に固定する。
+* Why:
+
+  * 人が違和感に応じて補正できる余地を残しつつ、複数人運用の混乱を避け、評価比較の前提を崩さないため。
+* Spec link:
+
+  * docs/spec_overview.md: （手動補正の位置づけ・運用導線）
+  * docs/spec_models.md: （phase_biasの定義・適用範囲）
+  * docs/spec_data_layer.md: （local_overridesの役割・保存項目）
+  * docs/spec_evaluation.md: （phase_bias有無の評価前提の追記）
+* Status: 未反映
+
+## D-20260105-XXX 出力は生値、丸めはGUI表示のみ（rooms/pax=100、revenue=10万円）に固定
+
+* Decision:
+
+  * 日別ForecastのCSV出力は **丸め無し（生値）**を標準とする。
+  * 報告資料向けの丸めは **GUI表示のみ**で行い、初期の丸め単位は **rooms/pax=100単位、revenue=10万円単位**に固定する。
+* Why:
+
+  * 生値を失うと評価・再現性が壊れる一方、報告用途には視認性が必要なため（役割分離）。
+* Spec link:
+
+  * docs/spec_overview.md: （表示と出力の役割分離の追記）
+  * docs/spec_models.md: なし
+  * docs/spec_data_layer.md: （CSVは生値であることの明記）
+  * docs/spec_evaluation.md: （評価は生値ベースであることの明記）
+* Status: 未反映
+
+## D-20260105-XXX ベストモデル評価基準はM-1_END固定を優先し、UIは2段表示を採用
+
+* Decision:
+
+  * ベストモデル評価基準は当面 **M-1_END（前月末時点）固定**を最優先とする。
+  * BookingCurve/日別Forecastのベスト表示は **M-1_ENDベスト＋ALL平均ベスト**の2段表示を採用する。
+* Why:
+
+  * 評価期間が可変だと現場が優先すべき軸を誤解しやすく、最重要の運用タイミング（M-1_END）に揃えて判断を安定させるため。
+* Spec link:
+
+  * docs/spec_overview.md: （評価の使い方・優先軸の追記）
+  * docs/spec_models.md: なし
+  * docs/spec_data_layer.md: なし
+  * docs/spec_evaluation.md: （ベストモデル定義、M-1_END固定、UI表示方針）
+* Status: 未反映

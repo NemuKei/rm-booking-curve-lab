@@ -10,8 +10,10 @@ from PyInstaller.utils.hooks import collect_all
 here = Path(globals().get("SPECPATH", os.getcwd())).resolve()
 
 project_root = here
-while not (project_root / "config").exists() and project_root.parent != project_root:
+icon_candidate = project_root / "assets" / "icon" / "BookingCurveLab.ico"
+while not icon_candidate.exists() and project_root.parent != project_root:
     project_root = project_root.parent
+    icon_candidate = project_root / "assets" / "icon" / "BookingCurveLab.ico"
 
 # entry script (prefer src/gui_main.py)
 entry = project_root / "src" / "gui_main.py"
@@ -19,7 +21,7 @@ if not entry.exists():
     entry = project_root / "gui_main.py"
 
 # icon (you can rename freely, just keep path consistent)
-icon_path = project_root / "assets" / "icon" / "BookingCurveLab_logo_neon_requested.ico"
+icon_path = project_root / "assets" / "icon" / "BookingCurveLab.ico"
 
 # Pillow resources (PIL)
 pillow_datas, pillow_binaries, pillow_hiddenimports = collect_all("PIL")
@@ -31,6 +33,7 @@ pillow_datas, pillow_binaries, pillow_hiddenimports = collect_all("PIL")
 # どうしても同梱するなら、下のdatasに追加してください。
 datas = [
     (str(project_root / "config" / "hotels.json"), "config"),
+    (str(icon_path), "assets/icon"),
 ] + pillow_datas
 
 a = Analysis(

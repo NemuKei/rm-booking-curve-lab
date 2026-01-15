@@ -136,6 +136,83 @@
 - さらに「ファイル確認必須」「推測禁止」「不足なら要求」を冒頭ルールとして固定する。
 - 共有ファイルは **make_release_zip.py で作成した最新ZIPを唯一の正** とし、手作業での個別ファイル添付は原則しない。
 
+### 7-3. スレッド終了時のログ作成（必須・5分ゲート）
+
+スレッドを跨ぐ開発は、**「決定事項の喪失」「docs反映漏れ」「ZIP/commitの参照齟齬」**が最大の事故原因になる。  
+よって、各スレッドの最後に必ず **Thread Log → Decision Log** を作成する（append-only運用）。
+
+#### 生成する成果物
+- Thread Log（スレッド単位・少し詳細・append-only）
+  - 保存先：`docs/thread_logs/YYYY-MM-DD_<branch>_<short>.md`
+- Decision Log（横断・決定だけ）
+  - 保存先：`docs/decision_log.md`
+
+#### 運用ルール（重要）
+- Thread Log / Decision Log は **仕様ではない**。仕様の唯一の正は `docs/spec_*.md`。
+- Decision Log には必ず **Spec link（反映先spec）** と **Status（spec反映済/未反映）** を付ける。
+- 「整える」のは仕様書。ログは **5分で終える**（長文化禁止）。
+
+---
+
+## スレッド終了時プロンプトテンプレ（コピペ用）
+
+### A) Thread Log 生成（append-only）
+（このスレッドの会話ログ＋branch/commit/zipを貼って使う）
+
+```text
+【目的】
+このスレッドでやったことを、後で再現・参照できるように Thread Log（append-only）として1ファイル分に整形してください。
+注意：仕様の唯一の正は docs/spec_*.md。Thread Logは仕様ではなく作業記録（証跡）です。
+
+【入力】
+- スレッド会話ログ：<<<ここにこのスレッドの会話ログを貼る>>>
+- Branch：<<<例: feature/revenue-forecast-phase-bias>>>
+- Commit（あれば）：<<<例: d18f6f5>>>
+- Release zip（あれば）：<<<例: rm-booking-curve-lab_YYYYMMDD_HHMM_..._full.zip>>>
+
+【出力フォーマット（厳守）】
+以下のMarkdownをそのまま出力してください（余計な説明は禁止）。
+ファイル名案も先頭に1行で出してください。
+
+# ファイル名案: docs/thread_logs/YYYY-MM-DD_<branch>_<short>.md
+
+# Thread Log: <短いタイトル>
+
+## Meta
+- Date: YYYY-MM-DD（不明なら推定と明記）
+- Branch:
+- Commit:
+- Zip:
+- Scope: （このスレッドの対象範囲を1行）
+
+## Done（実装・変更）
+- （ファイルパスが分かるものは `src/...` 形式で書く）
+- （「何を変えたか」を箇条書き、最大15行）
+
+## Decisions（決定）
+- Decision:
+  - ...
+- Why:
+  - ...（各Decisionに1行で理由）
+※「検討したが保留」は Open に回す
+
+## Docs impact（docs反映が必要）
+- spec_overview:
+- spec_data_layer:
+- spec_models:
+- spec_evaluation:
+- BookingCurveLab_README:
+※該当なしは “なし” と書く
+
+## Known issues / Open（未解決）
+- 再現条件（あれば）
+- 暫定回避（あれば）
+
+## Next（次スレッドのP0/P1）
+- P0:
+- P1:
+※完了条件を短く添える
+
 ---
 
 ## 8. 引き継ぎ（handover）の標準構成
@@ -187,3 +264,6 @@
 - 最新ZIP（`packages/`）を作成済み
 - `VERSION.txt` / `MANIFEST.txt` が同梱されている
 - サンプル同梱時は **ダミーのみ**（機密なし）を満たしている
+- Thread Log（`docs/thread_logs/`）を作成済み（Branch/Commit/Zipアンカー付き）
+- Decision Log（`docs/decision_log.md`）を更新済み（Spec link + Status付き）
+- docs反映が必要な項目（Docs impact）が棚卸し済み（未反映なら理由と次アクションが明記されている）

@@ -166,6 +166,24 @@ Codex は：
 3. ChatGPTが仕様への反映案を作成
 4. ユーザーがレビューしてdocsを更新
 
+### 6.3 スレッド終了ゲート（Thread Log / Decision Log）
+
+スレッドを跨いで開発が進む場合、**スレッド終了時に必ず以下を実施**する（コンテキスト崩壊対策）。
+
+1. **Thread Log を作成（append-only）**
+   - 出力先：`docs/thread_logs/YYYY-MM-DD_<branch>_<short>.md`
+   - 必須項目：Branch / Commit / Zip（packagesのZIP名）/ Scope / Done / Decisions / Docs impact / Open / Next
+   - 注意：Thread Log は**仕様ではなく作業記録**。仕様の唯一の正は `docs/spec_*.md`。
+
+2. **Decision Log を更新（決定のみ）**
+   - 出力先：`docs/decision_log.md`
+   - 追記対象：スレッドを跨いでも効く「以後こうする」決定（閾値、保存先、定義変更など）
+   - 各決定に **Spec link（反映先spec）** と **Status（spec反映済/未反映）** を付ける
+
+3. **Docs impact の棚卸し**
+   - spec更新が必要なら、ChatGPTは **差分案（コピペ可能）** を作成し、ユーザーが docs を更新する
+   - 禁止：Decision Log や Thread Log を“仕様の代わり”として扱うこと
+
 **禁止：**
 - Codex が docs を勝手に編集して仕様を合わせにいくこと
 - 仕様更新なしに実装だけで大きく挙動を変えること

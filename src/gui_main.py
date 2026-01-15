@@ -85,6 +85,46 @@ def _apply_window_icon(window: tk.Tk | tk.Toplevel) -> None:
         return
     try:
         window.iconbitmap(str(icon_path))
+        try:
+            window.update_idletasks()
+        except Exception:
+            pass
+        try:
+            import ctypes
+
+            WM_SETICON = 0x0080
+            ICON_SMALL = 0
+            ICON_BIG = 1
+            IMAGE_ICON = 1
+            LR_LOADFROMFILE = 0x0010
+
+            hwnd = window.winfo_id()
+            load_image = ctypes.windll.user32.LoadImageW
+            send_message = ctypes.windll.user32.SendMessageW
+
+            small_icon = load_image(
+                None,
+                str(icon_path),
+                IMAGE_ICON,
+                32,
+                32,
+                LR_LOADFROMFILE,
+            )
+            if small_icon:
+                send_message(hwnd, WM_SETICON, ICON_SMALL, small_icon)
+
+            big_icon = load_image(
+                None,
+                str(icon_path),
+                IMAGE_ICON,
+                256,
+                256,
+                LR_LOADFROMFILE,
+            )
+            if big_icon:
+                send_message(hwnd, WM_SETICON, ICON_BIG, big_icon)
+        except Exception:
+            pass
     except Exception:
         return
 

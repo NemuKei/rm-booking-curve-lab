@@ -267,19 +267,73 @@ OCC モデルの主な入力は、`lt_data_YYYYMM_<hotel>.csv` に代表され�
 
 ### pace14 / pace14_market（追加モデル）
 
-- 直近の勢い（pace factor）を倍率として取り込み、着地見込みを補正するモデル。
-- pace factor は「差分」ではなく「倍率（比率）」で反映する。
-- 初期のクリップ（安全弁）：
-  - 通常 clip：`0.7 .. 1.3`
-  - 強 clip（スパイク時）：`0.85 .. 1.15`
-- `pace14_market` は `pace14` を market_pace 等の外部要因で補正した派生とする（V1では派生モデルとして扱う）。
+**目的**
+- 市況急変や直近の勢い（直近1〜2週間のpickupの強弱）を、ベースモデル（recent90系）の着地見込みに安全に反映する。
+- 「差分」ではなく **倍率（比率）= Pace Factor（PF）** として反映する（スケールが違う日でも扱いやすい）。
+
+**実装上のコア関数（参照）**
+- `src/booking_curve/forecast_simple.py`
+  - `build_pace14_spike_thresholds()`（スパイク閾値の作成）
+  - `_calc_pace14_pf()`（PF算出・スパイク判定・clip）
+  - `forecast_final_from_pace14()`（最終着地の算出）
+  - `compute_market_pace_7d()` / `forecast_final_from_pace14_market()`（market補正）
+
+#### 3.4.1 pace14（自館の直近pickupを反映）
+- ベースカーブ：weekday別の `recent90`（moving average）をベースとして使用する（※`avg` ではない）。
+- 直近のpickupの強弱を、**LT=14→LT=7 の1週間**を基本窓として評価する。
+
+**Pace Factor（PF）の計算（概念）**
+- `upper_lt = 14`
+- `lower_lt = max(lt_now, 7)`（到着が近い日は、比較窓を縮める）
+- `delta_actual = OH(lower_lt) - OH(upper_lt)`
+- `delta_base   = baseline_curve[lower_lt] - baseline_curve[upper_lt]`
+- `pf_raw = delta_actual / max(delta_base, eps)`（ゼロ割回避のためepsを入れる）
+
+**到着が遠い日の“効きすぎ”を抑える（shrink）**
+- `alpha = (upper_lt - lower_lt) / 7`（0〜1）
+- `pf_shrunk = 1 + alpha * (pf_raw - 1)`
+  - `lt_now=14` なら `alpha=0` で **PFは 1 に戻る**（=補正しない）
+  - `lt_now=7` なら `alpha=1` で **PFが最大に効く**
+
+**スパイク判定とclip（安全弁）**
+- スパイク判定は機械的に行う（SP-A）。
+  - `build_pace14_spike_thresholds()` で、過去の `delta_actual` 分布から `q_lo/q_hi`（分位点）を作り、外れ値をスパイク扱いにする。
+- 初期clip（合意済みの初期値）：
+  - 通常clip：`0.7 .. 1.3`（`PACE14_CLIP_RANGE`）
+  - スパイク時の強clip：`0.85 .. 1.15`（`PACE14_CLIP_SPIKE`）
+
+**最終着地の算出**
+- `base_now   = baseline_curve[lt_now]`
+- `base_final = baseline_curve[final_lt]`（最終着地側）
+- `base_delta = base_final - base_now`（この先の“残りpickup”のベース見込み）
+- `final_forecast = OH_now + pf_clipped * base_delta`
+
+#### 3.4.2 pace14_market（market_pace で派生補正）
+- `pace14` をベースに、**市場側の直近pickup傾向（market_pace）** を加味する派生モデル。
+- 実装の狙い：自館の直近pickupが薄い/ブレる中LT帯で、marketの情報を少しだけ混ぜて事故を減らす（混ぜすぎない）。
+
+**market補正の適用イメージ（概念）**
+- `market_pace_7d = compute_market_pace_7d(...)`（7日窓）
+- `market_beta = exp(-k * (lt_now - MARKET_PACE_LT_MIN))`（LTが遠いほど影響を弱める）
+- `market_factor = clip(1 + market_beta * (market_pace_7d - 1), MARKET_PACE_CLIP)`
+- `final_forecast = OH_now + (pf_clipped * market_factor) * base_delta`
+
+#### 3.4.3 診断情報（UI表示用）
+- `pace14` 系は、内部的に以下の診断情報（例）を返し、GUIで「⚠ spike」等を表示できるようにしている：
+  - `delta_actual / delta_base`
+  - `pf_raw / pf_shrunk / pf_clipped`
+  - `q_lo / q_hi`（閾値）と `is_spike`
+  - （`pace14_market` の場合）`market_pace_7d`, `market_beta`, `market_factor`
+
+**注意**
+- 必要なLT_DATA（履歴）が不足する場合、PFや閾値が安定しないため、ベースモデル（recent90系）へフォールバックすることがある（運用上は「まずベースで外さない」が優先）。
 
 ---
 
 ## 4. 売上予測モデル（ADRモデル）の構想レベル仕様
 
-> ※この章はロードマップ（Phase 1.1〜1.2）の設計メモを仕様化したものであり、  
-> 実装はまだ行っていない。
+> ※4.1〜4.4はロードマップ（Phase 1.1〜1.2）の設計メモ（=構想レベル仕様）です。  
+> v0.6.10 以降は、末尾の **4.5（V1仕様：実装済）** を採用しています。
 
 ### 4.1 基本構造
 
@@ -314,6 +368,44 @@ OCC モデルの主な入力は、`lt_data_YYYYMM_<hotel>.csv` に代表され�
 - 具体例：
   - 1週間ごとに、対象月の「今見えている ADR の水準」を記録し、
     上がり／下がりの傾向を係数として反映する。
+
+### 4.5 V1仕様（実装済）：pax / revenue / phase_bias / 月次丸め（表示）
+
+この節は **現行実装（v0.6.10）** の仕様をまとめる。4.1〜4.4の設計メモと混同しないこと。
+
+#### 4.5.1 入力データ（LT_DATA）
+- LT_DATA は rooms だけでなく **rooms / pax / revenue の3系統**を扱う。
+  - rooms：従来の後方互換名（例：`lt_data_YYYYMM_{hotel}.csv`）も探索対象に含む。
+  - pax：例 `lt_data_pax_YYYYMM_{hotel}.csv`
+  - revenue：例 `lt_data_revenue_YYYYMM_{hotel}.csv`
+- データレイヤの詳細は `docs/spec_data_layer.md` を優先（本章はモデル側の前提のみ記述）。
+
+#### 4.5.2 pax（人数）予測（DOR経由ではなく直接forecast）
+- paxは **roomsと同型のモデル**で直接forecastする（weekday別も同様）。
+- DORは派生指標として `DOR = Pax / Rooms` で算出する（DOR自体は予測しない）。
+- 上限制約：`pax_cap`（設定が空の場合は自動推定）
+  - GUI入力が **空(None)** の場合は無制限ではなく、`infer_pax_capacity_p99()` により **p99（上位1%）** を上限として推定する。
+  - 母集団は直近Nヶ月（デフォルト6ヶ月）の各日 `act_pax` を使用する（maxではない）。
+
+#### 4.5.3 revenue（税抜宿泊売上）予測（V1の安全側）
+- revenue定義：**税抜の宿泊売上**（朝食等は含めない）。
+- V1の基本式：
+  - `adr_pickup_est = (revenue_oh_now / max(rooms_oh_now, eps)) × phase_factor`
+  - `forecast_revenue = revenue_oh_now + remaining_rooms × adr_pickup_est`
+- `phase_factor` は `phase_bias` の手動設定（悪化/中立/回復 × 強度）を **倍率** として反映する。
+  - `rooms_oh_now` が極小の場合は `eps` を用いてゼロ割を回避する。
+
+#### 4.5.4 phase_bias（手動フェーズ補正）
+- UI：3ヶ月（当月/翌月/翌々月）× フェーズ（悪化/中立/回復）× 強度（弱/中/強）。
+- 保存先：`local_overrides`（端末ローカル上書き）。
+- 適用先：当面は **revenue（ADR推定）へのみ適用**し、rooms/pax のOCC側モデルとは独立で運用する。
+
+#### 4.5.5 月次丸め（Forecast整合：表示のみ）
+- 目的：報告資料向けに、**月次合計が指定単位で“キリ良く”見える**ようにする（ただし内部forecast値は保持する）。
+- 丸め対象：対象月内の未来日（`stay_date >= ASOF` かつ 対象月内）の display 列のみ。
+- 適用条件：対象月内の未来日数 `N >= 20` のときのみ。
+- 丸め差分は、対象月内の未来日にのみ配分する（着地済 `stay_date < ASOF` は一切触らない）。
+- 丸め単位：ホテル別設定（Rooms / Pax / Rev）。
 
 ---
 

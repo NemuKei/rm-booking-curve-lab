@@ -69,6 +69,14 @@ def _set_windows_appusermodel_id(app_id: str) -> None:
         return
 
 
+DEFAULT_APP_USER_MODEL_ID = "WorldHeritage.BookingCurveLab"
+
+
+def _init_windows_app_identity() -> None:
+    app_id = os.environ.get("BOOKING_CURVE_APP_ID") or DEFAULT_APP_USER_MODEL_ID
+    _set_windows_appusermodel_id(app_id)
+
+
 def _apply_window_icon(window: tk.Tk | tk.Toplevel) -> None:
     if not sys.platform.startswith("win"):
         return
@@ -81,9 +89,7 @@ def _apply_window_icon(window: tk.Tk | tk.Toplevel) -> None:
         return
 
 
-_env_app_id = os.environ.get("BOOKING_CURVE_APP_ID")
-if _env_app_id:
-    _set_windows_appusermodel_id(_env_app_id)
+_init_windows_app_identity()
 
 
 def _setup_gui_logging() -> None:

@@ -10,14 +10,18 @@
 
 ---
 
-## 現在の状態（v0.6.6 相当）
+## 現在の状態（v0.6.10）
 
 - **daily snapshots レイヤー（標準CSV）**を「唯一の正」として整備済み。
-- LT_DATA / 月次カーブは **2ルート切替**に対応
-  - `source="timeseries"`（従来の時系列Excel / 比較・互換用）
-  - `source="daily_snapshots"`（推奨ルート）
-- **GUI から LT_DATA / monthly_curve を生成できる導線**あり（source切替、snapshots更新オプションなど）。
-- **欠損値（NaN）はデータレイヤーで保持**し、描画・評価などのビュー側で補完（LT方向の LOCF を採用）。
+- 実行時の保存先は **APP_BASE_DIR（%LOCALAPPDATA%/BookingCurveLab/）** に集約する運用。
+  - `output/`：成果物（CSV・ログ）
+  - `local_overrides/`：端末ローカルの上書き設定（GUI設定を含む）
+- v0.6.9：GUI設定（gui_settings相当）の保存先を `output/` → `local_overrides/` に統一し、成果物と設定が混在しないよう整理。
+- v0.6.10：
+  - **エラー時の導線を改善**（ログフォルダを開く確認ダイアログ／回転ログ `gui_app.log` を出力）
+  - **配布ZIPに make_release_zip.py を同梱**（共有物の再現性を担保）
+  - `config/hotels.json` を **setup_me テンプレ運用**（配布時に安全な最小雛形）
+  - 日別Forecastを **rooms/pax/revenue** に拡張し、**phase_bias（手動フェーズ補正）**と**月次丸め（表示のみ）**を実装
 
 ---
 

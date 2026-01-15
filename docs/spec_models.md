@@ -5,8 +5,10 @@
 本ドキュメントでは、BookingCurveLab における **予測モデルの仕様** を整理する。
 
 - 対象：
-  - 稼働室数ベースの OCC 予測モデル（実装済）
-  - 将来的に追加予定の ADR / 売上モデル（構想レベル）
+  - rooms（稼働室数）予測モデル（実装済）
+  - pax（人数）予測（V1：roomsと同型で直接予測／DORは派生指標）
+  - revenue（売上）予測（V1：OH revenue + 残pickup rooms×推定ADR）
+  - phase_bias（手動フェーズ補正：V1はrevenue側にのみ適用）
 - データレイヤの仕様は `spec_data_layer.md` を参照すること。
 - アプリ全体の目的・前提は `spec_overview.md` を参照すること。
 - 評価ロジックの詳細は `spec_evaluation.md` を参照すること。
@@ -110,6 +112,8 @@ OCC モデルの主な入力は、`lt_data_YYYYMM_<hotel>.csv` に代表され�
 - `recent90_adj`
 - `recent90w`
 - `recent90w_adj`
+- `pace14`
+- `pace14_market`
 
 ### 3.1 avg モデル（moving_average_3months）
 
@@ -258,6 +262,17 @@ OCC モデルの主な入力は、`lt_data_YYYYMM_<hotel>.csv` に代表され�
 - `recent90w_adj`
   - `apply_segment_adjustment` を通して、
     `adjusted_projected_rooms` を用いた予測とする（連休の中日を少し抑える等）。
+
+---
+
+### pace14 / pace14_market（追加モデル）
+
+- 直近の勢い（pace factor）を倍率として取り込み、着地見込みを補正するモデル。
+- pace factor は「差分」ではなく「倍率（比率）」で反映する。
+- 初期のクリップ（安全弁）：
+  - 通常 clip：`0.7 .. 1.3`
+  - 強 clip（スパイク時）：`0.85 .. 1.15`
+- `pace14_market` は `pace14` を market_pace 等の外部要因で補正した派生とする（V1では派生モデルとして扱う）。
 
 ---
 

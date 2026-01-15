@@ -169,6 +169,7 @@ LT_DATA の出力ファイルは、互換性維持と多指標対応のため以
 - `lt_data_rooms_YYYYMM_<hotel>.csv`
 - `lt_data_pax_YYYYMM_<hotel>.csv`
 - `lt_data_revenue_YYYYMM_<hotel>.csv`
+- 互換性：rooms については旧命名 `lt_data_YYYYMM_<hotel>.csv` も読み込み対象とし、roomsファイルとして扱う。
 
 いずれもテーブル構造（行=stay_date、列=LT）は同一で、セル値の意味（value_type）のみが異なる。
 

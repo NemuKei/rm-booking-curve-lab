@@ -356,3 +356,193 @@
   * docs/spec_data_layer.md: 「予測欠損」と「最後の予測」の扱い（可視化側の補完ルール）追記
   * docs/spec_evaluation.md: 影響なし
 * Status: 未反映
+
+## D-20260114-XXX 月次丸めは表示値のみ・着地済非改変・未来日配分で固定
+
+* Decision:
+
+  * 月次丸めは **display列（表/サマリ/CSV表示の整合）にのみ適用**し、内部forecast値は保持する。
+  * **着地済（stay_date < ASOF）は一切触らない**（丸め・配分の対象外）。
+  * 丸め差分の配分先は **対象月内 かつ stay_date >= ASOF の未来日だけ**に限定する。
+* Why:
+
+  * 予測本体を毀損せず、運用上必要な「表示整合」だけを担保するため。
+  * 実績の改変リスクを排除し、説明可能性を確保するため。
+  * 配分範囲を限定して副作用（翌月以降や過去日の汚染）を防ぐため。
+* Spec link:
+
+  * docs/spec_overview.md: 月次丸めの位置づけ（表示整合目的・実績非改変）
+  * docs/spec_models.md: 月次丸めの仕様（displayのみ、着地済スキップ、配分先）
+  * docs/spec_data_layer.md: （必要なら）出力CSVにおける表示値整合の取り扱い
+  * docs/spec_evaluation.md: （必要なら）評価対象のデータがdisplay/forecastどちらかの注記
+* Status: 未反映
+
+## D-20260114-XXX 月次丸めの適用条件を「対象月内の未来日数N>=20」に固定
+
+* Decision:
+
+  * 月次丸めの適用は **対象月内の未来日数 N（stay_date >= ASOF かつ 対象月内）>= 20 のときのみ**とする。
+  * N条件を満たさない場合は **丸め処理を行わない**。
+* Why:
+
+  * 小サンプル（月中盤以降など）での過剰調整を防ぎ、境界条件の納得感を確保するため。
+  * 仕様として明確なON/OFF条件を持たせ、運用・検証を安定させるため。
+* Spec link:
+
+  * docs/spec_overview.md: 丸めの適用条件（閾値の定義）
+  * docs/spec_models.md: 月次丸めの適用条件（N>=20）とNの定義（対象月内・stay_date>=ASOF）
+  * docs/spec_data_layer.md: N算出に使う日付条件の定義（対象月/ASOF）
+  * docs/spec_evaluation.md: （必要なら）N条件により出力が変わる点の注記
+* Status: 未反映
+
+## D-20260114-XXX 丸め単位はホテル別設定（Rooms/Pax/Rev）とし、丸めOFF時は単位を無視
+
+* Decision:
+
+  * 月次丸め単位は **ホテル別設定**として Rooms / Pax / Rev をそれぞれ持てるようにする。
+  * **月次丸めOFF時は単位設定を無視**し、UIも連動して無効化する（運用上の誤操作防止）。
+* Why:
+
+  * ホテルごとの規模・粒度に合わせた運用が必要で、単一ルールだと現場適合しないため。
+  * OFF時に単位が生きていると混乱と誤解釈を生むため。
+* Spec link:
+
+  * docs/spec_overview.md: 設定の位置づけ（ホテル別パラメータ）
+  * docs/spec_models.md: 月次丸めの単位（Rooms/Pax/Rev）とON/OFF時の扱い
+  * docs/spec_data_layer.md: hotels.json等の設定項目（丸め単位）と出力への反映方針
+  * docs/spec_evaluation.md: （基本不要）評価がdisplayに依存する場合のみ注記
+* Status: 未反映
+
+## D-20260114-XXX Pax予測はDOR経由ではなく直接forecast（A案）を標準とする
+
+* Decision:
+
+  * Pax予測は **DOR/PU DOR経由ではなく、Paxを直接forecastする方式（A案）**を標準とする。
+* Why:
+
+  * DOR/PU DORの過大化に引っ張られてPaxが非現実的に膨らむ問題を抑制し、予測の現実性を上げるため。
+* Spec link:
+
+  * docs/spec_overview.md: 予測値の定義（Rooms/Pax/Revの関係の前提）
+  * docs/spec_models.md: Pax予測モデル（直接forecast方式）と従来方式との差分
+  * docs/spec_data_layer.md: Pax予測に必要な入力列・派生列の扱い（必要なら）
+  * docs/spec_evaluation.md: （必要なら）Pax指標の評価対象定義
+* Status: 未反映
+
+## D-20260114-XXX 着地済ターゲット月は予測生成せず実績表示として扱い、サマリのFC/PUは表示しない
+
+* Decision:
+
+  * target_month が **ASOF時点で完全に過去（着地済）**の場合、forecast生成を**SKIP**し、日別表は実績（OH/ACT）表示として扱う。
+  * 着地済ケースではサマリの **Forecast / Pickup（FC/PU）は表示しない**（空欄/“-”）。
+* Why:
+
+  * 着地済月の予測生成は意味がなく、例外や型変換エラーの温床になるため。
+  * FC/PUが出ると誤解（「予測がある」ように見える）を誘発し、運用判断を誤らせるため。
+* Spec link:
+
+  * docs/spec_overview.md: 着地済月の扱い（予測生成しない/実績表示）
+  * docs/spec_models.md: forecast生成条件（着地済スキップ）と表示方針
+  * docs/spec_data_layer.md: （必要なら）着地済月で生成される出力（CSV等）の扱い
+  * docs/spec_evaluation.md: （必要なら）評価対象月の前提（着地済月のスキップ方針）
+* Status: 未反映
+
+## D-20260114-XXX フェーズ補正「中立」は強弱選択不可（固定）とする
+
+* Decision:
+
+  * フェーズ補正（売上）の **中立**では強弱に意味が無いため、UI上で **強弱を選択不可**にし、値は固定（例：中）に寄せる。
+* Why:
+
+  * 操作可能だと「効くはず」という誤解を誘発し、バグ疑義や運用混乱の原因になるため。
+* Spec link:
+
+  * docs/spec_overview.md: フェーズ補正の概念整理（中立の定義）
+  * docs/spec_models.md: phase_biasの仕様（中立は係数固定・強弱なし）
+  * docs/spec_data_layer.md: （必要なら）設定保存項目（phase/strength）の取り扱い
+  * docs/spec_evaluation.md: （基本不要）評価に影響する場合のみ注記
+* Status: 未反映
+
+## D-20260116-XXX PyInstallerのspecファイルはGit管理する
+
+* Decision:
+
+  * `BookingCurveLab.spec` は `.gitignore` 対象から外し、リポジトリで管理する（ビルド設定の唯一の正として扱う）。
+* Why:
+
+  * icon / datas / hiddenimports / onedir・onefile など配布物の再現性に直結し、ローカル依存にすると環境差で事故るため。
+* Spec link:
+
+  * docs/spec_overview.md: （開発・配布運用の補足として追記候補）
+  * docs/spec_models.md: なし
+  * docs/spec_data_layer.md: なし
+  * docs/spec_evaluation.md: なし
+* Status: 未反映
+
+## D-20260116-XXX アイコン素材はリポジトリ直下assets配下に単一配置で固定する
+
+* Decision:
+
+  * アイコン素材（`assets/icon/BookingCurveLab.ico`）はリポジトリ直下に1つだけ置き、`src/` 配下へコピー・重複配置しない。
+* Why:
+
+  * 2箇所配置は差し替え漏れ・参照ズレを誘発し、配布物の見た目（EXE/GUI）に不整合が出るため。
+* Spec link:
+
+  * docs/spec_overview.md: （開発・配布運用の補足として追記候補）
+  * docs/spec_models.md: なし
+  * docs/spec_data_layer.md: なし
+  * docs/spec_evaluation.md: なし
+* Status: 未反映
+
+## D-20260116-XXX TkinterのウィンドウアイコンはEXE埋め込みとは別にアプリ側で設定する
+
+* Decision:
+
+  * EXE埋め込みアイコン（PyInstaller）とは別に、Tkinter側で `iconbitmap()` によりウィンドウアイコン（タイトルバー/タスクバー反映の基礎）を設定する。
+  * frozen環境では `sys._MEIPASS` を用いたリソース解決を標準とする。
+* Why:
+
+  * Windowsでは「EXEファイルのアイコン」と「実行中ウィンドウのアイコン」は別系統で、後者はアプリが明示設定しないと反映されないため。
+* Spec link:
+
+  * docs/spec_overview.md: （GUI/配布の補足として追記候補）
+  * docs/spec_models.md: なし
+  * docs/spec_data_layer.md: なし
+  * docs/spec_evaluation.md: なし
+* Status: 未反映
+
+## D-20260116-XXX docs/command_reference.mdを設け、コマンド運用の参照点を作る
+
+* Decision:
+
+  * 日常運用で使うコマンド（venv有効化、PyInstallerビルド、リリースZIP作成など）は `docs/command_reference.md` に集約する方針とする。
+* Why:
+
+  * Thread Logは証跡であり手順書としては散逸するため、再現性の高い“参照点”を別に持つ必要があるため。
+* Spec link:
+
+  * docs/spec_overview.md: （運用ドキュメントの位置付けとして追記候補）
+  * docs/spec_models.md: なし
+  * docs/spec_data_layer.md: なし
+  * docs/spec_evaluation.md: なし
+* Status: 未反映
+
+
+## D-20260116-XXX Windowsアイコン問題は「ショートカット/ピン留め運用」で止血し、コード恒久対応は後回し
+
+* Decision:
+
+  * Windows環境で「EXE直叩き起動だとタスクバーが羽アイコンになる」個体差が出る場合は、当面の標準運用として「デスクトップショートカット作成（必要ならタスクバーにピン留め）」を採用し、アイコン表示を安定させる。
+  * 「直叩き起動でも常に正しく出す」ためのAUMID固定・StartMenuショートカット生成などの恒久対策は、コスト高のため優先度を下げ、必要になった時点で検討する。
+* Why:
+
+  * Windowsのタスクバー/エクスプローラー/タスクマネージャーは、アイコン参照元・縮小・アルファ合成・キャッシュが異なり、コードのみで完全統一するのは難易度とコストが高い。
+  * ショートカット/ピン留めにより参照元が固定され、環境差（キャッシュ/既存関連付け）による表示ブレを現実的に抑えられる。
+* Spec link:
+
+  * docs/spec_overview.md: 反映不要（仕様ではなく配布/運用の話）
+  * docs/spec_models.md: 反映不要
+  * docs/spec_data_layer.md: 反映不要
+  * docs/spec_evaluation.md: 反映不要
+* Status: 未反映（BookingCurveLab_READMEへの運用追記のみが候補）

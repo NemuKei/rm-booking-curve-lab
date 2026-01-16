@@ -357,7 +357,7 @@
   * docs/spec_evaluation.md: 影響なし
 * Status: 未反映
 
-## D-20260114-XXX 月次丸めは表示値のみ・着地済非改変・未来日配分で固定
+## D-20260114-001 月次丸めは表示値のみ・着地済非改変・未来日配分で固定
 
 * Decision:
 
@@ -377,7 +377,7 @@
   * docs/spec_evaluation.md: （必要なら）評価対象のデータがdisplay/forecastどちらかの注記
 * Status: 未反映
 
-## D-20260114-XXX 月次丸めの適用条件を「対象月内の未来日数N>=20」に固定
+## D-20260114-002 月次丸めの適用条件を「対象月内の未来日数N>=20」に固定
 
 * Decision:
 
@@ -395,7 +395,7 @@
   * docs/spec_evaluation.md: （必要なら）N条件により出力が変わる点の注記
 * Status: 未反映
 
-## D-20260114-XXX 丸め単位はホテル別設定（Rooms/Pax/Rev）とし、丸めOFF時は単位を無視
+## D-20260114-003 丸め単位はホテル別設定（Rooms/Pax/Rev）とし、丸めOFF時は単位を無視
 
 * Decision:
 
@@ -413,7 +413,7 @@
   * docs/spec_evaluation.md: （基本不要）評価がdisplayに依存する場合のみ注記
 * Status: 未反映
 
-## D-20260114-XXX Pax予測はDOR経由ではなく直接forecast（A案）を標準とする
+## D-20260114-004 Pax予測はDOR経由ではなく直接forecast（A案）を標準とする
 
 * Decision:
 
@@ -429,7 +429,7 @@
   * docs/spec_evaluation.md: （必要なら）Pax指標の評価対象定義
 * Status: 未反映
 
-## D-20260114-XXX 着地済ターゲット月は予測生成せず実績表示として扱い、サマリのFC/PUは表示しない
+## D-20260114-005 着地済ターゲット月は予測生成せず実績表示として扱い、サマリのFC/PUは表示しない
 
 * Decision:
 
@@ -447,7 +447,7 @@
   * docs/spec_evaluation.md: （必要なら）評価対象月の前提（着地済月のスキップ方針）
 * Status: 未反映
 
-## D-20260114-XXX フェーズ補正「中立」は強弱選択不可（固定）とする
+## D-20260114-006 フェーズ補正「中立」は強弱選択不可（固定）とする
 
 * Decision:
 
@@ -463,7 +463,7 @@
   * docs/spec_evaluation.md: （基本不要）評価に影響する場合のみ注記
 * Status: 未反映
 
-## D-20260116-XXX PyInstallerのspecファイルはGit管理する
+## D-20260116-001 PyInstallerのspecファイルはGit管理する
 
 * Decision:
 
@@ -479,7 +479,7 @@
   * docs/spec_evaluation.md: なし
 * Status: 未反映
 
-## D-20260116-XXX アイコン素材はリポジトリ直下assets配下に単一配置で固定する
+## D-20260116-002 アイコン素材はリポジトリ直下assets配下に単一配置で固定する
 
 * Decision:
 
@@ -495,7 +495,7 @@
   * docs/spec_evaluation.md: なし
 * Status: 未反映
 
-## D-20260116-XXX TkinterのウィンドウアイコンはEXE埋め込みとは別にアプリ側で設定する
+## D-20260116-003 TkinterのウィンドウアイコンはEXE埋め込みとは別にアプリ側で設定する
 
 * Decision:
 
@@ -512,7 +512,7 @@
   * docs/spec_evaluation.md: なし
 * Status: 未反映
 
-## D-20260116-XXX docs/command_reference.mdを設け、コマンド運用の参照点を作る
+## D-20260116-004 docs/command_reference.mdを設け、コマンド運用の参照点を作る
 
 * Decision:
 
@@ -529,7 +529,7 @@
 * Status: 未反映
 
 
-## D-20260116-XXX Windowsアイコン問題は「ショートカット/ピン留め運用」で止血し、コード恒久対応は後回し
+## D-20260116-005 Windowsアイコン問題は「ショートカット/ピン留め運用」で止血し、コード恒久対応は後回し
 
 * Decision:
 

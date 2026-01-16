@@ -73,7 +73,16 @@ DEFAULT_APP_USER_MODEL_ID = "BookingCurveLab.App"
 
 
 def _init_windows_app_identity() -> None:
-    app_id = os.environ.get("BOOKING_CURVE_APP_ID") or DEFAULT_APP_USER_MODEL_ID
+    if os.environ.get("BOOKING_CURVE_DISABLE_AUMID") == "1":
+        return
+    app_id = os.environ.get("BOOKING_CURVE_APP_ID") or os.environ.get(
+        "BOOKING CURVE APP ID"
+    )
+    if getattr(sys, "frozen", False):
+        if not app_id:
+            return
+    if not app_id:
+        app_id = DEFAULT_APP_USER_MODEL_ID
     _set_windows_appusermodel_id(app_id)
 
 

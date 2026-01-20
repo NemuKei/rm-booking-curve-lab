@@ -61,3 +61,5 @@ python tools/assign_decision_ids.py --in-place --verbose
 python tools/assign_decision_ids.py --check-only
 
 magick "icon.png" -background none -define icon:auto-resize=16,20,24,32,40,48,64,128,256 "BookingCurveLab.ico"
+
+pyinstaller BookingCurveLab.spec --clean --noconfirm

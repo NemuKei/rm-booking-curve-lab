@@ -954,3 +954,92 @@
   * docs/spec_data_layer.md: monthly_curve生成ルート（daily_snapshots→monthly_curve）とフォールバック禁止を追記予定
   * docs/spec_evaluation.md: 影響なし
 * Status: 未反映
+
+## D-20260120-001 v0.6.10のdocs更新は「mainマージ後にまとめて」実施する
+
+* Decision:
+
+  * docs更新は feature 上で先行せず、**mainにマージしてリリース後にまとめて実施**する運用で固定する。
+* Why:
+
+  * ブランチ間の齟齬・二重編集・取り込み漏れを避け、唯一の正（main＋spec_*）に寄せるため。
+* Spec link:
+
+  * docs/spec_overview.md: （運用ルール／開発フローの節に追記予定）
+  * docs/spec_models.md: —
+  * docs/spec_data_layer.md: —
+  * docs/spec_evaluation.md: —
+* Status: 未反映
+
+## D-20260120-002 pace14_marketのmarket補正はpower（指数）で固定する
+
+* Decision:
+
+  * `final_pace14_market = final_pace14 × (market_pace ^ β)`（線形ではなくpower）で固定する。
+  * βの意味は以下で固定する：
+
+    * β=0：market補正なし（常に1）
+    * β=1：market_paceをフル反映
+    * 0<β<1：弱めて反映（安全寄り）
+    * β>1：増幅（原則使わない想定）
+* Why:
+
+  * market_paceは倍率指標であり、powerの方が1.00付近の微調整が自然で上下対称、暴れにくく運用事故が少ないため。
+* Spec link:
+
+  * docs/spec_overview.md: —
+  * docs/spec_models.md: （rooms予測モデル：pace14_market の定義節に追記予定）
+  * docs/spec_data_layer.md: —
+  * docs/spec_evaluation.md: —
+* Status: 未反映
+
+## D-20260120-003 clip適用順序はPF→market→（任意）最終ガードで固定する
+
+* Decision:
+
+  * clip適用順序を **PF（pace14）→ market_pace →（任意の最終安全ガード）** の順で固定する。
+  * PFのclipは **PF_rawに対して適用してから** `final_pace14` を作る（ベースラインfinalへ直接clipしない）。
+* Why:
+
+  * 順序を逆にするとスパイク抑制の意図が崩れ、月全体補正が暴れて事故率が上がるため。
+* Spec link:
+
+  * docs/spec_overview.md: —
+  * docs/spec_models.md: （pace14/pace14_market の計算手順・注意点に追記予定）
+  * docs/spec_data_layer.md: —
+  * docs/spec_evaluation.md: —
+* Status: 未反映
+
+## D-20260120-004 market_pace_rawはclipを入れ、初期値は0.95–1.05で固定する
+
+* Decision:
+
+  * `market_pace_raw` に **clipを適用する**。
+  * 初期clipレンジを **0.95–1.05（±5%）**で固定する。
+* Why:
+
+  * market補正は「月全体」に効くため爆発半径が大きく、誤差・欠損・一時的偏りがそのまま最終着地に乗る事故を防ぐ必要があるため。
+* Spec link:
+
+  * docs/spec_overview.md: —
+  * docs/spec_models.md: （pace14_market の安全弁として1行追記予定）
+  * docs/spec_data_layer.md: —
+  * docs/spec_evaluation.md: —
+* Status: 未反映
+
+## D-20260120-005 revenue定義（税抜宿泊売上のみ）はspec_data_layerに固定し、spec_modelsは参照導線にする
+
+* Decision:
+
+  * revenue（ADR定義A）は **税抜の宿泊売上のみ**（朝食・物販・手数料・税を含めない）をデータ契約として固定する。
+  * 記載場所は **spec_data_layerを正**とし、spec_modelsは「この定義を前提にする」参照導線（重複最小）で持つ。
+* Why:
+
+  * revenue定義はモデル都合ではなく列の意味（データ契約）であり、spec_modelsだけだと読み飛ばされやすく、混入事故を止められないため。
+* Spec link:
+
+  * docs/spec_overview.md: —
+  * docs/spec_models.md: （売上予測V1が依存する前提として参照リンク追記予定）
+  * docs/spec_data_layer.md: （LT_DATA value_type / revenue列定義 または forecast列定義に必須追記予定）
+  * docs/spec_evaluation.md: —
+* Status: 未反映

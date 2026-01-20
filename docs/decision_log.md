@@ -547,7 +547,7 @@
   * docs/spec_evaluation.md: 反映不要
 * Status: 未反映（BookingCurveLab_READMEへの運用追記のみが候補）
 
-## D-20260116-XXX LT_DATA生成はdaily_snapshotsを標準、timeseries設定はsource依存で必須化
+## D-20260116-006 LT_DATA生成はdaily_snapshotsを標準、timeseries設定はsource依存で必須化
 
 * Decision:
 
@@ -566,7 +566,7 @@
   * docs/spec_evaluation.md: （変更不要）
 * Status: 未反映
 
-## D-20260120-XXX daily snapshots 更新モードを3段に固定（FAST/FULL_MONTHS/FULL_ALL）
+## D-20260120-001 daily snapshots 更新モードを3段に固定（FAST/FULL_MONTHS/FULL_ALL）
 
 * Decision:
 
@@ -586,7 +586,7 @@
   * docs/spec_evaluation.md: 影響なし
 * Status: 未反映
 
-## D-20260120-XXX FULL_ALL は誤爆防止の“奥配置”＋事前見積り＋強制ログ＋最終確認を必須化
+## D-20260120-002 FULL_ALL は誤爆防止の“奥配置”＋事前見積り＋強制ログ＋最終確認を必須化
 
 * Decision:
 
@@ -606,7 +606,7 @@
   * docs/spec_evaluation.md: 影響なし
 * Status: 未反映
 
-## D-20260120-XXX monthly_curve は LT_DATA フォールバック禁止、daily_snapshots から生成→保存→描画を正とする
+## D-20260120-003 monthly_curve は LT_DATA フォールバック禁止、daily_snapshots から生成→保存→描画を正とする
 
 * Decision:
 
@@ -625,7 +625,7 @@
   * docs/spec_evaluation.md: 影響なし
 * Status: 未反映
 
-## D-20260103-XXX APP_BASE_DIR（LOCALAPPDATA）基準へ“寄せ切り”を標準運用とする
+## D-20260103-001 APP_BASE_DIR（LOCALAPPDATA）基準へ“寄せ切り”を標準運用とする
 
 * Decision:
 
@@ -644,7 +644,7 @@
   * docs/spec_evaluation.md: 影響なし（想定）
 * Status: spec反映済
 
-## D-20260103-XXX 欠損検査（ops）のACK運用を正式採用し、集計から除外する
+## D-20260103-002 欠損検査（ops）のACK運用を正式採用し、集計から除外する
 
 * Decision:
 
@@ -666,7 +666,7 @@
   * docs/spec_evaluation.md: 影響なし（想定）
 * Status: spec反映済
 
-## D-20260103-XXX 初回テンプレ展開（初期化）失敗は握りつぶさず通知する
+## D-20260103-003 初回テンプレ展開（初期化）失敗は握りつぶさず通知する
 
 * Decision:
 
@@ -683,7 +683,7 @@
   * docs/spec_evaluation.md: 影響なし（想定）
 * Status: spec反映済
 
-## D-20260103-XXX 欠損監査（audit）は“全期間の状態確認＝統制用”として固定する
+## D-20260103-004 欠損監査（audit）は“全期間の状態確認＝統制用”として固定する
 
 * Decision:
 
@@ -700,7 +700,7 @@
   * docs/spec_evaluation.md: 影響なし（想定）
 * Status: spec反映済
 
-## D-20260120-XXX 月次カーブ生成の正を daily_snapshots 基準に統一（LT_DATAフォールバック禁止）
+## D-20260120-004 月次カーブ生成の正を daily_snapshots 基準に統一（LT_DATAフォールバック禁止）
 
 * Decision:
 
@@ -719,7 +719,7 @@
   * docs/spec_evaluation.md: （影響小／参照のみ：必要なら注記）
 * Status: 未反映
 
-## D-20260120-XXX monthly_curveはNaN保持で保存し、欠損補完（NOCB）はGUI表示直前のみ
+## D-20260120-005 monthly_curveはNaN保持で保存し、欠損補完（NOCB）はGUI表示直前のみ
 
 * Decision:
 
@@ -738,7 +738,7 @@
   * docs/spec_evaluation.md: （評価時の欠損扱いの前提として注記）
 * Status: 未反映
 
-## D-20260120-XXX 予測・評価は欠損補完せずサンプル除外を基本方針（0補完はしない）
+## D-20260120-006 予測・評価は欠損補完せずサンプル除外を基本方針（0補完はしない）
 
 * Decision:
 
@@ -757,7 +757,7 @@
   * docs/spec_overview.md: （必要なら注記）
 * Status: 未反映
 
-## D-20260120-XXX 欠損検知は「運用（入れ忘れ）/監査（歴史ギャップ）」の2モードに分離し、運用ASOF窓は180日
+## D-20260120-007 欠損検知は「運用（入れ忘れ）/監査（歴史ギャップ）」の2モードに分離し、運用ASOF窓は180日
 
 * Decision:
 
@@ -778,7 +778,7 @@
   * docs/spec_evaluation.md: （ACT欠け/データ欠け時の評価遮断・除外方針の導線）
 * Status: 未反映
 
-## D-20260120-XXX RAW取り込みはサブフォルダ許可＋(target_month, asof)重複は即エラー停止
+## D-20260120-008 RAW取り込みはサブフォルダ許可＋(target_month, asof)重複は即エラー停止
 
 * Decision:
 
@@ -798,7 +798,7 @@
   * docs/spec_evaluation.md: （直接影響小／注記レベル）
 * Status: 未反映
 
-## D-20251224-XXX 欠損検知は ops/audit の2モードで固定する
+## D-20251224-001 欠損検知は ops/audit の2モードで固定する
 
 * Decision:
 
@@ -816,7 +816,7 @@
   * docs/spec_evaluation.md: （必要なら）欠損除外/扱いの前提（追記予定）
 * Status: 未反映
 
-## D-20251224-XXX audit 欠損の対象範囲は STAY MONTH の min..max に限定し、未来ASOFは欠損扱いしない
+## D-20251224-002 audit 欠損の対象範囲は STAY MONTH の min..max に限定し、未来ASOFは欠損扱いしない
 
 * Decision:
 
@@ -834,7 +834,7 @@
   * docs/spec_evaluation.md: （該当薄め）
 * Status: 未反映
 
-## D-20251224-XXX 欠損のみ取り込みは当面 raw_missing のみを対象にする
+## D-20251224-003 欠損のみ取り込みは当面 raw_missing のみを対象にする
 
 * Decision:
 
@@ -852,7 +852,7 @@
   * docs/spec_evaluation.md: （該当薄め）
 * Status: 未反映
 
-## D-20251224-XXX データレイヤは NaN 保持、欠損補完は GUI 表示直前のみとする
+## D-20251224-004 データレイヤは NaN 保持、欠損補完は GUI 表示直前のみとする
 
 * Decision:
 
@@ -869,7 +869,7 @@
   * docs/spec_evaluation.md: 欠損除外の前提（追記予定）
 * Status: 未反映
 
-## D-20251224-XXX nface RAW 変換は安全側固定（宿泊日=A列のみ、判定不能はSTOP）
+## D-20251224-005 nface RAW 変換は安全側固定（宿泊日=A列のみ、判定不能はSTOP）
 
 * Decision:
 
@@ -887,7 +887,7 @@
   * docs/spec_evaluation.md: （該当薄め）
 * Status: 未反映
 
-## D-20251224-XXX リリースZIPは “必要物のみ” 同梱し、ログは最新N本かつ full_all を優先する
+## D-20251224-006 リリースZIPは “必要物のみ” 同梱し、ログは最新N本かつ full_all を優先する
 
 * Decision:
 
@@ -906,7 +906,7 @@
   * docs/spec_evaluation.md: （該当薄め）
 * Status: 未反映
 
-## D-20251224-XXX 共有ZIPの命名規約は YYYYMMDD_HHMM を基本とし、必要なら commit で一意化する
+## D-20251224-007 共有ZIPの命名規約は YYYYMMDD_HHMM を基本とし、必要なら commit で一意化する
 
 * Decision:
 
@@ -923,7 +923,7 @@
   * docs/spec_evaluation.md: （該当薄め）
 * Status: 未反映
 
-## D-20251226-XXX Range rebuild の既定パラメータと対象月算出を固定
+## D-20251226-001 Range rebuild の既定パラメータと対象月算出を固定
 
 * Decision:
 
@@ -942,7 +942,7 @@
   * docs/spec_evaluation.md: （不要）
 * Status: 未反映
 
-## D-20251226-XXX LT_DATA(4ヶ月) 導線は Range rebuild に統合して運用を一本化
+## D-20251226-002 LT_DATA(4ヶ月) 導線は Range rebuild に統合して運用を一本化
 
 * Decision:
 
@@ -959,7 +959,7 @@
   * docs/spec_evaluation.md: （不要）
 * Status: 未反映
 
-## D-20251226-XXX N@FACE RAW の不変条件を固定し、判定不能は STOP（誤取得防止優先）
+## D-20251226-003 N@FACE RAW の不変条件を固定し、判定不能は STOP（誤取得防止優先）
 
 * Decision:
 
@@ -982,7 +982,7 @@
   * docs/spec_evaluation.md: （不要）
 * Status: 未反映
 
-## D-20251226-XXX 欠損検知は ops/audit の2モード運用とし、auditは対象月範囲を制限
+## D-20251226-004 欠損検知は ops/audit の2モード運用とし、auditは対象月範囲を制限
 
 * Decision:
 
@@ -1001,7 +1001,7 @@
   * docs/spec_evaluation.md: （不要）
 * Status: 未反映
 
-## D-20251226-XXX マスタ設定タブは「最新ASOF」を重複表示せず、欠損検査 remember/未実施など運用警告へ寄せる
+## D-20251226-005 マスタ設定タブは「最新ASOF」を重複表示せず、欠損検査 remember/未実施など運用警告へ寄せる
 
 * Decision:
 
@@ -1020,7 +1020,7 @@
   * docs/spec_evaluation.md: （不要）
 * Status: 未反映
 
-## D-20251226-XXX FULL_ALLでA列日付不足（start_row=9, found=0）は欠損扱いで運用許容
+## D-20251226-006 FULL_ALLでA列日付不足（start_row=9, found=0）は欠損扱いで運用許容
 
 * Decision:
 

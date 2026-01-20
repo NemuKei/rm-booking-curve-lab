@@ -60,6 +60,8 @@ python tools/assign_decision_ids.py --in-place --verbose
 “XXX残ってたらリリース禁止”に使うチェック
 python tools/assign_decision_ids.py --check-only
 
+ICO化
 magick "icon.png" -background none -define icon:auto-resize=16,20,24,32,40,48,64,128,256 "BookingCurveLab.ico"
 
+EXE化
 pyinstaller BookingCurveLab.spec --clean --noconfirm

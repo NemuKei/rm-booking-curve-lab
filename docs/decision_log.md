@@ -565,3 +565,474 @@
   * docs/spec_models.md: （影響軽微。モデル前提がrooms中心のままか注記する場合のみ）
   * docs/spec_evaluation.md: （変更不要）
 * Status: 未反映
+
+## D-20260120-XXX daily snapshots 更新モードを3段に固定（FAST/FULL_MONTHS/FULL_ALL）
+
+* Decision:
+
+  * daily snapshots 更新は 3モードで運用を固定する：FAST / FULL_MONTHS / FULL_ALL。
+  * FAST：宿泊月フィルタ（GUIの直近4ヶ月等）＋ASOF固定窓（latest ASOF から buffer_days=14 日戻し）で高速更新。
+  * FULL_MONTHS：宿泊月（期間指定）で更新、ASOF窓は設けずフルスキャン（過去取り込み用途）。
+  * FULL_ALL：全量再生成は例外運用として扱う。
+* Why:
+
+  * 週次運用の速度要件はASOF側の窓で担保しつつ、更新漏れ・運用ミスを宿泊月単位で抑えるため。
+  * 期間指定時は過去取り込みが主目的で、速度より網羅性を優先するため。
+* Spec link:
+
+  * docs/spec_overview.md: daily snapshots運用（更新モードの位置づけ）追記予定
+  * docs/spec_models.md: 影響なし
+  * docs/spec_data_layer.md: daily snapshots partial build（FAST/FULL_MONTHS/FULL_ALLの定義、ASOF窓=latest-14d）追記予定
+  * docs/spec_evaluation.md: 影響なし
+* Status: 未反映
+
+## D-20260120-XXX FULL_ALL は誤爆防止の“奥配置”＋事前見積り＋強制ログ＋最終確認を必須化
+
+* Decision:
+
+  * FULL_ALL は通常導線に置かず、マスタ設定など普段触らない場所に配置する。
+  * 実行前に対象ファイル件数と概算時間（files/sec を用いた見積り）を表示する。
+  * 実行ログは `output/logs/full_all_YYYYMMDD_HHMM.log` へ強制保存する。
+  * 実行には最終確認（例：確認文字列入力 or `--confirm-full-all FULL_ALL` / `--yes`）を必須とする。
+* Why:
+
+  * 全量再生成は負荷・所要時間・誤操作リスクが高く、誤爆時の機会損失が大きい。
+  * 事後検証/再現性のためログを必須化する必要がある。
+* Spec link:
+
+  * docs/spec_overview.md: 危険操作のガード方針（GUI/CLI）追記予定
+  * docs/spec_models.md: 影響なし
+  * docs/spec_data_layer.md: full rebuild運用（実行ガード・ログ保存）追記予定
+  * docs/spec_evaluation.md: 影響なし
+* Status: 未反映
+
+## D-20260120-XXX monthly_curve は LT_DATA フォールバック禁止、daily_snapshots から生成→保存→描画を正とする
+
+* Decision:
+
+  * monthly_curve が無い場合は、`daily_snapshots_{hotel}.csv` からその場で monthly_curve を生成し、CSV保存したうえで描画する。
+  * daily_snapshots が無い/薄くて生成できない場合は、更新（FAST/FULL_MONTHS/FULL_ALL）を促すエラーにする。
+  * LT_DATA から monthly_curve へフォールバックする挙動は採用しない（暫定カーブ扱いもしない）。
+* Why:
+
+  * LT_DATA 由来のカーブは定義が異なり、正しい月次ブッキングカーブにならず意思決定を誤らせるため。
+  * 生成元を一本化しないと、表示結果の整合性が崩れて検証不能になるため。
+* Spec link:
+
+  * docs/spec_overview.md: monthly_curve生成・描画の優先順位（missing時の挙動）追記予定
+  * docs/spec_models.md: 影響なし
+  * docs/spec_data_layer.md: monthly_curve生成ルート（daily_snapshots→monthly_curve）とフォールバック禁止を追記予定
+  * docs/spec_evaluation.md: 影響なし
+* Status: 未反映
+
+## D-20260103-XXX APP_BASE_DIR（LOCALAPPDATA）基準へ“寄せ切り”を標準運用とする
+
+* Decision:
+
+  * 配布形態は「各端末ローカルにEXE配置」「端末ごと独立運用」を前提とする（共有フォルダ起動は前提にしない）。
+  * 設定・出力・ログ・ACK・local_overrides などの実体保存先は、EXE配下ではなく **APP_BASE_DIR = `%LOCALAPPDATA%/BookingCurveLab/`** に統一する。
+  * EXE配下には一切出力しない（移動リスク/汚染回避）。
+* Why:
+
+  * EXEの配置場所に依存すると、移動・権限・共有フォルダ運用で事故が起きやすく、再現性と保守性が落ちるため。
+  * 端末ごとの独立運用に寄せることで、配布・運用の責務境界が明確になり、トラブルシュートも容易になるため。
+* Spec link:
+
+  * docs/spec_overview.md: 配布運用前提／ローカル保存先（APP_BASE_DIR）方針の追記
+  * docs/spec_data_layer.md: 生成物（output/logs等）の保存先注記（論理パスと実体パスの関係）
+  * docs/spec_models.md: 影響なし（想定）
+  * docs/spec_evaluation.md: 影響なし（想定）
+* Status: spec反映済
+
+## D-20260103-XXX 欠損検査（ops）のACK運用を正式採用し、集計から除外する
+
+* Decision:
+
+  * ACKの対象は **opsのみ**（auditは対象外）。
+  * ACK対象のseverityは **ERROR/WARNのみ**（それ以外は対象外）。
+  * ACK済みは **運用集計（ERROR/WARN件数）から除外**する（ノイズ削減のため）。
+  * 欠損一覧のデフォルト表示は **ACK済み非表示＝デフォルトON** とする。
+  * 行の同一性キーは **kind + target_month + asof_date + path** を採用する。
+* Why:
+
+  * 「確定欠損」を毎回同じ警告として扱うと運用の意思決定が鈍り、確認コストが増えるため。
+  * auditは統制目的（全期間の状態確認）であり、ACKで“見えなくする”と統制目的を損なうため。
+  * 同一性キーは厳密すぎるとACKが効かず、緩すぎると別物まで消えるため、実務的な最小単位を固定する。
+* Spec link:
+
+  * docs/spec_overview.md: ops/auditの役割分担、ACK運用の位置づけ（運用ルールとして）
+  * docs/spec_data_layer.md: missing_report_ops と missing_ack_ops の関係／集計除外ルール／同一性キー
+  * docs/spec_models.md: 影響なし（想定）
+  * docs/spec_evaluation.md: 影響なし（想定）
+* Status: spec反映済
+
+## D-20260103-XXX 初回テンプレ展開（初期化）失敗は握りつぶさず通知する
+
+* Decision:
+
+  * 初回起動時のテンプレコピー（例：hotels.json等）が失敗した場合は、**showerrorで通知＋ログに記録**する（無言で続行しない）。
+* Why:
+
+  * 初期導入時にテンプレが展開されないと、その後の挙動が“設定未反映”として誤解されやすく、原因追跡が困難になるため。
+  * 失敗時は即時に明示して止血する方が、現場運用にとって安全で再現性が高い。
+* Spec link:
+
+  * docs/spec_overview.md: 起動時初期化の期待挙動／失敗時の通知方針
+  * docs/spec_data_layer.md: 初期ファイル生成（テンプレ展開）の扱い・保存先注記
+  * docs/spec_models.md: 影響なし（想定）
+  * docs/spec_evaluation.md: 影響なし（想定）
+* Status: spec反映済
+
+## D-20260103-XXX 欠損監査（audit）は“全期間の状態確認＝統制用”として固定する
+
+* Decision:
+
+  * 欠損監査（audit）の定義を **「全期間の状態確認（統制用）」**で固定する。
+  * ops（運用）とは目的が異なるため、ACKや集計除外など運用最適化の対象にはしない。
+* Why:
+
+  * 運用の効率化（ノイズ除去）と統制（全体の欠損状態把握）を混ぜると、どちらも中途半端になり誤判断が増えるため。
+* Spec link:
+
+  * docs/spec_overview.md: ops/auditの定義と使い分け
+  * docs/spec_data_layer.md: auditレポートの出力・解釈（ACK対象外である旨）
+  * docs/spec_models.md: 影響なし（想定）
+  * docs/spec_evaluation.md: 影響なし（想定）
+* Status: spec反映済
+
+## D-20260120-XXX 月次カーブ生成の正を daily_snapshots 基準に統一（LT_DATAフォールバック禁止）
+
+* Decision:
+
+  * 月次カーブ（monthly_curve）は `daily_snapshots` から生成する方式を正とする。
+  * 月次カーブ生成で `LT_DATA` をフォールバック経路として使用しない（禁止）。
+  * 月次LT定義は **ASOFベース（month_end - asof_date）** を採用する。
+* Why:
+
+  * 月次カーブのLT定義が分裂すると曲線が崩れ、LT_DATA由来の不整合が再発するため。
+  * 月次用途（概観/比較）では daily_snapshots 由来の整合を優先すべきため。
+* Spec link:
+
+  * docs/spec_overview.md: （データ生成フロー概要：monthly_curve生成経路の正を明記）
+  * docs/spec_data_layer.md: （monthly_curveの生成元とLT定義、LT_DATA非フォールバックを追記）
+  * docs/spec_models.md: （monthly_curve参照の前提としてのデータ整合の注記）
+  * docs/spec_evaluation.md: （影響小／参照のみ：必要なら注記）
+* Status: 未反映
+
+## D-20260120-XXX monthly_curveはNaN保持で保存し、欠損補完（NOCB）はGUI表示直前のみ
+
+* Decision:
+
+  * `monthly_curve_YYYYMM_{hotel}.csv` 等の生成物は **rawのまま保存（NaN保持）** する。
+  * 欠損補完（NOCB）は **GUI表示に渡す直前のみ** 適用し、データレイヤには反映しない。
+  * NOCBの向きは「欠損LTは**次のASOF（より新しい観測）**で埋める」前提を維持する（誤って逆向きにしない）。
+* Why:
+
+  * データレイヤで補完すると監査・再現性・後続分析に影響が出るため（NaN保持が思想に合致）。
+  * 表示用途の欠損補完は許容だが、保存データの改変は避けるべきため。
+* Spec link:
+
+  * docs/spec_data_layer.md: （欠損の取り扱い方針：NaN保持と補完適用点を明文化）
+  * docs/spec_models.md: （モデル入力時の欠損方針の前提として追記）
+  * docs/spec_overview.md: （全体思想として補足するなら追記）
+  * docs/spec_evaluation.md: （評価時の欠損扱いの前提として注記）
+* Status: 未反映
+
+## D-20260120-XXX 予測・評価は欠損補完せずサンプル除外を基本方針（0補完はしない）
+
+* Decision:
+
+  * 予測・評価の計算は当面 **欠損補完を行わず、欠損があるサンプルは除外**を基本とする。
+  * 欠損を **0に落とす補完は採用しない**。
+  * 例外（補完モード等）の導入は、まず「補完なし」で精度・影響を確認してから判断する。
+* Why:
+
+  * 0補完は需要・OCC等の推定を歪めるリスクが高く、誤差評価も破壊しやすいため。
+  * ACTの整合・未来リーク等の副作用が出やすく、まずは安全側（除外）でベースラインを確立するため。
+* Spec link:
+
+  * docs/spec_models.md: （モデル入力の欠損値取扱い：除外を基本と明記）
+  * docs/spec_evaluation.md: （評価対象の除外ルール、ACT欠け時の扱いの導線）
+  * docs/spec_data_layer.md: （NaN保持思想との接続：補完しない前提を補足）
+  * docs/spec_overview.md: （必要なら注記）
+* Status: 未反映
+
+## D-20260120-XXX 欠損検知は「運用（入れ忘れ）/監査（歴史ギャップ）」の2モードに分離し、運用ASOF窓は180日
+
+* Decision:
+
+  * 欠損検知（missing_report）は **運用モード（入れ忘れ検知）** と **監査モード（歴史的ギャップ可視化）** の2モードに分離する。
+  * 運用モードは **ASOF窓180日** を採用し、期待ASOFは日次（ただしseverityで緩急）とする。
+  * 運用モードは **ASOF丸抜け（asof_missing）** と **(ASOF, STAY MONTH)取りこぼし（raw_missing）** を別種として扱う。
+  * 監査モードは **STAY MONTHの最古〜最新範囲** に限定し、期待ASOFは日次で生成する。
+* Why:
+
+  * 観測ASOF起点の欠損抽出だと「ASOF丸抜け」が検知できず、また古い期間の保存粒度差で欠損が爆発して運用不能になるため。
+  * 運用と棚卸しは目的が違い、同一ロジックにすると双方が破綻するため。
+  * 運用の検知対象は直近に限定するのが現実的で、180日窓が妥当と判断したため。
+* Spec link:
+
+  * docs/spec_data_layer.md: （missing_reportの位置づけ、モード、出力、ASOF窓180日を追記）
+  * docs/spec_overview.md: （運用フロー：欠損チェック/監査の役割分担を追記）
+  * docs/spec_models.md: （欠損検知→モデル計算の前提として導線）
+  * docs/spec_evaluation.md: （ACT欠け/データ欠け時の評価遮断・除外方針の導線）
+* Status: 未反映
+
+## D-20260120-XXX RAW取り込みはサブフォルダ許可＋(target_month, asof)重複は即エラー停止
+
+* Decision:
+
+  * RAWデータはホテル配下で **サブフォルダ配置を許可**（再帰探索で取り込み対象とする）。
+  * 同一キー **(target_month, asof)** の重複（拡張子違い含む）は **即エラー停止**し、両パスを表示する。
+  * 拡張子は「読めるものは許可、読めないものは明示エラー」を基本とする（許容拡張子の固定列挙より実行時判定優先）。
+* Why:
+
+  * 元データが月フォルダ等で整理されているケースが多く、運用利便性が高いため。
+  * 重複は取り込み結果の不確定化・事故に直結するため、安全側で停止が必要なため。
+  * Excel拡張子は混在し得るため、拡張子で一律排除ではなく「読める/読めない」で扱うほうが現実的なため。
+* Spec link:
+
+  * docs/spec_data_layer.md: （raw配置ルール、探索範囲、重複扱い、拡張子方針を追記）
+  * docs/spec_overview.md: （入力データの前提・運用手順の注記）
+  * docs/spec_models.md: （入力整合がモデル前提である旨の導線）
+  * docs/spec_evaluation.md: （直接影響小／注記レベル）
+* Status: 未反映
+
+## D-20251224-XXX 欠損検知は ops/audit の2モードで固定する
+
+* Decision:
+
+  * 欠損検知は **ops（運用）** と **audit（監査）** の2モードに分離して運用する。
+  * ops は入れ忘れ検知を主目的とし、**asof_missing（ASOF丸抜け）** と **raw_missing（(ASOF, STAY MONTH)欠落）** を区別して扱う。
+  * audit は棚卸しを主目的とし、期待キーの作り方を ops と分ける（下記の別Decision参照）。
+* Why:
+
+  * 単一モードだと、ASOF丸抜けが検知不能になったり、古い月が大量欠損に見えるノイズが増えるため。
+* Spec link:
+
+  * docs/spec_overview.md: 欠損検知（ops/audit）導線・運用目的の整理（追記予定）
+  * docs/spec_models.md: （追記予定：欠損補完しない前提での可視化/評価の位置づけ）
+  * docs/spec_data_layer.md: 欠損カテゴリ定義（asof_missing/raw_missing）とモード分離（追記予定）
+  * docs/spec_evaluation.md: （必要なら）欠損除外/扱いの前提（追記予定）
+* Status: 未反映
+
+## D-20251224-XXX audit 欠損の対象範囲は STAY MONTH の min..max に限定し、未来ASOFは欠損扱いしない
+
+* Decision:
+
+  * audit 欠損抽出は、raw から観測された **STAY MONTH の最古〜最新（min..max）の連続月**の範囲に限定する（範囲外は欠損と見なさない）。
+  * **asof_date > today（未来ASOF）** は欠損として出さない（キャップする）。
+* Why:
+
+  * 古い月が大量欠損に見える誤検知（ノイズ）を潰し、棚卸しとして意味のある範囲に限定するため。
+  * 未来ASOFは入力され得ないため、欠損扱いすると監査結果が壊れるため。
+* Spec link:
+
+  * docs/spec_overview.md: 監査モードの目的/対象範囲（追記予定）
+  * docs/spec_models.md: （該当薄め）
+  * docs/spec_data_layer.md: audit の期待キー生成・future ASOF cap・対象月レンジ（追記予定）
+  * docs/spec_evaluation.md: （該当薄め）
+* Status: 未反映
+
+## D-20251224-XXX 欠損のみ取り込みは当面 raw_missing のみを対象にする
+
+* Decision:
+
+  * 「欠損のみ取り込み」は **ops レポートを入力**にし、**raw_missing のキーだけ**を対象として再取り込み/再生成する。
+  * **asof_missing は対象外**（ASOF自体が無いケースのため、取り込み対象としては扱わない）。
+* Why:
+
+  * asof_missing は「入力ファイルが存在しない」問題であり、欠損キー駆動での再取り込みに向かないため。
+  * 運用上は raw を追加して ops レポートを再生成すればリストから消えるため、対象外でも実害が少ないため。
+* Spec link:
+
+  * docs/spec_overview.md: 欠損のみ取り込みの導線/前提（追記予定）
+  * docs/spec_models.md: （該当薄め）
+  * docs/spec_data_layer.md: raw_missing/asof_missing の扱い、再取り込み対象の制約（追記予定）
+  * docs/spec_evaluation.md: （該当薄め）
+* Status: 未反映
+
+## D-20251224-XXX データレイヤは NaN 保持、欠損補完は GUI 表示直前のみとする
+
+* Decision:
+
+  * monthly_curve / daily_snapshots などデータレイヤは **NaN を保持**して保存し、欠損補完（NOCB等）は **GUI表示直前**に限定する。
+  * 予測/評価は原則「欠損補完せず、サンプル除外」を基本方針とする（補完モードは後で検討）。
+* Why:
+
+  * どこで補完したかが不明確だと、曲線・予測・評価の整合が壊れ、再現性が落ちるため。
+* Spec link:
+
+  * docs/spec_overview.md: 全体方針（NaN保持/補完位置）整理（追記予定）
+  * docs/spec_models.md: NOCBは表示直前のみ、評価は欠損除外が基本（追記予定）
+  * docs/spec_data_layer.md: データ層のNaN保持ルール（追記予定）
+  * docs/spec_evaluation.md: 欠損除外の前提（追記予定）
+* Status: 未反映
+
+## D-20251224-XXX nface RAW 変換は安全側固定（宿泊日=A列のみ、判定不能はSTOP）
+
+* Decision:
+
+  * nface RAW の宿泊日は **A列が唯一の正**とし、A列日付が無いRAWは対象外（STOP）。
+  * 「2行持ち判定」は **空白の有無＋同日付連続**も考慮し、**判定不能はSTOP**（部分取り込みはしない）。
+  * ASOF は **セル優先**、セル欠落時のみ **ファイル名からfallback**する。
+* Why:
+
+  * すべての派生レイアウトに対応しようとすると誤取り込みリスクが増えるため。安全側に倒し、早期に異常を顕在化させる方が運用に強い。
+* Spec link:
+
+  * docs/spec_overview.md: adapter の安全側方針（追記予定）
+  * docs/spec_models.md: （該当薄め）
+  * docs/spec_data_layer.md: RAW→daily_snapshots の前提（A列唯一の正、STOP条件、ASOF優先順）（追記予定）
+  * docs/spec_evaluation.md: （該当薄め）
+* Status: 未反映
+
+## D-20251224-XXX リリースZIPは “必要物のみ” 同梱し、ログは最新N本かつ full_all を優先する
+
+* Decision:
+
+  * `make_release_zip.py` により、共有ZIPは **必要物のみ**を同梱する運用を基本とする（profile/with-output-samplesで制御）。
+  * 同梱ログは `output/logs` を基本の保存先とし、同梱は **最新N本**に限定する。
+  * 最新ログ選定は **full_all_*.log を最優先**し、次点で他ログを補完する。
+* Why:
+
+  * 共有データの肥大化と漏洩リスクを抑えつつ、再現に必要な証跡（最新ログ）だけ残すため。
+  * ログ種別が複数ある状況で、再現の基準を full_all に寄せることで参照ブレを減らすため。
+* Spec link:
+
+  * docs/spec_overview.md: 共有/引き継ぎ（zip作成）運用（追記予定）
+  * docs/spec_models.md: （該当薄め）
+  * docs/spec_data_layer.md: output/logs 配下のログ運用（追記予定）
+  * docs/spec_evaluation.md: （該当薄め）
+* Status: 未反映
+
+## D-20251224-XXX 共有ZIPの命名規約は YYYYMMDD_HHMM を基本とし、必要なら commit で一意化する
+
+* Decision:
+
+  * 共有ZIPのファイル名には **日付だけでなく時刻（YYYYMMDD_HHMM）**を含める。
+  * 同日複数回やり取り等で衝突リスクがある場合は、**short commit hash** を付与して一意化する運用を許可する。
+* Why:
+
+  * VERSION.txt を開く前に一覧で誤送付/誤展開を防ぐ必要があるため（参照齟齬の予防）。
+* Spec link:
+
+  * docs/spec_overview.md: 共有物の命名規約（追記予定）
+  * docs/spec_models.md: （該当薄め）
+  * docs/spec_data_layer.md: （該当薄め）
+  * docs/spec_evaluation.md: （該当薄め）
+* Status: 未反映
+
+## D-20251226-XXX Range rebuild の既定パラメータと対象月算出を固定
+
+* Decision:
+
+  * Phase 1.6（Range rebuild）の既定値を **buffer_days=30** とする（安全側）。
+  * stay_months は **asof_max から +120日先までの月（両端含む）** を自動算出し、さらに **前月を常に含める**（月初例外はこの固定で吸収し、特判は持たない）。
+* Why:
+
+  * 月初や月長（2月等）で「翌3〜4ヶ月」の揺れが出る問題を、日次（+120日）で一意に解消できる。
+  * 前月を常時含めることで、月初取り込みタイミング差による取り漏れ・分岐の複雑化を避ける。
+  * 運用で「安全側」へ寄せつつ、対象範囲の自動化で作業負荷を下げる。
+* Spec link:
+
+  * docs/spec_data_layer.md: （Partial build / Range rebuild / 対象月算出の節に追記予定）
+  * docs/spec_overview.md: （運用導線：更新対象の既定値の節に追記予定）
+  * docs/spec_models.md: （必要なら：LT_DATA更新の前提として参照）
+  * docs/spec_evaluation.md: （不要）
+* Status: 未反映
+
+## D-20251226-XXX LT_DATA(4ヶ月) 導線は Range rebuild に統合して運用を一本化
+
+* Decision:
+
+  * GUIの「LT_DATA(4ヶ月)」実行は、裏側の更新方式を **Range rebuild（Phase 1.6）** に置き換え、日常運用の更新導線を一本化する。
+* Why:
+
+  * 「鮮度warningで気づく→更新実行」の運用が既に成立しており、更新手段が複数あると迷い・手戻りが増える。
+  * 部分更新（範囲限定 rebuild）を標準動線に置くことで、重いFULL_ALL依存を減らせる。
+* Spec link:
+
+  * docs/spec_overview.md: （GUI導線 / LT_DATA更新の節に追記予定）
+  * docs/spec_data_layer.md: （Partial build / Range rebuild の運用位置づけに追記予定）
+  * docs/spec_models.md: （不要〜軽微）
+  * docs/spec_evaluation.md: （不要）
+* Status: 未反映
+
+## D-20251226-XXX N@FACE RAW の不変条件を固定し、判定不能は STOP（誤取得防止優先）
+
+* Decision:
+
+  * N@FACE「売上予算実績表」RAWの入力前提を固定する：
+
+    * **日付はA列**（判定は **9行目以降のみ** を対象）
+    * **OHは E/F/G 列**（必須）
+    * 曜日列は **C列**（存在する場合の補助情報。必須にはしない）
+  * 前提逸脱（列移動等）や判定不能は **推測せず STOP（layout_unknown）** とし、欠損扱いで運用する。
+* Why:
+
+  * 最大事故は「予算行をOHとして誤取得」すること。ここを避けるには安全側STOPが最小コスト。
+  * A1等への手入力日付が混入する運用があり、上部セルに引っ張られると誤判定するため（start_row=9固定）。
+  * 現場加工の多様性はあるが、列の前提まで崩す加工を許すと仕様が破綻する。
+* Spec link:
+
+  * docs/spec_data_layer.md: （RAW入力の前提 / アダプタ要件の節に追記予定）
+  * docs/spec_overview.md: （安全側STOP方針・運用の注意に追記予定）
+  * docs/spec_models.md: （不要）
+  * docs/spec_evaluation.md: （不要）
+* Status: 未反映
+
+## D-20251226-XXX 欠損検知は ops/audit の2モード運用とし、auditは対象月範囲を制限
+
+* Decision:
+
+  * 欠損検知は **運用（ops）** と **監査（audit）** の2モードに分けて運用する。
+  * audit は「古い月が大量欠損に見えるノイズ」を避けるため、**最古〜最新のSTAY MONTH範囲に限定**して欠損抽出する。
+  * **asof_missing（ASOF丸抜け）** は欠損として検知対象に含める。
+* Why:
+
+  * ops は日々の「入れ忘れ検知・運用支援」、audit は「棚卸し」で目的が異なる。単一出力だとノイズで運用不能になる。
+  * asof_missing は「欠損として上がらない」という設計上の盲点になり得るため、検知対象に含める必要がある。
+* Spec link:
+
+  * docs/spec_data_layer.md: （missing_report / 欠損検知モードと対象範囲の節に追記予定）
+  * docs/spec_overview.md: （GUIの欠損チェック導線に追記予定）
+  * docs/spec_models.md: （不要）
+  * docs/spec_evaluation.md: （不要）
+* Status: 未反映
+
+## D-20251226-XXX マスタ設定タブは「最新ASOF」を重複表示せず、欠損検査 remember/未実施など運用警告へ寄せる
+
+* Decision:
+
+  * 最新ASOF（観測値）の通知は鮮度ラベル等で担保できるため、マスタ設定タブで「最新ASOF」を重複表示する設計は避ける。
+  * マスタ設定タブで表示するなら、**欠損検査の未実施/要確認**など、運用判断に直結する警告へ寄せ、**観測最新ASOFと混同しない**表現・配置にする。
+  * なお現状の「最新ASOF:要確認」は **stale_latest_asof（鮮度ズレ）** を指し、欠損そのものではない前提で扱う。
+* Why:
+
+  * 同じ「最新ASOF」ラベルで参照元や意味が違うと、運用判断を誤る（安心/誤警戒）リスクが高い。
+  * マスタ設定の役割は“運用の注意喚起”であり、観測値の提示は他タブで十分。
+* Spec link:
+
+  * docs/spec_overview.md: （GUI表示ルール / 警告の意味の節に追記予定）
+  * docs/spec_data_layer.md: （stale_latest_asof と missing の区別が必要なら追記予定）
+  * docs/spec_models.md: （不要）
+  * docs/spec_evaluation.md: （不要）
+* Status: 未反映
+
+## D-20251226-XXX FULL_ALLでA列日付不足（start_row=9, found=0）は欠損扱いで運用許容
+
+* Decision:
+
+  * FULL_ALLで検出される **A列日付行不足（start_row=9, found=0）** は、推測での復旧は行わず **欠損扱いでOK** とする（取り込み不能として扱う）。
+* Why:
+
+  * 古いRAWや加工崩れの救済を仕様に入れると誤取り込みリスクが上がり、運用コストが増える。
+  * 欠損として監査/棚卸しに回す方が安全で合理的。
+* Spec link:
+
+  * docs/spec_data_layer.md: （RAW取り込みエラーの扱い/STOP方針の節に追記予定）
+  * docs/spec_overview.md: （運用上の許容/欠損扱いの注意に追記予定）
+  * docs/spec_models.md: （不要）
+  * docs/spec_evaluation.md: （不要）
+* Status: 未反映

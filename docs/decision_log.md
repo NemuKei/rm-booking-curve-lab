@@ -566,238 +566,6 @@
   * docs/spec_evaluation.md: （変更不要）
 * Status: 未反映
 
-## D-20260120-001 daily snapshots 更新モードを3段に固定（FAST/FULL_MONTHS/FULL_ALL）
-
-* Decision:
-
-  * daily snapshots 更新は 3モードで運用を固定する：FAST / FULL_MONTHS / FULL_ALL。
-  * FAST：宿泊月フィルタ（GUIの直近4ヶ月等）＋ASOF固定窓（latest ASOF から buffer_days=14 日戻し）で高速更新。
-  * FULL_MONTHS：宿泊月（期間指定）で更新、ASOF窓は設けずフルスキャン（過去取り込み用途）。
-  * FULL_ALL：全量再生成は例外運用として扱う。
-* Why:
-
-  * 週次運用の速度要件はASOF側の窓で担保しつつ、更新漏れ・運用ミスを宿泊月単位で抑えるため。
-  * 期間指定時は過去取り込みが主目的で、速度より網羅性を優先するため。
-* Spec link:
-
-  * docs/spec_overview.md: daily snapshots運用（更新モードの位置づけ）追記予定
-  * docs/spec_models.md: 影響なし
-  * docs/spec_data_layer.md: daily snapshots partial build（FAST/FULL_MONTHS/FULL_ALLの定義、ASOF窓=latest-14d）追記予定
-  * docs/spec_evaluation.md: 影響なし
-* Status: 未反映
-
-## D-20260120-002 FULL_ALL は誤爆防止の“奥配置”＋事前見積り＋強制ログ＋最終確認を必須化
-
-* Decision:
-
-  * FULL_ALL は通常導線に置かず、マスタ設定など普段触らない場所に配置する。
-  * 実行前に対象ファイル件数と概算時間（files/sec を用いた見積り）を表示する。
-  * 実行ログは `output/logs/full_all_YYYYMMDD_HHMM.log` へ強制保存する。
-  * 実行には最終確認（例：確認文字列入力 or `--confirm-full-all FULL_ALL` / `--yes`）を必須とする。
-* Why:
-
-  * 全量再生成は負荷・所要時間・誤操作リスクが高く、誤爆時の機会損失が大きい。
-  * 事後検証/再現性のためログを必須化する必要がある。
-* Spec link:
-
-  * docs/spec_overview.md: 危険操作のガード方針（GUI/CLI）追記予定
-  * docs/spec_models.md: 影響なし
-  * docs/spec_data_layer.md: full rebuild運用（実行ガード・ログ保存）追記予定
-  * docs/spec_evaluation.md: 影響なし
-* Status: 未反映
-
-## D-20260120-003 monthly_curve は LT_DATA フォールバック禁止、daily_snapshots から生成→保存→描画を正とする
-
-* Decision:
-
-  * monthly_curve が無い場合は、`daily_snapshots_{hotel}.csv` からその場で monthly_curve を生成し、CSV保存したうえで描画する。
-  * daily_snapshots が無い/薄くて生成できない場合は、更新（FAST/FULL_MONTHS/FULL_ALL）を促すエラーにする。
-  * LT_DATA から monthly_curve へフォールバックする挙動は採用しない（暫定カーブ扱いもしない）。
-* Why:
-
-  * LT_DATA 由来のカーブは定義が異なり、正しい月次ブッキングカーブにならず意思決定を誤らせるため。
-  * 生成元を一本化しないと、表示結果の整合性が崩れて検証不能になるため。
-* Spec link:
-
-  * docs/spec_overview.md: monthly_curve生成・描画の優先順位（missing時の挙動）追記予定
-  * docs/spec_models.md: 影響なし
-  * docs/spec_data_layer.md: monthly_curve生成ルート（daily_snapshots→monthly_curve）とフォールバック禁止を追記予定
-  * docs/spec_evaluation.md: 影響なし
-* Status: 未反映
-
-## D-20260103-001 APP_BASE_DIR（LOCALAPPDATA）基準へ“寄せ切り”を標準運用とする
-
-* Decision:
-
-  * 配布形態は「各端末ローカルにEXE配置」「端末ごと独立運用」を前提とする（共有フォルダ起動は前提にしない）。
-  * 設定・出力・ログ・ACK・local_overrides などの実体保存先は、EXE配下ではなく **APP_BASE_DIR = `%LOCALAPPDATA%/BookingCurveLab/`** に統一する。
-  * EXE配下には一切出力しない（移動リスク/汚染回避）。
-* Why:
-
-  * EXEの配置場所に依存すると、移動・権限・共有フォルダ運用で事故が起きやすく、再現性と保守性が落ちるため。
-  * 端末ごとの独立運用に寄せることで、配布・運用の責務境界が明確になり、トラブルシュートも容易になるため。
-* Spec link:
-
-  * docs/spec_overview.md: 配布運用前提／ローカル保存先（APP_BASE_DIR）方針の追記
-  * docs/spec_data_layer.md: 生成物（output/logs等）の保存先注記（論理パスと実体パスの関係）
-  * docs/spec_models.md: 影響なし（想定）
-  * docs/spec_evaluation.md: 影響なし（想定）
-* Status: spec反映済
-
-## D-20260103-002 欠損検査（ops）のACK運用を正式採用し、集計から除外する
-
-* Decision:
-
-  * ACKの対象は **opsのみ**（auditは対象外）。
-  * ACK対象のseverityは **ERROR/WARNのみ**（それ以外は対象外）。
-  * ACK済みは **運用集計（ERROR/WARN件数）から除外**する（ノイズ削減のため）。
-  * 欠損一覧のデフォルト表示は **ACK済み非表示＝デフォルトON** とする。
-  * 行の同一性キーは **kind + target_month + asof_date + path** を採用する。
-* Why:
-
-  * 「確定欠損」を毎回同じ警告として扱うと運用の意思決定が鈍り、確認コストが増えるため。
-  * auditは統制目的（全期間の状態確認）であり、ACKで“見えなくする”と統制目的を損なうため。
-  * 同一性キーは厳密すぎるとACKが効かず、緩すぎると別物まで消えるため、実務的な最小単位を固定する。
-* Spec link:
-
-  * docs/spec_overview.md: ops/auditの役割分担、ACK運用の位置づけ（運用ルールとして）
-  * docs/spec_data_layer.md: missing_report_ops と missing_ack_ops の関係／集計除外ルール／同一性キー
-  * docs/spec_models.md: 影響なし（想定）
-  * docs/spec_evaluation.md: 影響なし（想定）
-* Status: spec反映済
-
-## D-20260103-003 初回テンプレ展開（初期化）失敗は握りつぶさず通知する
-
-* Decision:
-
-  * 初回起動時のテンプレコピー（例：hotels.json等）が失敗した場合は、**showerrorで通知＋ログに記録**する（無言で続行しない）。
-* Why:
-
-  * 初期導入時にテンプレが展開されないと、その後の挙動が“設定未反映”として誤解されやすく、原因追跡が困難になるため。
-  * 失敗時は即時に明示して止血する方が、現場運用にとって安全で再現性が高い。
-* Spec link:
-
-  * docs/spec_overview.md: 起動時初期化の期待挙動／失敗時の通知方針
-  * docs/spec_data_layer.md: 初期ファイル生成（テンプレ展開）の扱い・保存先注記
-  * docs/spec_models.md: 影響なし（想定）
-  * docs/spec_evaluation.md: 影響なし（想定）
-* Status: spec反映済
-
-## D-20260103-004 欠損監査（audit）は“全期間の状態確認＝統制用”として固定する
-
-* Decision:
-
-  * 欠損監査（audit）の定義を **「全期間の状態確認（統制用）」**で固定する。
-  * ops（運用）とは目的が異なるため、ACKや集計除外など運用最適化の対象にはしない。
-* Why:
-
-  * 運用の効率化（ノイズ除去）と統制（全体の欠損状態把握）を混ぜると、どちらも中途半端になり誤判断が増えるため。
-* Spec link:
-
-  * docs/spec_overview.md: ops/auditの定義と使い分け
-  * docs/spec_data_layer.md: auditレポートの出力・解釈（ACK対象外である旨）
-  * docs/spec_models.md: 影響なし（想定）
-  * docs/spec_evaluation.md: 影響なし（想定）
-* Status: spec反映済
-
-## D-20260120-004 月次カーブ生成の正を daily_snapshots 基準に統一（LT_DATAフォールバック禁止）
-
-* Decision:
-
-  * 月次カーブ（monthly_curve）は `daily_snapshots` から生成する方式を正とする。
-  * 月次カーブ生成で `LT_DATA` をフォールバック経路として使用しない（禁止）。
-  * 月次LT定義は **ASOFベース（month_end - asof_date）** を採用する。
-* Why:
-
-  * 月次カーブのLT定義が分裂すると曲線が崩れ、LT_DATA由来の不整合が再発するため。
-  * 月次用途（概観/比較）では daily_snapshots 由来の整合を優先すべきため。
-* Spec link:
-
-  * docs/spec_overview.md: （データ生成フロー概要：monthly_curve生成経路の正を明記）
-  * docs/spec_data_layer.md: （monthly_curveの生成元とLT定義、LT_DATA非フォールバックを追記）
-  * docs/spec_models.md: （monthly_curve参照の前提としてのデータ整合の注記）
-  * docs/spec_evaluation.md: （影響小／参照のみ：必要なら注記）
-* Status: 未反映
-
-## D-20260120-005 monthly_curveはNaN保持で保存し、欠損補完（NOCB）はGUI表示直前のみ
-
-* Decision:
-
-  * `monthly_curve_YYYYMM_{hotel}.csv` 等の生成物は **rawのまま保存（NaN保持）** する。
-  * 欠損補完（NOCB）は **GUI表示に渡す直前のみ** 適用し、データレイヤには反映しない。
-  * NOCBの向きは「欠損LTは**次のASOF（より新しい観測）**で埋める」前提を維持する（誤って逆向きにしない）。
-* Why:
-
-  * データレイヤで補完すると監査・再現性・後続分析に影響が出るため（NaN保持が思想に合致）。
-  * 表示用途の欠損補完は許容だが、保存データの改変は避けるべきため。
-* Spec link:
-
-  * docs/spec_data_layer.md: （欠損の取り扱い方針：NaN保持と補完適用点を明文化）
-  * docs/spec_models.md: （モデル入力時の欠損方針の前提として追記）
-  * docs/spec_overview.md: （全体思想として補足するなら追記）
-  * docs/spec_evaluation.md: （評価時の欠損扱いの前提として注記）
-* Status: 未反映
-
-## D-20260120-006 予測・評価は欠損補完せずサンプル除外を基本方針（0補完はしない）
-
-* Decision:
-
-  * 予測・評価の計算は当面 **欠損補完を行わず、欠損があるサンプルは除外**を基本とする。
-  * 欠損を **0に落とす補完は採用しない**。
-  * 例外（補完モード等）の導入は、まず「補完なし」で精度・影響を確認してから判断する。
-* Why:
-
-  * 0補完は需要・OCC等の推定を歪めるリスクが高く、誤差評価も破壊しやすいため。
-  * ACTの整合・未来リーク等の副作用が出やすく、まずは安全側（除外）でベースラインを確立するため。
-* Spec link:
-
-  * docs/spec_models.md: （モデル入力の欠損値取扱い：除外を基本と明記）
-  * docs/spec_evaluation.md: （評価対象の除外ルール、ACT欠け時の扱いの導線）
-  * docs/spec_data_layer.md: （NaN保持思想との接続：補完しない前提を補足）
-  * docs/spec_overview.md: （必要なら注記）
-* Status: 未反映
-
-## D-20260120-007 欠損検知は「運用（入れ忘れ）/監査（歴史ギャップ）」の2モードに分離し、運用ASOF窓は180日
-
-* Decision:
-
-  * 欠損検知（missing_report）は **運用モード（入れ忘れ検知）** と **監査モード（歴史的ギャップ可視化）** の2モードに分離する。
-  * 運用モードは **ASOF窓180日** を採用し、期待ASOFは日次（ただしseverityで緩急）とする。
-  * 運用モードは **ASOF丸抜け（asof_missing）** と **(ASOF, STAY MONTH)取りこぼし（raw_missing）** を別種として扱う。
-  * 監査モードは **STAY MONTHの最古〜最新範囲** に限定し、期待ASOFは日次で生成する。
-* Why:
-
-  * 観測ASOF起点の欠損抽出だと「ASOF丸抜け」が検知できず、また古い期間の保存粒度差で欠損が爆発して運用不能になるため。
-  * 運用と棚卸しは目的が違い、同一ロジックにすると双方が破綻するため。
-  * 運用の検知対象は直近に限定するのが現実的で、180日窓が妥当と判断したため。
-* Spec link:
-
-  * docs/spec_data_layer.md: （missing_reportの位置づけ、モード、出力、ASOF窓180日を追記）
-  * docs/spec_overview.md: （運用フロー：欠損チェック/監査の役割分担を追記）
-  * docs/spec_models.md: （欠損検知→モデル計算の前提として導線）
-  * docs/spec_evaluation.md: （ACT欠け/データ欠け時の評価遮断・除外方針の導線）
-* Status: 未反映
-
-## D-20260120-008 RAW取り込みはサブフォルダ許可＋(target_month, asof)重複は即エラー停止
-
-* Decision:
-
-  * RAWデータはホテル配下で **サブフォルダ配置を許可**（再帰探索で取り込み対象とする）。
-  * 同一キー **(target_month, asof)** の重複（拡張子違い含む）は **即エラー停止**し、両パスを表示する。
-  * 拡張子は「読めるものは許可、読めないものは明示エラー」を基本とする（許容拡張子の固定列挙より実行時判定優先）。
-* Why:
-
-  * 元データが月フォルダ等で整理されているケースが多く、運用利便性が高いため。
-  * 重複は取り込み結果の不確定化・事故に直結するため、安全側で停止が必要なため。
-  * Excel拡張子は混在し得るため、拡張子で一律排除ではなく「読める/読めない」で扱うほうが現実的なため。
-* Spec link:
-
-  * docs/spec_data_layer.md: （raw配置ルール、探索範囲、重複扱い、拡張子方針を追記）
-  * docs/spec_overview.md: （入力データの前提・運用手順の注記）
-  * docs/spec_models.md: （入力整合がモデル前提である旨の導線）
-  * docs/spec_evaluation.md: （直接影響小／注記レベル）
-* Status: 未反映
-
 ## D-20251224-001 欠損検知は ops/audit の2モードで固定する
 
 * Decision:
@@ -1035,4 +803,154 @@
   * docs/spec_overview.md: （運用上の許容/欠損扱いの注意に追記予定）
   * docs/spec_models.md: （不要）
   * docs/spec_evaluation.md: （不要）
+* Status: 未反映
+
+## D-20251220-001 月次カーブ生成の正を daily_snapshots 基準に統一（LT_DATAフォールバック禁止）
+
+* Decision:
+
+  * 月次カーブ（monthly_curve）は `daily_snapshots` から生成する方式を正とする。
+  * 月次カーブ生成で `LT_DATA` をフォールバック経路として使用しない（禁止）。
+  * 月次LT定義は **ASOFベース（month_end - asof_date）** を採用する。
+* Why:
+
+  * 月次カーブのLT定義分裂が曲線崩れを引き起こし、LT_DATA由来の不整合が再発するため。
+* Spec link:
+
+  * docs/spec_overview.md: （データ生成フロー概要：monthly_curve生成経路の正を追記）
+  * docs/spec_models.md: （参照のみ：必要なら注記）
+  * docs/spec_data_layer.md: （monthly_curveの生成元とLT定義、LT_DATA非フォールバックを追記）
+  * docs/spec_evaluation.md: （影響小／参照のみ）
+* Status: 未反映
+
+## D-20251220-002 monthly_curveはNaN保持で保存し、欠損補完（NOCB）はGUI表示直前のみ
+
+* Decision:
+
+  * `monthly_curve` 生成物は **rawのまま保存（NaN保持）** する。
+  * 欠損補完（NOCB）は **GUI表示直前のみ** 適用し、データレイヤには反映しない。
+  * NOCBの向きは「欠損LTは**次のASOF（より新しい観測）**で埋める」前提を維持する。
+* Why:
+
+  * データレイヤで補完すると監査・再現性・後続分析に影響が出るため。表示用途に限定するのが思想に合うため。
+* Spec link:
+
+  * docs/spec_overview.md: （必要なら思想として注記）
+  * docs/spec_models.md: （モデル入力時の前提として追記）
+  * docs/spec_data_layer.md: （欠損の取り扱い方針：NaN保持と補完適用点を明文化）
+  * docs/spec_evaluation.md: （評価時の前提として注記）
+* Status: 未反映
+
+## D-20251220-003 予測・評価は欠損補完せずサンプル除外を基本（0補完はしない）
+
+* Decision:
+
+  * 予測・評価の計算は当面 **欠損補完を行わず、欠損サンプルは除外**を基本とする。
+  * 欠損の **0補完は採用しない**。
+  * 補完モード等の導入は、まず「補完なし」で精度・影響を確認してから判断する。
+* Why:
+
+  * 0補完は歪みが大きく、未来リークやACT整合の副作用も出やすい。まず安全側（除外）でベースラインを確立するため。
+* Spec link:
+
+  * docs/spec_overview.md: （必要なら注記）
+  * docs/spec_models.md: （モデル入力の欠損値取扱い：除外を基本と明記）
+  * docs/spec_data_layer.md: （NaN保持思想との接続として補足）
+  * docs/spec_evaluation.md: （評価対象の除外ルール、ACT欠け時の扱いの導線）
+* Status: 未反映
+
+## D-20251220-004 欠損検知は「運用（入れ忘れ）/監査（歴史ギャップ）」の2モードに分離し、運用ASOF窓は180日
+
+* Decision:
+
+  * 欠損検知（missing_report）は **運用/監査の2モード**に分離する。
+  * 運用モードのASOF窓は **180日** とする（期待ASOFは日次、severityで緩急）。
+  * 運用モードは **ASOF丸抜け（asof_missing）** と **raw_missing** を別種として扱い、asof_missingは取り込み対象外とする。
+  * 監査モードは **STAY MONTHの最古〜最新範囲** に限定し、期待ASOFは日次で生成する。
+* Why:
+
+  * 観測ASOF起点だとASOF丸抜けを検知できず、古い期間の粒度差で欠損が爆発して運用不能になるため。目的別に分離が必要。
+* Spec link:
+
+  * docs/spec_overview.md: （運用フロー：欠損チェック/監査の役割分担を追記）
+  * docs/spec_models.md: （欠損検知→モデル計算の前提導線）
+  * docs/spec_data_layer.md: （missing_reportのモード、ASOF窓180日、出力種別を追記）
+  * docs/spec_evaluation.md: （ACT欠け/データ欠け時の評価除外・遮断の導線）
+* Status: 未反映
+
+## D-20251220-005 RAW取り込みはサブフォルダ許可＋(target_month, asof)重複は即エラー停止
+
+* Decision:
+
+  * RAWデータはホテル配下で **サブフォルダ配置を許可**（再帰探索で取り込み対象とする）。
+  * 同一キー **(target_month, asof)** の重複（拡張子違い含む）は **即エラー停止**し、両パスを表示する。
+  * 拡張子は「読めるものは許可、読めないものは明示エラー」を基本とする。
+* Why:
+
+  * サブフォルダ運用の利便性が高い一方、重複は事故に直結するため安全側で止める必要がある。拡張子混在にも現実的に対応するため。
+* Spec link:
+
+  * docs/spec_overview.md: （入力データの前提・運用手順の注記）
+  * docs/spec_models.md: （入力整合がモデル前提である旨の導線）
+  * docs/spec_data_layer.md: （raw配置ルール、探索範囲、重複扱い、拡張子方針を追記）
+  * docs/spec_evaluation.md: （影響小／注記レベル）
+* Status: 未反映
+
+## D-20251218-001 daily snapshots 更新モードを3段に固定（FAST/FULL_MONTHS/FULL_ALL）
+
+* Decision:
+
+  * daily snapshots 更新は 3モードで運用を固定する：FAST / FULL_MONTHS / FULL_ALL。
+  * FAST：宿泊月フィルタ（GUIの直近4ヶ月等）＋ASOF固定窓（latest ASOF から buffer_days=14 日戻し）で高速更新。
+  * FULL_MONTHS：宿泊月（期間指定）で更新、ASOF窓は設けずフルスキャン（過去取り込み用途）。
+  * FULL_ALL：全量再生成は例外運用として扱う。
+* Why:
+
+  * 週次運用の速度要件はASOF側の窓で担保しつつ、更新漏れ・運用ミスを宿泊月単位で抑えるため。
+  * 期間指定時は過去取り込みが主目的で、速度より網羅性を優先するため。
+* Spec link:
+
+  * docs/spec_overview.md: daily snapshots運用（更新モードの位置づけ）追記予定
+  * docs/spec_models.md: 影響なし
+  * docs/spec_data_layer.md: daily snapshots build modes（FAST/FULL_MONTHS/FULL_ALL、ASOF窓=latest-14d、FULL_MONTHSはASOF窓なし）追記予定
+  * docs/spec_evaluation.md: 影響なし
+* Status: 未反映
+
+## D-20251218-002 FULL_ALL は誤爆防止の奥配置＋事前見積り＋強制ログ＋最終確認を必須化
+
+* Decision:
+
+  * FULL_ALL は通常導線に置かず、マスタ設定など普段触らない場所に配置する。
+  * 実行前に対象ファイル件数と概算時間（files/sec を用いた見積り）を表示する。
+  * 実行ログは `output/logs/full_all_YYYYMMDD_HHMM.log` へ強制保存する。
+  * 実行には最終確認（例：確認文字列入力 / CLIでは `--yes` または `--confirm-full-all FULL_ALL`）を必須とする。
+* Why:
+
+  * 全量再生成は負荷・所要時間・誤操作リスクが高く、誤爆時の機会損失が大きい。
+  * 事後検証/再現性のためログを必須化する必要がある。
+* Spec link:
+
+  * docs/spec_overview.md: 危険操作のガード方針（GUI/CLI）追記予定
+  * docs/spec_models.md: 影響なし
+  * docs/spec_data_layer.md: full rebuild運用（実行ガード・ログ保存）追記予定
+  * docs/spec_evaluation.md: 影響なし
+* Status: 未反映
+
+## D-20251218-003 monthly_curve は LT_DATA フォールバック禁止、daily_snapshots から生成→保存→描画を正とする
+
+* Decision:
+
+  * monthly_curve が無い場合は、`daily_snapshots_{hotel}.csv` からその場で monthly_curve を生成し、CSV保存したうえで描画する。
+  * daily_snapshots が無い/薄くて生成できない場合は、更新（FAST/FULL_MONTHS/FULL_ALL）を促すエラーにする。
+  * LT_DATA から monthly_curve へフォールバックする挙動は採用しない。
+* Why:
+
+  * LT_DATA 由来のカーブは定義が異なり、正しい月次ブッキングカーブにならず意思決定を誤らせるため。
+  * 生成元を一本化しないと、表示結果の整合性が崩れて検証不能になるため。
+* Spec link:
+
+  * docs/spec_overview.md: monthly_curve生成・描画の優先順位（missing時の挙動）追記予定
+  * docs/spec_models.md: 影響なし
+  * docs/spec_data_layer.md: monthly_curve生成ルート（daily_snapshots→monthly_curve）とフォールバック禁止を追記予定
+  * docs/spec_evaluation.md: 影響なし
 * Status: 未反映

@@ -546,3 +546,22 @@
   * docs/spec_data_layer.md: 反映不要
   * docs/spec_evaluation.md: 反映不要
 * Status: 未反映（BookingCurveLab_READMEへの運用追記のみが候補）
+
+## D-20260116-XXX LT_DATA生成はdaily_snapshotsを標準、timeseries設定はsource依存で必須化
+
+* Decision:
+
+  * `source="daily_snapshots"` の場合、`hotels.json` の `data_subdir` / `timeseries_file` は未設定（空）でもエラーにしない（timeseries は参照しない）。
+  * `source="timeseries"` の場合のみ、`data_subdir` / `timeseries_file` を必須として厳格チェックし、欠損・空は安全側に STOP。
+  * GUI 側のデフォルト `source` は `daily_snapshots` に寄せ、未設定 timeseries による停止事故を減らす。
+* Why:
+
+  * 現行運用（daily snapshots）で legacy（timeseries）設定を必須にすると、テンプレ空欄や旧config残存で無駄な停止が頻発し、運用コストが増える。
+  * 一方で timeseries は比較・互換用途として残すため、必要時のみ厳格チェックにするのが最小リスク。
+* Spec link:
+
+  * docs/spec_overview.md: hotels.json のキー定義（`data_subdir` / `timeseries_file` の位置づけと source 別必須条件）
+  * docs/spec_data_layer.md: LT_DATA の生成ルート（daily_snapshots標準、timeseriesは互換/比較）と I/O 前提
+  * docs/spec_models.md: （影響軽微。モデル前提がrooms中心のままか注記する場合のみ）
+  * docs/spec_evaluation.md: （変更不要）
+* Status: 未反映

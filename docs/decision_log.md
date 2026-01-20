@@ -1043,3 +1043,78 @@
   * docs/spec_data_layer.md: （LT_DATA value_type / revenue列定義 または forecast列定義に必須追記予定）
   * docs/spec_evaluation.md: —
 * Status: 未反映
+
+## D-20260103-001 APP_BASE_DIR（LOCALAPPDATA）基準へ“寄せ切り”を標準運用とする
+
+* Decision:
+
+  * 配布形態は「各端末ローカルにEXE配置」「端末ごと独立運用」を前提とする（共有フォルダ起動は前提にしない）。
+  * 設定・出力・ログ・ACK・local_overrides などの実体保存先は、EXE配下ではなく **APP_BASE_DIR = `%LOCALAPPDATA%/BookingCurveLab/`** に統一する。
+  * EXE配下には一切出力しない（移動リスク/汚染回避）。
+* Why:
+
+  * EXEの配置場所に依存すると、移動・権限・共有フォルダ運用で事故が起きやすく、再現性と保守性が落ちるため。
+  * 端末ごとの独立運用に寄せることで、配布・運用の責務境界が明確になり、トラブルシュートも容易になるため。
+* Spec link:
+
+  * docs/spec_overview.md: 配布運用前提／ローカル保存先（APP_BASE_DIR）方針の追記
+  * docs/spec_data_layer.md: 生成物（output/logs等）の保存先注記（論理パスと実体パスの関係）
+  * docs/spec_models.md: 影響なし（想定）
+  * docs/spec_evaluation.md: 影響なし（想定）
+* Status: spec反映済
+
+## D-20260103-002 欠損検査（ops）のACK運用を正式採用し、集計から除外する
+
+* Decision:
+
+  * ACKの対象は **opsのみ**（auditは対象外）。
+  * ACK対象のseverityは **ERROR/WARNのみ**（それ以外は対象外）。
+  * ACK済みは **運用集計（ERROR/WARN件数）から除外**する（ノイズ削減のため）。
+  * 欠損一覧のデフォルト表示は **ACK済み非表示＝デフォルトON** とする。
+  * 行の同一性キーは **kind + target_month + asof_date + path** を採用する。
+* Why:
+
+  * 「確定欠損」を毎回同じ警告として扱うと運用の意思決定が鈍り、確認コストが増えるため。
+  * auditは統制目的（全期間の状態確認）であり、ACKで“見えなくする”と統制目的を損なうため。
+  * 同一性キーは厳密すぎるとACKが効かず、緩すぎると別物まで消えるため、実務的な最小単位を固定する。
+* Spec link:
+
+  * docs/spec_overview.md: ops/auditの役割分担、ACK運用の位置づけ（運用ルールとして）
+  * docs/spec_data_layer.md: missing_report_ops と missing_ack_ops の関係／集計除外ルール／同一性キー
+  * docs/spec_models.md: 影響なし（想定）
+  * docs/spec_evaluation.md: 影響なし（想定）
+* Status: spec反映済
+
+## D-20260103-003 初回テンプレ展開（初期化）失敗は握りつぶさず通知する
+
+* Decision:
+
+  * 初回起動時のテンプレコピー（例：hotels.json等）が失敗した場合は、**showerrorで通知＋ログに記録**する（無言で続行しない）。
+* Why:
+
+  * 初期導入時にテンプレが展開されないと、その後の挙動が“設定未反映”として誤解されやすく、原因追跡が困難になるため。
+  * 失敗時は即時に明示して止血する方が、現場運用にとって安全で再現性が高い。
+* Spec link:
+
+  * docs/spec_overview.md: 起動時初期化の期待挙動／失敗時の通知方針
+  * docs/spec_data_layer.md: 初期ファイル生成（テンプレ展開）の扱い・保存先注記
+  * docs/spec_models.md: 影響なし（想定）
+  * docs/spec_evaluation.md: 影響なし（想定）
+* Status: spec反映済
+
+## D-20260103-004 欠損監査（audit）は“全期間の状態確認＝統制用”として固定する
+
+* Decision:
+
+  * 欠損監査（audit）の定義を **「全期間の状態確認（統制用）」**で固定する。
+  * ops（運用）とは目的が異なるため、ACKや集計除外など運用最適化の対象にはしない。
+* Why:
+
+  * 運用の効率化（ノイズ除去）と統制（全体の欠損状態把握）を混ぜると、どちらも中途半端になり誤判断が増えるため。
+* Spec link:
+
+  * docs/spec_overview.md: ops/auditの定義と使い分け
+  * docs/spec_data_layer.md: auditレポートの出力・解釈（ACK対象外である旨）
+  * docs/spec_models.md: 影響なし（想定）
+  * docs/spec_evaluation.md: 影響なし（想定）
+* Status: spec反映済

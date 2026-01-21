@@ -1,7 +1,7 @@
 # Thread Log 生成プロンプト（テンプレ）
 
 ## 目的
-このスレッドの会話ログと「この依頼に添付されたアンカーZIP（この依頼に添付されたZIP＝作業開始点）」を根拠に、`docs/thread_logs/` に追加する **Thread Log（1本）** を作成する。
+このスレッドの会話ログと「アンカーZIP（この依頼に添付されたZIP＝作業開始点）」を根拠に、`docs/thread_logs/` に追加する **Thread Log（1本）** を作成する。
 
 ## 重要：Thread Log は仕様ではない
 - 仕様の唯一の正：`docs/spec_*.md` と `AGENTS.md`

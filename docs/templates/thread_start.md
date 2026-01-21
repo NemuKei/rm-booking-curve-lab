@@ -3,6 +3,7 @@
 ## 0) 参照の唯一の正
 - 共有物の唯一の正：このスレッドのアンカーZIP（添付のZIP。スレッド内は固定）
 - 仕様の唯一の正：docs/spec_*.md と AGENTS.md
+- スレッド途中で修正版ZIPを渡して確認する場合は candidate_zip（検証対象）として扱い、アンカーZIPは固定する（アンカー更新したい場合は新スレッドへ移行）。
 
 ## 1) このスレッドの目的（1〜3行）
 - docs/handovers/ の最新を参照（なければ docs/START_HERE.md の Thread Start Gate に従う）

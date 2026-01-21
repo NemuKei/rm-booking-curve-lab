@@ -58,10 +58,11 @@
 - 引き継ぎ本文は **ファイルとして出力**してください。
 
 ### 3-1. Proposed file path（必須・1行）
-- `Proposed file path: docs/handovers/YYYY-MM-DD_<branch>_<scope>.md`
+- `Proposed file path: docs/handovers/YYYY-MM-DD_HHMM_<branch>_<scope>.md`
 
 **命名ルール**
 - YYYY-MM-DD：この引継書の作成日
+- HHMM：この引継書の作成時刻（JST, 24h）
 - `<branch>`：例 `main` / `feature-xxxx`
 - `<scope>`：短く（例：`docs-align` / `pace14-market` / `release-v0.6.10` など）
 - ファイル名は **英数字・ハイフン・アンダースコアのみ**（記号【】：は使わない）

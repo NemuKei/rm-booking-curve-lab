@@ -138,13 +138,17 @@
 - 新スレの冒頭で「これは引き継ぎ本文であり、添削ではなく受領して進める」ことを明記する。
 - さらに「ファイル確認必須」「推測禁止」「不足なら要求」を冒頭ルールとして固定する。
 - 用語定義：**アンカーZIP**＝このスレッドで「唯一の正」として固定参照するZIP（スレッド冒頭で添付されるZIP）。
-- 運用要件：引継作成依頼で渡したZIPと、次スレ冒頭で添付するZIPは **一致** させる（不一致は参照事故の原因）。
+- 用語定義：source_zip＝引継書作成の材料になったZIP（引継依頼時点のZIP）。
+- 用語定義：anchor_zip＝次スレッドで「共有物の唯一の正」として添付するアンカーZIP（原則、引継書 docs/handovers を同梱して作り直したZIP）。
+- 用語定義：candidate_zip＝スレッド途中で確認・検証のために共有する修正版ZIP（検証対象）。
+- 運用要件：source_zip と anchor_zip が異なる場合は、引継書本文に source_zip（ZIP名/branch/commit）を明記する（監査用）。次スレの参照の唯一の正は anchor_zip。
+- 運用要件：スレッド途中に candidate_zip を渡して検証する場合、アンカーZIPは固定のまま扱う。candidate_zip を唯一の正として以後進める場合は新スレッドへ移行する。
 - スレッドを跨ぐときは、新しく作成したZIPを次スレで添付し、そのZIPを次スレのアンカーZIPとして固定する。
 - 共有ファイルは **make_release_zip.py で作成したアンカーZIPを唯一の正** とし、手作業での個別ファイル添付は原則しない。
 - 次スレ冒頭で Docs Gate が Yes の場合、docs更新は `docs/templates/prompt_docs_update.md` を唯一の手順として行う。
 
 #### 引き継ぎ（ファイル化が標準）
-- 引き継ぎ本文は `docs/handovers/YYYY-MM-DD_<branch>_<scope>.md` として保存し、ZIPに同梱する。
+- 引き継ぎ本文は `docs/handovers/YYYY-MM-DD_HHMM_<branch>_<scope>.md` として保存し、ZIPに同梱する。
 - 次スレ冒頭は「アンカーZIP添付＋ handoverファイルパス指定」だけを書き、全文貼りは原則しない（トークン節約と参照齟齬防止）。
 
 ### 7-3. スレッド終了時のログ作成（必須・5分ゲート）
@@ -154,7 +158,7 @@
 
 #### 生成する成果物
 - Thread Log（スレッド単位・少し詳細・append-only）
-  - 保存先：`docs/thread_logs/YYYY-MM-DD_<branch>_<short>.md`
+  - 保存先：`docs/thread_logs/YYYY-MM-DD_HHMM_<branch>_<short>.md`
 - Decision Log（横断・決定だけ）
   - 保存先：`docs/decision_log.md`
 

@@ -1278,3 +1278,39 @@
 * Status: 反映済
 
 ---
+
+## D-20260121-009 source_zip / anchor_zip / candidate_zip の定義（引継依頼ZIP一致要件を撤廃）
+
+* Decision:
+
+  * source_zip＝引継書作成の材料になったZIP（引継依頼時点のZIP）と定義する。
+  * anchor_zip＝次スレッドで「共有物の唯一の正」として添付するアンカーZIPと定義する。原則、引継書（docs/handovers）を同梱して作り直したZIPを用いる。
+  * source_zip と anchor_zip が異なる場合は、引継書本文に source_zip（ZIP名/branch/commit）を明記する（監査用）。次スレの参照の唯一の正は anchor_zip。
+  * スレッド途中に修正版ZIPを渡して検証する場合は candidate_zip（検証対象）として扱い、アンカーZIPは固定する。candidate を唯一の正として扱うなら新スレッドへ移行する。
+* Why:
+
+  * 引継書は生成物のため、引継依頼時点のZIPに物理的に同梱できず、「ZIP一致」を要求すると運用が破綻するため。
+  * 参照の唯一の正（アンカー）と、途中検証（candidate）を分離して参照齟齬を防ぐため。
+* Spec link:
+
+  * なし（運用決定。spec_* ではない）
+* Status: 反映済
+
+---
+
+## D-20260121-010 handovers/thread_logs の命名に HHMM を追加（同日衝突回避）
+
+* Decision:
+
+  * handovers は `docs/handovers/YYYY-MM-DD_HHMM_<branch>_<scope>.md` を正とする。
+  * thread_logs は `docs/thread_logs/YYYY-MM-DD_HHMM_<branch>_<scope>.md` を正とする。
+  * HHMM は作成時刻（JST, 24h）とし、同日・同scopeの衝突を機械的に回避する。
+* Why:
+
+  * 同日内で同タスクを進めた場合にファイル名が衝突し、参照齟齬や `_v2` の場当たり運用が発生するため。
+* Spec link:
+
+  * なし（運用決定。spec_* ではない）
+* Status: 反映済
+
+---

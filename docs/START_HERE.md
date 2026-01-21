@@ -21,6 +21,8 @@
   - 手作業で単体ファイルを添付して運用しない（参照齟齬の温床）
   - 各スレッドではアンカーZIPを固定し、スレッド間で共有する際は常に最新ZIPを唯一の正とする
 
+- スレッド途中で修正版ZIPを渡して検証する場合は candidate_zip（検証対象）として扱い、アンカーZIPは固定する（アンカー更新したい場合は新スレッドへ移行）。
+
 ---
 
 ## 基本ディレクトリ（どこを見ればいいか）
@@ -80,14 +82,15 @@
 ## 命名ルール（最低限）
 
 ### handovers
-- `docs/handovers/YYYY-MM-DD_<branch>_<scope>.md`
+- `docs/handovers/YYYY-MM-DD_HHMM_<branch>_<scope>.md`
 
 ### thread_logs
-- `docs/thread_logs/YYYY-MM-DD_<branch>_<scope>.md`
+- `docs/thread_logs/YYYY-MM-DD_HHMM_<branch>_<scope>.md`
 
 共通：
 - ファイル名は **英数字・ハイフン・アンダースコアのみ**
 - `【】` `：` などの記号は避ける（将来の自動処理で詰む）
+- HHMM は作成時刻（JST, 24h）。同日・同scopeの衝突を機械的に避けるため、新規作成は原則 HHMM 付きとする。
 
 ---
 

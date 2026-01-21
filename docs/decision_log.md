@@ -1228,6 +1228,7 @@
 
   * なし（運用ルール。spec_* ではなく `AGENTS.md` / `docs/dev_style.md` / docsテンプレ群で担保）
 * Status: 反映済
+* Notes: D-20260121-009 により「ZIP一致」要件は撤廃（superseded）
 
 ---
 

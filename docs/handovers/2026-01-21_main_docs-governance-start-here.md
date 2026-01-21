@@ -1,7 +1,3 @@
-Proposed file path: docs/handovers/2026-01-21_main_docs-governance-start-here.md
-
----
-
 ## 4-1. スレッド移行宣言（新スレッドに貼る前提の文面）
 
 このスレッドは、**Thread Log / Decision Log / 引継書の運用を整備し、docs/templates と docs/dev_style.md・docs/START_HERE.md を追加・更新して「スレッド開始〜終了（Docs Gate/Close Gate）」の型を固めた**作業ログです。

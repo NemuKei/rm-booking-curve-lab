@@ -1118,3 +1118,95 @@
   * docs/spec_models.md: 影響なし（想定）
   * docs/spec_evaluation.md: 影響なし（想定）
 * Status: spec反映済
+
+## D-20260121-001: Docs Gate を次スレ冒頭の必須手順として固定（Yes時はprompt_docs_update準拠）
+
+* Date: 2026-01-21
+* Status: 反映済
+* Summary: 次スレ冒頭で Docs Gate を必ず実施し、Yes の場合は `docs/templates/prompt_docs_update.md` を唯一手順として docs 更新を実装より先に行う。
+* Rationale: スレッド終盤はトークン溢れで事故りやすく、仕様・運用docsの整合を先に固めないと参照齟齬が発生しやすいため。
+* Scope: docs運用全体（START_HERE / dev_style / templates / handover運用）
+* Spec linkage:
+
+  * N/A（運用決定のため spec_* ではなく運用docsに反映）
+  * `AGENTS.md`（運用規約の前提）
+* Implementation linkage (if any):
+
+  * `docs/templates/prompt_docs_update.md`
+  * `docs/templates/handover_request.md`（Docs Gate 記載）
+  * `docs/templates/handover_body.md`（Docs Gate 連携）
+  * `docs/START_HERE.md`
+  * `docs/dev_style.md`
+* Notes:
+
+  * 次スレP0で「後半に作られた運用docsの精査」を必須タスクとして実行する方針もセットで合意。
+
+---
+
+## D-20260121-002: 引継書は docs/handovers の単体ファイルで成立させ、連結作業を廃止
+
+* Date: 2026-01-21
+* Status: 反映済
+* Summary: 引継書は `docs/handovers/YYYY-MM-DD_<branch>_<scope>.md` として保存し、次スレは「最新ZIP＋当該ファイル参照」で開始する（チャット本文への連結貼付は不要）。
+* Rationale: 連結作業は手作業ミス・参照齟齬・更新漏れを生みやすく、ZIP運用（唯一の正）と相性が悪いため。
+* Scope: スレッド移行運用（handover作成〜次スレ開始）
+* Spec linkage:
+
+  * N/A（運用決定のため spec_* ではなく運用docsに反映）
+  * `AGENTS.md`（推測禁止／参照齟齬防止の前提）
+* Implementation linkage (if any):
+
+  * `docs/templates/handover_request.md`（handover_body準拠・ファイル化指示）
+  * `docs/templates/handover_body.md`
+  * `docs/START_HERE.md`（handoversの正本位置を明記）
+* Notes:
+
+  * 命名・保存・参照のルールは START_HERE に集約し、以後そこを入口とする。
+
+---
+
+## D-20260121-003: Thread Log / Decision Log / Handover のテンプレ体系を docs/templates に集約
+
+* Date: 2026-01-21
+* Status: 反映済
+* Summary: Thread Log生成、Decision Log更新、docs更新、handover作成の各テンプレを `docs/templates/` に集約し、運用手順をテンプレ準拠に固定する。
+* Rationale: 作業者・スレッドが変わっても再現性を担保し、手順ブレを減らすため。テンプレがないと「毎回の口伝」になり事故る。
+* Scope: docs運用全般（ログ生成・引継ぎ・docs更新）
+* Spec linkage:
+
+  * N/A（運用決定のため spec_* ではなく運用docsに反映）
+  * `AGENTS.md`（運用規約の前提）
+* Implementation linkage (if any):
+
+  * `docs/templates/prompt_thread_log_generate.md`
+  * `docs/templates/prompt_decision_log_update.md`
+  * `docs/templates/prompt_docs_update.md`
+  * `docs/templates/handover_request.md`
+  * `docs/templates/handover_body.md`
+  * `docs/templates/thread_start.md`
+  * `docs/START_HERE.md`（テンプレ一覧の入口）
+* Notes:
+
+  * 次スレ冒頭で templates と運用docs（START_HERE/dev_style）を再精査する（後半作成物の品質確認）。
+
+---
+
+## D-20260121-004: Decision Log の見落とし対策として「時系列に揃える」方針を採用
+
+* Date: 2026-01-21
+* Status: 未反映
+* Summary: `docs/decision_log.md` の並び順を時系列に揃え、末尾10〜20件確認で最新決定の見落としが起きない状態を目指す。
+* Rationale: 末尾確認が前提の品質ゲートになっているため、並びが崩れていると未反映決定を見落とすリスクがある。
+* Scope: Decision Log 運用（確認手順の信頼性）
+* Spec linkage:
+
+  * N/A（運用決定のため spec_* ではなく運用docsに影響）
+  * `AGENTS.md`（参照齟齬防止の前提）
+* Implementation linkage (if any):
+
+  * `docs/decision_log.md`
+  * `docs/templates/prompt_decision_log_update.md`（末尾確認前提の運用と整合が必要）
+  * `docs/START_HERE.md`（確認手順に影響）
+* Notes:
+
+  * “並び替え”が難しい場合は、代替として「検索ルール併用」を運用docsに明記する案もあり（次スレで確定）。

@@ -23,10 +23,6 @@ INCLUDE_GLOBS = [
     "make_release_zip.py",
     "BookingCurveLab.spec",
     "assets/**/*",
-    "【スレッドログA】Thread Log 生成プロンプト（テンプレ）.txt",
-    "【スレッドログB】Decision Log 更新プロンプト（テンプレ）.txt",
-    "【スレッド移行：引き継ぎ（本文）】.txt",
-    "【スレッド移行：引き継ぎ書の作成依頼】.txt",
 ]
 
 # 「サンプル出力」を入れるときだけ追加する（git管理外でも入る想定）

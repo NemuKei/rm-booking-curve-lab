@@ -1119,7 +1119,7 @@
   * docs/spec_evaluation.md: 影響なし（想定）
 * Status: spec反映済
 
-## D-20260121-001: Docs Gate を次スレ冒頭の必須手順として固定（Yes時はprompt_docs_update準拠）
+## D-20260121-001 Docs Gate を次スレ冒頭の必須手順として固定（Yes時はprompt_docs_update準拠）
 
 * Date: 2026-01-21
 * Status: 反映済
@@ -1143,7 +1143,7 @@
 
 ---
 
-## D-20260121-002: 引継書は docs/handovers の単体ファイルで成立させ、連結作業を廃止
+## D-20260121-002 引継書は docs/handovers の単体ファイルで成立させ、連結作業を廃止
 
 * Date: 2026-01-21
 * Status: 反映済
@@ -1165,7 +1165,7 @@
 
 ---
 
-## D-20260121-003: Thread Log / Decision Log / Handover のテンプレ体系を docs/templates に集約
+## D-20260121-003 Thread Log / Decision Log / Handover のテンプレ体系を docs/templates に集約
 
 * Date: 2026-01-21
 * Status: 反映済
@@ -1191,7 +1191,7 @@
 
 ---
 
-## D-20260121-004: Decision Log の見落とし対策として「時系列に揃える」方針を採用
+## D-20260121-004 Decision Log の見落とし対策として「時系列に揃える」方針を採用
 
 * Date: 2026-01-21
 * Status: 未反映
@@ -1210,3 +1210,4 @@
 * Notes:
 
   * “並び替え”が難しい場合は、代替として「検索ルール併用」を運用docsに明記する案もあり（次スレで確定）。
+  

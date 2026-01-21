@@ -50,18 +50,18 @@ Thread Log から「横断して効く決定」だけを抽出し、`docs/decisi
 
 ## Decision Log エントリテンプレ（この形で出力）
 
-### D-YYYYMMDD-XXX: <短いタイトル>
-- Date: YYYY-MM-DD
-- Status: 未反映
-- Summary: <1〜2行で決定の要点>
-- Rationale: <なぜそうしたか（1〜3行）>
-- Scope: <影響範囲（例：pace14_market のみ等）>
-- Spec linkage:
-  - <反映すべき spec ファイルと該当セクション>
-- Implementation linkage (if any):
-  - <関連コードパス（分かる範囲で）>
-- Notes:
-  - <注意点、将来検討、リスクなど>
+## D-YYYYMMDD-XXX <短いタイトル>
+
+* Decision:
+
+  * <決定（箇条書き、1〜3行）>
+* Why:
+
+  * <理由（1〜3行）>
+* Spec link:
+
+  * <docs/spec_*.md: 該当セクション or “なし” を明記>
+* Status: 未反映
 
 ---
 

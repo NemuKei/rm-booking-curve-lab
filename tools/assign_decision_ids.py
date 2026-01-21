@@ -6,14 +6,11 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-
 HEADER_RE = re.compile(r"^(##\s+)D-(\d{8})-(XXX|\d{3})(\b.*)$")
 
 
 def parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(
-        description="Assign sequential decision IDs for placeholders D-YYYYMMDD-XXX in docs/decision_log.md"
-    )
+    ap = argparse.ArgumentParser(description="Assign sequential decision IDs for placeholders D-YYYYMMDD-XXX in docs/decision_log.md")
     ap.add_argument("--file", default="docs/decision_log.md", help="Target markdown file")
     ap.add_argument("--in-place", action="store_true", help="Write changes to file (default: dry-run)")
     ap.add_argument("--check-only", action="store_true", help="Exit non-zero if any XXX placeholders exist")

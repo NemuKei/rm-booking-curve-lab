@@ -97,11 +97,11 @@ Proposed file path: docs/handovers/YYYY-MM-DD_<branch>_<scope>.md
 ---
 
 ## 9. 次スレッドで最初に確認すべきチェックリスト（5項目まで）
-1. 最新ZIPが添付されている（ファイル名・commit一致）
-2. `docs/thread_logs/` の直近ログが追跡できる（Date/Branch/Commit/Zip/Scope）
-3. `docs/decision_log.md` 末尾と矛盾しない
-4. spec_* が最新の決定を反映している（必要箇所のみ）
-5. 実装と仕様のズレがあれば、どちらを正とするか明示されている
+1. 最新ZIPが添付されている（ZIP名・branch・commit一致）
+2. `docs/handovers/<...>.md` を読んだ（引き継ぎ正本）
+3. `docs/thread_logs/` の直近ログが追跡できる（Date/Branch/Commit/Zip/Scope）
+4. `docs/decision_log.md` 末尾10〜20件と矛盾しない
+5. Docs Gate 判定を実施し、必要なら spec_* を先に更新した
 
 ---
 

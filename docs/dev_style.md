@@ -135,6 +135,7 @@
 - 新スレの冒頭で「これは引き継ぎ本文であり、添削ではなく受領して進める」ことを明記する。
 - さらに「ファイル確認必須」「推測禁止」「不足なら要求」を冒頭ルールとして固定する。
 - 共有ファイルは **make_release_zip.py で作成した最新ZIPを唯一の正** とし、手作業での個別ファイル添付は原則しない。
+- 次スレ冒頭で Docs Gate が Yes の場合、docs更新は `docs/templates/prompt_docs_update.md` を唯一の手順として行う。
 
 #### 引き継ぎ（ファイル化が標準）
 - 引き継ぎ本文は `docs/handovers/YYYY-MM-DD_<branch>_<scope>.md` として保存し、ZIPに同梱する。
@@ -161,6 +162,7 @@
 - Decision Log 更新：`docs/templates/prompt_decision_log_update.md`
 - 引き継ぎ依頼：`docs/templates/handover_request.md`
 - 引き継ぎ本文：`docs/templates/handover_body.md`
+- docs 更新：`docs/templates/prompt_docs_update.md`
 
 ### 7-4. スレッド移行時の確認ルーチン（引き継ぎ受領ゲート）
 

@@ -1042,7 +1042,7 @@
   * docs/spec_models.md: （売上予測V1が依存する前提として参照リンク追記予定）
   * docs/spec_data_layer.md: （LT_DATA value_type / revenue列定義 または forecast列定義に必須追記予定）
   * docs/spec_evaluation.md: —
-* Status: 未反映
+* Status: spec反映済
 
 ## D-20260103-001 APP_BASE_DIR（LOCALAPPDATA）基準へ“寄せ切り”を標準運用とする
 

@@ -53,7 +53,7 @@
 | `revenue_oh` | int or float    | 当該 ASOF 時点での OH 宿泊売上（金額）              |
 
 ※ 実装上は `pandas.to_datetime`・`to_numeric` で変換し、欠損は NaT / NaN として扱う。
-※ revenue_oh は税別の日本円金額（int, 円単位）とする。
+※ revenue_oh は税抜の宿泊売上のみ（朝食・物販・手数料・税などは含めない）を表す。日本円（int, 円単位）とする。
 
 #### 一意性と重複処理
 
@@ -175,7 +175,7 @@ LT_DATA の出力ファイルは、互換性維持と多指標対応のため以
 
 - rooms：当該宿泊月の月累計 Rooms（従来どおり）
 - pax：当該宿泊月の月累計 Pax
-- revenue：当該宿泊月の月累計 Revenue
+- revenue：当該宿泊月の月累計 Revenue（税抜の宿泊売上のみ。朝食・物販・手数料・税などは含めない。単位：円）
 
 ---
 
@@ -201,7 +201,7 @@ LT_DATA の出力ファイルは、互換性維持と多指標対応のため以
   「**LT = lt の時点での、当該宿泊月の月累計（value_type）**」
   - rooms：月累計 Rooms
   - pax：月累計 Pax
-  - revenue：月累計 Revenue
+  - revenue：月累計 Revenue（税抜の宿泊売上のみ。朝食・物販・手数料・税などは含めない。単位：円）
   - 例：`lt=30` なら「宿泊月末から 30 日前 ASOF における、その宿泊月の月累計（value_type）」。
 
 - `lt = -1`：  

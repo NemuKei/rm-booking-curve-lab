@@ -93,6 +93,7 @@ Proposed file path: docs/handovers/YYYY-MM-DD_<branch>_<scope>.md
 - 共有物の唯一の正：make_release_zip.py で作成した最新ZIP
 - 推測禁止：不足は不足として明記し、質問は最大5つまで
 - 個人情報・企業機密を含むデータ/ログは同梱しない（ダミーのみ）
+- Docs Gate が Yes の場合、docs更新は docs/templates/prompt_docs_update.md を唯一の手順として行う（独自手順禁止）
 
 ---
 
@@ -101,7 +102,7 @@ Proposed file path: docs/handovers/YYYY-MM-DD_<branch>_<scope>.md
 2. `docs/handovers/<...>.md` を読んだ（引き継ぎ正本）
 3. `docs/thread_logs/` の直近ログが追跡できる（Date/Branch/Commit/Zip/Scope）
 4. `docs/decision_log.md` 末尾10〜20件と矛盾しない
-5. Docs Gate 判定を実施し、必要なら spec_* を先に更新した
+5. Docs Gate 判定を実施し、Yes の場合は docs/templates/prompt_docs_update.md に従って更新案を作成
 
 ---
 

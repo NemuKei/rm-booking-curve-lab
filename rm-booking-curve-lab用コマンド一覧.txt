@@ -49,8 +49,6 @@ python make_release_zip.py --with-output-samples
 python make_release_zip.py --profile full
 python make_release_zip.py --profile full --with-output-samples
 
-
-
 まず確認（壊さずプレビュー）
 python tools/assign_decision_ids.py --verbose
 

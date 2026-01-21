@@ -991,7 +991,7 @@
   * docs/spec_models.md: （rooms予測モデル：pace14_market の定義節に追記予定）
   * docs/spec_data_layer.md: —
   * docs/spec_evaluation.md: —
-* Status: 未反映
+* Status: 未反映（将来検討）
 
 ## D-20260120-003 clip適用順序はPF→market→（任意）最終ガードで固定する
 
@@ -1008,7 +1008,7 @@
   * docs/spec_models.md: （pace14/pace14_market の計算手順・注意点に追記予定）
   * docs/spec_data_layer.md: —
   * docs/spec_evaluation.md: —
-* Status: 未反映
+* Status: 未反映（将来検討）
 
 ## D-20260120-004 market_pace_rawはclipを入れ、初期値は0.95–1.05で固定する
 
@@ -1025,7 +1025,7 @@
   * docs/spec_models.md: （pace14_market の安全弁として1行追記予定）
   * docs/spec_data_layer.md: —
   * docs/spec_evaluation.md: —
-* Status: 未反映
+* Status: 未反映（将来検討）
 
 ## D-20260120-005 revenue定義（税抜宿泊売上のみ）はspec_data_layerに固定し、spec_modelsは参照導線にする
 

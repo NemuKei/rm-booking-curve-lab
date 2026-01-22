@@ -1,5 +1,8 @@
 Proposed file path: docs/thread_logs/2026-01-21_main_docs-governance.md
 
+* `Note: 本ファイルは改名済み（YYYY-MM-DD_HHMM 命名）。続編は legacy を参照：`
+  * `docs/thread_logs/2026-01-21_1722_main_docs-governance_legacy.md`
+
 # Thread Log
 
 ## Meta

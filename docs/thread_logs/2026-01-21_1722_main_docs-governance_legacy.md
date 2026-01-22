@@ -1,4 +1,12 @@
 このログは旧運用（ZIP一致等）を含み、D-20260121-009/010 により superseded。現行は decision_log / dev_style / START_HERE を参照
+* **現行根拠の参照先（3点）**
+
+  * `docs/decision_log.md`（D-009/D-010）
+  * `docs/dev_style.md`
+  * `docs/START_HERE.md`
+* **正本ログへのリンク**
+
+  * `docs/thread_logs/2026-01-21_1146_main_docs-governance.md`
 
 # Thread Log
 

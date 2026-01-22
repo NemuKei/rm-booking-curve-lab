@@ -7,6 +7,7 @@ PMSから取得した宿泊日×取得日の時系列データを、宿泊日×L
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import logging
 from pathlib import Path
 from typing import List
 
@@ -143,8 +144,9 @@ def build_lt_table_from_daily_snapshots(
     df = df.copy()
 
     # 日付を整形
-    df["stay_date"] = pd.to_datetime(df["stay_date"])
-    df["as_of_date"] = pd.to_datetime(df["as_of_date"])
+    df["stay_date"] = pd.to_datetime(df["stay_date"], errors="coerce").dt.normalize()
+    df["as_of_date"] = pd.to_datetime(df["as_of_date"], errors="coerce").dt.normalize()
+    df = df.dropna(subset=["stay_date", "as_of_date"])
 
     # value_col が NaN の行は落とす（0 は残す）
     if value_col not in df.columns:
@@ -210,6 +212,12 @@ def build_lt_data_from_daily_snapshots_for_month(
         value_col=value_col,
         max_lt=max_lt,
     )
+    year = int(target_month[:4])
+    month = int(target_month[4:6])
+    start_date = pd.Timestamp(year=year, month=month, day=1)
+    end_date = start_date + pd.offsets.MonthEnd(0)
+    full_idx = pd.date_range(start_date, end_date, freq="D", name="stay_date")
+    lt_table = lt_table.reindex(full_idx)
 
     # --- ACT(-1) を daily_snapshots から再計算して上書き ---
     if df_month is not None and not df_month.empty:
@@ -242,7 +250,14 @@ def build_lt_data_from_daily_snapshots_for_month(
                     lt_table.loc[:, -1] = np.nan
 
                 # D+ が存在する宿泊日のみ ACT(-1) を埋める
-                lt_table.loc[s_act.index, -1] = s_act
+                idx = s_act.index.intersection(lt_table.index)
+                lt_table.loc[idx, -1] = s_act.loc[idx]
+                if len(idx) < len(s_act):
+                    logger = logging.getLogger(__name__)
+                    missing = s_act.index.difference(lt_table.index)
+                    logger.warning(
+                        "ACT(-1) dates outside lt_table index: %s", list(missing)
+                    )
 
     lt_table = lt_table.reindex(columns=lt_desc_columns)
 

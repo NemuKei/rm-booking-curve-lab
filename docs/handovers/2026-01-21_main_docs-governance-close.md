@@ -102,6 +102,7 @@
 * `docs/decision_log.md`：末尾10〜20件の整合確認が必須。
 * `docs/thread_logs/2026-01-21_1146_main_docs-governance.md`：この整理作業のThread Log。
 * `tools/assign_decision_ids.py`：Decision Log のID採番・時系列ソート。
+* `docs/thread_logs/2026-01-21_1722_main_docs-governance_legacy.md`：1146の後続（旧運用を含むが履歴として参照）。冒頭のLEGACY宣言を読んだ上で参照。
 
 ---
 

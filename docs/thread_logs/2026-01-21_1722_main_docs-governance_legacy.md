@@ -1,3 +1,5 @@
+このログは旧運用（ZIP一致等）を含み、D-20260121-009/010 により superseded。現行は decision_log / dev_style / START_HERE を参照
+
 # Thread Log
 
 ## Meta

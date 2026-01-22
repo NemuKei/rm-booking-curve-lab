@@ -55,7 +55,7 @@
 * **重大バグ：なし**（このスレッドはdocs整備中心）
 * 注意点（軽微）:
 
-  * `docs/thread_logs/2026-01-21_main_docs-governance.md` の Meta に記載の ZIP/commit が、現在のアンカーZIP（fe21886）と一致しない場合があり得る。
+  * `docs/thread_logs/2026-01-21_1146_main_docs-governance.md` の Meta に記載の ZIP/commit が、現在のアンカーZIP（fe21886）と一致しない場合があり得る。
 
     * これは「Thread Log作成時点のメタ」としては整合するが、運用上混乱するなら次スレで扱いを統一（更新 or 追記）する。
 
@@ -100,7 +100,7 @@
 * `docs/templates/prompt_thread_log_generate.md`：Thread Log生成テンプレ（アンカーZIP＝作業開始点）。
 * `docs/templates/prompt_decision_log_update.md`：Decision Log更新テンプレ（見出し階層をDecision Logに合わせる）。
 * `docs/decision_log.md`：末尾10〜20件の整合確認が必須。
-* `docs/thread_logs/2026-01-21_main_docs-governance.md`：この整理作業のThread Log。
+* `docs/thread_logs/2026-01-21_1146_main_docs-governance.md`：この整理作業のThread Log。
 * `tools/assign_decision_ids.py`：Decision Log のID採番・時系列ソート。
 
 ---
@@ -146,5 +146,5 @@
 
 1. `docs/decision_log.md` 内で「反映済みのはずだが Status が未反映」のものが見つかった場合、次スレで **Status更新までをP0に含める** でOKですか？（Yes/No）
 回答：OK
-2. `docs/thread_logs/2026-01-21_main_docs-governance.md` の Meta がアンカーZIPと異なる点は「作成時点メタ」として許容し、**原則は更新しない**運用で確定でOKですか？（Yes/No）
+2. `docs/thread_logs/2026-01-21_1146_main_docs-governance.md` の Meta がアンカーZIPと異なる点は「作成時点メタ」として許容し、**原則は更新しない**運用で確定でOKですか？（Yes/No）
 回答：Yes

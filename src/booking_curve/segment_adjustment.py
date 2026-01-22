@@ -1,11 +1,28 @@
 from __future__ import annotations
 
 from pathlib import Path
+import logging
 
 import numpy as np
 import pandas as pd
 
 from booking_curve.config import OUTPUT_DIR
+
+logger = logging.getLogger(__name__)
+_CALENDAR_WARNED = False
+
+
+def _warn_calendar_missing(reason: str, hotel_tag: str, path: Path) -> None:
+    global _CALENDAR_WARNED
+    if _CALENDAR_WARNED:
+        return
+    logger.warning(
+        "calendar_features missing or unreadable (%s). Using neutral adjustment. hotel_tag=%s path=%s",
+        reason,
+        hotel_tag,
+        path,
+    )
+    _CALENDAR_WARNED = True
 
 
 def _load_calendar(hotel_tag: str) -> pd.DataFrame:
@@ -14,7 +31,14 @@ def _load_calendar(hotel_tag: str) -> pd.DataFrame:
     date 列を DatetimeIndex にして返す。
     """
     path = Path(OUTPUT_DIR) / f"calendar_features_{hotel_tag}.csv"
-    cal = pd.read_csv(path)
+    try:
+        cal = pd.read_csv(path)
+    except FileNotFoundError:
+        _warn_calendar_missing("file_not_found", hotel_tag, path)
+        return pd.DataFrame(index=pd.DatetimeIndex([]))
+    except pd.errors.EmptyDataError:
+        _warn_calendar_missing("empty_file", hotel_tag, path)
+        return pd.DataFrame(index=pd.DatetimeIndex([]))
     cal["date"] = pd.to_datetime(cal["date"])
     cal = cal.set_index("date")
     return cal

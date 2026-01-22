@@ -595,15 +595,22 @@ def _merge_pax_forecast_direct(
     )
     out_df = out_df.join(pax_out[["actual_pax", "forecast_pax", "projected_pax"]])
 
-    projected_rooms = pd.to_numeric(out_df.get("projected_rooms"), errors="coerce")
+    projected_rooms_raw = out_df.get("projected_rooms")
+    if projected_rooms_raw is None:
+        projected_rooms_raw = pd.Series(pd.NA, index=out_df.index)
+    projected_rooms = pd.to_numeric(projected_rooms_raw, errors="coerce").astype(float)
     upper_limits = projected_rooms * PAX_PER_ROOM_MAX
+    upper_limits = upper_limits.clip(lower=0).reindex(out_df.index)
 
     if pax_capacity is not None:
         pax_cap_series = pd.Series(float(pax_capacity), index=out_df.index, dtype=float)
-        upper_limits = pd.concat([upper_limits, pax_cap_series], axis=1).min(axis=1)
+        upper_limits = pd.concat([upper_limits, pax_cap_series], axis=1).min(axis=1).astype(float)
 
     for col in ("forecast_pax", "projected_pax"):
-        series = pd.to_numeric(out_df.get(col), errors="coerce")
+        series_raw = out_df.get(col)
+        if series_raw is None:
+            series_raw = pd.Series(pd.NA, index=out_df.index)
+        series = pd.to_numeric(series_raw, errors="coerce").astype(float)
         series = series.clip(lower=0)
         series = series.clip(upper=upper_limits)
         out_df[col] = _round_int_series(series)

@@ -162,6 +162,29 @@
 
 ---
 
+## Phase 2.x: 安定化（Phase3着手前のバグ修正）
+
+### 目的
+- Phase3へ進む前に「予測が回る」「落ちない」「表示が正しい」を満たす。
+
+### タスク
+- [ ] **P2.x-01** recent90系：calendar_features CSV欠損時にエラーにせずフォールバックする
+  - 対象：`src/booking_curve/segment_adjustment.py`（`_load_calendar`）
+  - 期待：calendar_features が無い場合でも forecast を継続（adjustmentは無効化/係数=1.0）
+  - 欠損レポート（ops）に WARN で理由を残す（可能なら）
+
+- [ ] **P2.x-02** LT_ALL：一部月の失敗で全体停止しない（スキップ＋失敗ログ化）
+  - 対象：`src/run_build_lt_csv.py` / `src/booking_curve/gui_backend.py`
+  - 期待：LT_ALL 実行で「失敗月一覧」を残し、成功分は出力される
+  - 仕様リンク：`spec_data_layer.md` の Raw Parse Failures / missing ops の扱いに整合
+
+- [ ] **P2.x-03** TopDownRevPAR：月次RevPAR算出が forecast と一致することを保証（ズレ原因の特定＋修正）
+  - 対象：`src/booking_curve/gui_backend.py`（`_get_projected_monthly_revpar`, `build_topdown_revpar_panel`）
+  - 期待：同一 as_of / 同一モデルで、TopDown表示のRevPARが「forecast_revenue合計÷(cap×days)」と一致
+  - 追加：不一致時に診断情報（対象CSV名・集計ロジック・日付欠損有無）を表示/ログに残す
+
+---
+
 ## Phase 3: ペース比較＋料金レコメンド（Decision Support）
 
 ### 目的

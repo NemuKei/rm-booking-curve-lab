@@ -23,7 +23,7 @@
 - user も各発言の先頭に **U-001 / U-002 ...** を付ける（推奨）
 
 ### ハードリミット（強制）
-- **A-25 到達で“締めモード”**：議論停止 → Thread Log / Decision Log / Handover を作って終了
+- **A-25 到達で“締めモード”**：議論停止 → Closeout Pack（docs/templates/prompt_closeout_pack.md）を作って終了
 - **A-10 / A-20 でチェックポイント**：継続するなら、目的/スコープ/完了条件を再掲して固定
 
 ### 逸脱検知（強制）

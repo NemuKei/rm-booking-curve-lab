@@ -61,10 +61,12 @@
 
 スレッドを閉じる前に、以下を残します（最低限）。
 
-1. Thread Log を追加：`docs/thread_logs/`
-2. 引き継ぎ（正本）を追加：`docs/handovers/`
-3. Decision Log の更新（必要があれば）：`docs/decision_log.md`
-4. make_release_zip.py で最新ZIPを作成し、それを唯一の共有物とする
+1. Closeout Pack を作成（1回の依頼でまとめて生成）
+   - 引き継ぎ（正本）：`docs/handovers/`
+   - Thread Log：`docs/thread_logs/`
+   - Decision Log 追記（必要な場合のみ）：`docs/decision_log.md`
+2. make_release_zip.py でアンカーZIPを作成し、それを唯一の共有物とする
+※スレッド終了時に作成するアンカーZIPは、次スレッド開始時点のアンカーZIP（Start Anchor）として引き継ぐ。以後の参照の唯一の正はそのアンカーZIPで固定する。
 
 ---
 
@@ -73,6 +75,7 @@
 - Thread Log 生成：`docs/templates/prompt_thread_log_generate.md`
 - Decision Log 更新：`docs/templates/prompt_decision_log_update.md`
 - docs 更新：`docs/templates/prompt_docs_update.md`
+- Closeout Pack（1本化）：`docs/templates/prompt_closeout_pack.md`
 - 引き継ぎ依頼：`docs/templates/handover_request.md`
 - 引き継ぎ本文（型）：`docs/templates/handover_body.md`
 - スレッド冒頭テンプレ（貼り付け用・任意）：`docs/templates/thread_start.md`（ある場合）

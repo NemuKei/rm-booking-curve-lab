@@ -1255,6 +1255,7 @@ def build_topdown_revpar_panel(
     latest_asof_date: str | None = None,
     model_key: str,
     rooms_cap: float,
+    forecast_cap: float | None = None,
     phase_factors: dict[str, float] | None,
     phase_clip_pct: float | None,
     forecast_horizon_months: int = 3,
@@ -1362,6 +1363,7 @@ def build_topdown_revpar_panel(
     band_month_candidates.update(rotation_month_strs)
     computable_months: list[str] = []
     skipped_months: dict[str, str] = {}
+    cap_for_forecast = forecast_cap if forecast_cap is not None else rooms_cap
     for month_str in forecast_month_strs_range:
         try:
             run_forecast_for_gui(
@@ -1369,7 +1371,7 @@ def build_topdown_revpar_panel(
                 target_months=[month_str],
                 as_of_date=as_of_date,
                 gui_model=model_key,
-                capacity=None,
+                capacity=cap_for_forecast,
                 pax_capacity=None,
                 phase_factors=phase_factors,
                 phase_clip_pct=phase_clip_pct,

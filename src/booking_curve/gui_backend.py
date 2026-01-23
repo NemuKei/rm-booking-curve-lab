@@ -1153,14 +1153,13 @@ def _compute_monthly_forecast_basis_from_daily_table(
     phase_factors: dict[str, float] | None,
     phase_clip_pct: float | None,
 ) -> dict[str, float | int | None]:
-    df = get_daily_forecast_table(
+    df = _load_daily_df_for_topdown(
         hotel_tag=hotel_tag,
         target_month=target_month,
         as_of_date=as_of_date,
         gui_model=model_key,
         capacity=capacity,
         pax_capacity=None,
-        apply_monthly_rounding=True,
     )
     if df is None or df.empty or "stay_date" not in df.columns:
         raise ValueError("daily forecast table missing")
@@ -1179,13 +1178,21 @@ def _compute_monthly_forecast_basis_from_daily_table(
         asof_ts = stay_dates.min()
 
     mask_past = stay_dates < asof_ts
-    rooms_actual = daily_rows.get("actual_rooms_display", daily_rows.get("actual_rooms"))
-    rooms_asof = daily_rows.get("asof_oh_rooms_display", daily_rows.get("asof_oh_rooms"))
-    rooms_forecast = daily_rows.get("forecast_rooms_display", daily_rows.get("forecast_rooms"))
+    rooms_actual = daily_rows.get("actual_rooms")
+    rooms_asof = daily_rows.get("asof_oh_rooms")
+    rooms_forecast = daily_rows.get("forecast_rooms")
     rev_forecast = daily_rows.get("forecast_revenue")
     rev_oh = daily_rows.get("revenue_oh_now")
     if rooms_forecast is None or rev_forecast is None:
         raise ValueError("daily forecast table missing forecast rooms/revenue")
+
+    forecast_rooms_total = float(pd.to_numeric(rooms_forecast, errors="coerce").fillna(0).sum())
+    forecast_rev_total = float(pd.to_numeric(rev_forecast, errors="coerce").fillna(0).sum())
+    days = int(stay_dates.notna().sum())
+    denom_cap = capacity * days
+    forecast_revpar = forecast_rev_total / denom_cap if denom_cap > 0 else None
+    forecast_adr = forecast_rev_total / forecast_rooms_total if forecast_rooms_total > 0 else None
+    forecast_occ = forecast_rooms_total / denom_cap if denom_cap > 0 else None
 
     rooms_past = rooms_actual.where(rooms_actual.notna(), rooms_asof)
     rooms_past = rooms_past.where(rooms_past.notna(), rooms_forecast)
@@ -1200,12 +1207,15 @@ def _compute_monthly_forecast_basis_from_daily_table(
 
     basis_rooms = float(pd.to_numeric(basis_rooms_series, errors="coerce").fillna(0).sum())
     basis_rev = float(pd.to_numeric(basis_rev_series, errors="coerce").fillna(0).sum())
-    days = int(stay_dates.notna().sum())
-    denom_cap = capacity * days
     basis_revpar = basis_rev / denom_cap if denom_cap > 0 else None
     basis_adr = basis_rev / basis_rooms if basis_rooms > 0 else None
     basis_occ = basis_rooms / denom_cap if denom_cap > 0 else None
     return {
+        "forecast_rev": forecast_rev_total,
+        "forecast_rooms": forecast_rooms_total,
+        "forecast_revpar": forecast_revpar,
+        "forecast_adr": forecast_adr,
+        "forecast_occ": forecast_occ,
         "basis_rev": basis_rev,
         "basis_rooms": basis_rooms,
         "basis_revpar": basis_revpar,
@@ -1214,6 +1224,27 @@ def _compute_monthly_forecast_basis_from_daily_table(
         "days": days,
         "capacity": capacity,
     }
+
+
+def _load_daily_df_for_topdown(
+    *,
+    hotel_tag: str,
+    target_month: str,
+    as_of_date: str,
+    gui_model: str,
+    capacity: float,
+    pax_capacity: float | None,
+) -> pd.DataFrame:
+    daily_df = get_daily_forecast_table(
+        hotel_tag=hotel_tag,
+        target_month=target_month,
+        as_of_date=as_of_date,
+        gui_model=gui_model,
+        capacity=capacity,
+        pax_capacity=pax_capacity,
+        apply_monthly_rounding=False,
+    )
+    return daily_df.copy(deep=True)
 
 
 def build_topdown_revpar_panel(
@@ -1378,7 +1409,7 @@ def build_topdown_revpar_panel(
                 f"INCOMPLETE: {_summarize_forecast_error(str(exc))}",
             )
             continue
-        revpar_value = basis.get("basis_revpar")
+        revpar_value = basis.get("forecast_revpar")
         if revpar_value is not None:
             revpar_value = float(revpar_value)
         forecast_basis_map[month_str] = basis
@@ -1673,6 +1704,12 @@ def build_topdown_revpar_panel(
             {
                 "month": month_str,
                 "revpar": revpar_value,
+                "forecast_adr": basis.get("forecast_adr"),
+                "forecast_occ": basis.get("forecast_occ"),
+                "forecast_rooms": basis.get("forecast_rooms"),
+                "forecast_rev": basis.get("forecast_rev"),
+                "capacity": basis.get("capacity"),
+                "days": basis.get("days"),
                 "basis_adr": basis.get("basis_adr"),
                 "basis_occ": basis.get("basis_occ"),
                 "basis_rev": basis.get("basis_rev"),

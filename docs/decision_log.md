@@ -622,6 +622,7 @@
   * docs/spec_data_layer.md: （CSVは生値であることの明記）
   * docs/spec_evaluation.md: （評価は生値ベースであることの明記）
 * Status: 未反映
+※初期丸めは**rooms/pax=50単位**に変更（2026/1/23）
 
 ## D-20260105-010 ベストモデル評価基準はM-1_END固定を優先し、UIは2段表示を採用
 

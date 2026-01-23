@@ -15,7 +15,7 @@ from datetime import date, datetime, timedelta
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
 import pandas as pd
@@ -554,26 +554,43 @@ class BookingCurveApp(tk.Tk):
         asof_min: pd.Timestamp,
         asof_max: pd.Timestamp,
     ) -> bool:
-        asof_max_str = asof_max.strftime("%Y-%m-%d")
-
         try:
-            report_path = run_missing_check_for_gui(hotel_tag)
+            summary = self._compute_missing_summary_for_range_rebuild(
+                hotel_tag,
+                asof_min,
+                asof_max,
+            )
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror("欠損チェック失敗", f"欠損チェックの実行に失敗しました。\n{exc}")
             return False
 
-        try:
-            df_report = pd.read_csv(report_path, dtype=str)
-        except Exception as exc:  # noqa: BLE001
-            messagebox.showerror("欠損チェック失敗", f"欠損レポートの読み込みに失敗しました。\n{exc}")
+        if summary is None:
+            return True
+
+        proceed = messagebox.askokcancel("欠損警告", summary["message"])
+        if not proceed:
             return False
 
+        self._set_missing_warning_ack(hotel_tag, summary["asof_max_str"])
+        self._set_missing_warning_sig_ack(hotel_tag, summary["signature"])
+        return True
+
+    def _compute_missing_summary_for_range_rebuild(
+        self,
+        hotel_tag: str,
+        asof_min: pd.Timestamp,
+        asof_max: pd.Timestamp,
+    ) -> dict[str, object] | None:
+        asof_max_str = asof_max.strftime("%Y-%m-%d")
+        report_path = run_missing_check_for_gui(hotel_tag)
+        df_report = pd.read_csv(report_path, dtype=str)
+
         if df_report.empty:
-            return True
+            return None
 
         kind_series = df_report.get("kind", pd.Series([], dtype=str))
         if kind_series.empty:
-            return True
+            return None
 
         asof_max_ts = pd.Timestamp(asof_max).normalize()
         asof_min_ts = pd.Timestamp(asof_min).normalize()
@@ -597,10 +614,10 @@ class BookingCurveApp(tk.Tk):
         )
 
         if raw_missing_dates.isna().all() and asof_missing_dates.isna().all():
-            return True
+            return None
 
         if raw_missing_count == 0 and asof_missing_count == 0:
-            return True
+            return None
 
         asof_missing_list = sorted(
             {
@@ -621,7 +638,7 @@ class BookingCurveApp(tk.Tk):
         current_sig = hashlib.sha1(signature_payload.encode("utf-8")).hexdigest()
         saved_sig = self._get_missing_warning_sig_ack(hotel_tag)
         if saved_sig == current_sig:
-            return True
+            return None
 
         message = (
             "直近レンジ内の欠損が検出されました。\n"
@@ -630,14 +647,12 @@ class BookingCurveApp(tk.Tk):
             f"レポート: {report_path}\n\n"
             "続行しますか？"
         )
-
-        proceed = messagebox.askokcancel("欠損警告", message)
-        if not proceed:
-            return False
-
-        self._set_missing_warning_ack(hotel_tag, asof_max_str)
-        self._set_missing_warning_sig_ack(hotel_tag, current_sig)
-        return True
+        return {
+            "message": message,
+            "report_path": report_path,
+            "asof_max_str": asof_max_str,
+            "signature": current_sig,
+        }
 
     def _on_hotel_var_changed(self, *args) -> None:
         """
@@ -2890,6 +2905,13 @@ class BookingCurveApp(tk.Tk):
             variable=self._topdown_show_band_prev_var,
             command=self._rerender_topdown_if_panel_exists,
         ).grid(row=2, column=0, sticky="e")
+        self._topdown_show_basis_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            right_controls,
+            text="basis列を表示 (bADR/bOcc)",
+            variable=self._topdown_show_basis_var,
+            command=self._rerender_topdown_if_panel_exists,
+        ).grid(row=3, column=0, sticky="e")
 
         ttk.Label(left_controls, text="表示モード:").grid(row=1, column=0, sticky="w", pady=(4, 0))
         self._topdown_view_mode_var = tk.StringVar(value="年度固定")
@@ -3490,21 +3512,7 @@ class BookingCurveApp(tk.Tk):
         text = getattr(self, "_topdown_diag_text", None)
         if text is None:
             return
-        show_basis = False
-        if isinstance(diagnostics, list):
-            for row in diagnostics:
-                basis_adr = row.get("basis_adr")
-                basis_occ = row.get("basis_occ")
-                forecast_adr = row.get("forecast_adr")
-                forecast_occ = row.get("forecast_occ")
-                if basis_adr is not None and forecast_adr is not None:
-                    if abs(float(basis_adr) - float(forecast_adr)) > 0.5:
-                        show_basis = True
-                        break
-                if basis_occ is not None and forecast_occ is not None:
-                    if abs(float(basis_occ) - float(forecast_occ)) > 0.05:
-                        show_basis = True
-                        break
+        show_basis = getattr(self, "_topdown_show_basis_var", tk.BooleanVar(value=False)).get()
         lines = []
         header_items = [
             f"{'YYYYMM':<8}",
@@ -5296,6 +5304,102 @@ class BookingCurveApp(tk.Tk):
         self.btn_build_lt.state(state)
         self.btn_build_lt_range.state(state)
 
+    def _open_lt_prepare_modal(self, message: str) -> None:
+        modal = getattr(self, "_lt_prepare_modal", None)
+        if modal is not None and modal.winfo_exists():
+            label_var = getattr(self, "_lt_prepare_label_var", None)
+            if label_var is not None:
+                label_var.set(message)
+            return
+
+        modal = tk.Toplevel(self)
+        modal.title("LT_DATA準備中")
+        modal.transient(self)
+        modal.grab_set()
+        modal.resizable(False, False)
+        modal.protocol("WM_DELETE_WINDOW", lambda: None)
+
+        label_var = tk.StringVar(value=message)
+        ttk.Label(modal, textvariable=label_var).pack(padx=16, pady=(12, 6))
+        progress = ttk.Progressbar(modal, mode="indeterminate", length=260)
+        progress.pack(padx=16, pady=(0, 12))
+        progress.start(10)
+
+        modal.update_idletasks()
+        w = modal.winfo_width()
+        h = modal.winfo_height()
+        parent_x = self.winfo_rootx()
+        parent_y = self.winfo_rooty()
+        parent_w = self.winfo_width()
+        parent_h = self.winfo_height()
+        x = parent_x + (parent_w - w) // 2
+        y = parent_y + (parent_h - h) // 2
+        modal.geometry(f"{w}x{h}+{x}+{y}")
+
+        self._lt_prepare_modal = modal
+        self._lt_prepare_label_var = label_var
+        self._lt_prepare_progress = progress
+
+    def _close_lt_prepare_modal(self) -> None:
+        modal = getattr(self, "_lt_prepare_modal", None)
+        if modal is None or not modal.winfo_exists():
+            return
+        progress = getattr(self, "_lt_prepare_progress", None)
+        if progress is not None:
+            progress.stop()
+        try:
+            modal.grab_release()
+        except tk.TclError:
+            pass
+        modal.destroy()
+        self._lt_prepare_modal = None
+        self._lt_prepare_label_var = None
+        self._lt_prepare_progress = None
+
+    def _run_lt_data_prepare(
+        self,
+        *,
+        prepare_func: Callable[[], dict[str, object]],
+        on_ready: Callable[[dict[str, object]], None],
+        error_title: str,
+    ) -> None:
+        if getattr(self, "_lt_prepare_running", False):
+            messagebox.showwarning("処理中", "LT_DATA生成の準備処理が実行中です。完了をお待ちください。")
+            return
+
+        self._lt_prepare_running = True
+        self._set_lt_data_buttons_state(False)
+        self.lt_data_status_var.set("準備中...")
+        self._open_lt_prepare_modal("準備中...")
+
+        token = getattr(self, "_lt_prepare_token", 0) + 1
+        self._lt_prepare_token = token
+
+        def _worker() -> None:
+            try:
+                result = prepare_func()
+                error = None
+            except Exception as exc:  # noqa: BLE001
+                result = {}
+                error = exc
+                logging.exception("LT_DATA生成の準備中にエラーが発生しました")
+
+            def _finish() -> None:
+                if token != getattr(self, "_lt_prepare_token", 0):
+                    return
+                self._lt_prepare_running = False
+                self._close_lt_prepare_modal()
+                if error is not None:
+                    self._set_lt_data_buttons_state(True)
+                    self.lt_data_status_var.set("")
+                    messagebox.showerror(error_title, f"LT_DATA生成の準備中にエラーが発生しました。\n{error}")
+                    return
+                on_ready(result)
+
+            self.after(0, _finish)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
     def _start_lt_data_build_thread(
         self,
         *,
@@ -5407,6 +5511,10 @@ class BookingCurveApp(tk.Tk):
             )
 
     def _on_build_lt_data(self) -> None:
+        if self._lt_data_running or getattr(self, "_lt_prepare_running", False):
+            messagebox.showwarning("処理中", "LT_DATA生成は実行中です。完了をお待ちください。")
+            return
+
         hotel_tag = self.bc_hotel_var.get()
         base_ym = self.bc_month_var.get().strip()
 
@@ -5431,42 +5539,66 @@ class BookingCurveApp(tk.Tk):
 
         lt_source = self.lt_source_var.get() or "daily_snapshots"
         update_snapshots = self.update_daily_snapshots_var.get()
-        snapshots_mode = None
-        buffer_days = None
-        if update_snapshots and lt_source == "daily_snapshots":
-            if not target_months:
-                messagebox.showwarning(
-                    "LT_DATA生成エラー",
-                    "対象月が未指定のため、daily snapshots の更新をスキップします。",
-                )
-                return
-            plan = build_range_rebuild_plan_for_gui(
-                hotel_tag,
-                buffer_days=30,
-                lookahead_days=120,
+        if update_snapshots and lt_source == "daily_snapshots" and not target_months:
+            messagebox.showwarning(
+                "LT_DATA生成エラー",
+                "対象月が未指定のため、daily snapshots の更新をスキップします。",
             )
-            if not self._precheck_missing_report_for_range_rebuild(
-                hotel_tag,
-                plan["asof_min"],
-                plan["asof_max"],
-            ):
-                return
-            snapshots_mode = "RANGE_REBUILD"
-            buffer_days = 30
+            return
 
         success_message = (
             "LT_DATA CSV の生成が完了しました。\n"
             "対象月: {months}\n"
             "必要に応じて「最新に反映」ボタンで ASOF を更新してください。"
         )
-        self._start_lt_data_build_thread(
-            hotel_tag=hotel_tag,
-            target_months=target_months,
-            lt_source=lt_source,
-            update_snapshots=update_snapshots,
-            snapshots_mode=snapshots_mode,
-            buffer_days=buffer_days,
-            success_message=success_message,
+
+        def _prepare() -> dict[str, object]:
+            result: dict[str, object] = {
+                "snapshots_mode": None,
+                "buffer_days": None,
+                "missing_summary": None,
+            }
+            if update_snapshots and lt_source == "daily_snapshots":
+                plan = build_range_rebuild_plan_for_gui(
+                    hotel_tag,
+                    buffer_days=30,
+                    lookahead_days=120,
+                )
+                missing_summary = self._compute_missing_summary_for_range_rebuild(
+                    hotel_tag,
+                    plan["asof_min"],
+                    plan["asof_max"],
+                )
+                result["snapshots_mode"] = "RANGE_REBUILD"
+                result["buffer_days"] = 30
+                result["missing_summary"] = missing_summary
+            return result
+
+        def _on_ready(result: dict[str, object]) -> None:
+            missing_summary = result.get("missing_summary")
+            if isinstance(missing_summary, dict):
+                proceed = messagebox.askokcancel("欠損警告", missing_summary["message"])
+                if not proceed:
+                    self._set_lt_data_buttons_state(True)
+                    self.lt_data_status_var.set("")
+                    return
+                self._set_missing_warning_ack(hotel_tag, missing_summary["asof_max_str"])
+                self._set_missing_warning_sig_ack(hotel_tag, missing_summary["signature"])
+
+            self._start_lt_data_build_thread(
+                hotel_tag=hotel_tag,
+                target_months=target_months,
+                lt_source=lt_source,
+                update_snapshots=update_snapshots,
+                snapshots_mode=result.get("snapshots_mode"),
+                buffer_days=result.get("buffer_days"),
+                success_message=success_message,
+            )
+
+        self._run_lt_data_prepare(
+            prepare_func=_prepare,
+            on_ready=_on_ready,
+            error_title="LT_DATA生成エラー",
         )
 
     def _ask_month_range(self, initial_start: str, initial_end: str | None = None) -> tuple[str, str] | None:
@@ -5527,6 +5659,10 @@ class BookingCurveApp(tk.Tk):
         return result
 
     def _on_build_lt_data_range(self) -> None:
+        if self._lt_data_running or getattr(self, "_lt_prepare_running", False):
+            messagebox.showwarning("処理中", "LT_DATA生成は実行中です。完了をお待ちください。")
+            return
+
         hotel_tag = self.bc_hotel_var.get()
         default_ym = self.bc_month_var.get().strip()
 
@@ -5578,26 +5714,40 @@ class BookingCurveApp(tk.Tk):
 
         lt_source = self.lt_source_var.get() or "daily_snapshots"
         update_snapshots = self.update_daily_snapshots_var.get()
-        snapshots_mode = None
-        buffer_days = None
-        if update_snapshots and lt_source == "daily_snapshots":
-            if not target_months:
-                messagebox.showwarning(
-                    "LT_DATA生成エラー",
-                    "対象月が未指定のため、daily snapshots の更新をスキップします。",
-                )
-                return
-            snapshots_mode = "FULL_MONTHS"
+        if update_snapshots and lt_source == "daily_snapshots" and not target_months:
+            messagebox.showwarning(
+                "LT_DATA生成エラー",
+                "対象月が未指定のため、daily snapshots の更新をスキップします。",
+            )
+            return
 
         success_message = "LT_DATA CSV の生成が完了しました。\n対象月: {months}"
-        self._start_lt_data_build_thread(
-            hotel_tag=hotel_tag,
-            target_months=target_months,
-            lt_source=lt_source,
-            update_snapshots=update_snapshots,
-            snapshots_mode=snapshots_mode,
-            buffer_days=buffer_days,
-            success_message=success_message,
+
+        def _prepare() -> dict[str, object]:
+            snapshots_mode = None
+            if update_snapshots and lt_source == "daily_snapshots":
+                snapshots_mode = "FULL_MONTHS"
+            return {
+                "snapshots_mode": snapshots_mode,
+                "buffer_days": None,
+                "missing_summary": None,
+            }
+
+        def _on_ready(result: dict[str, object]) -> None:
+            self._start_lt_data_build_thread(
+                hotel_tag=hotel_tag,
+                target_months=target_months,
+                lt_source=lt_source,
+                update_snapshots=update_snapshots,
+                snapshots_mode=result.get("snapshots_mode"),
+                buffer_days=result.get("buffer_days"),
+                success_message=success_message,
+            )
+
+        self._run_lt_data_prepare(
+            prepare_func=_prepare,
+            on_ready=_on_ready,
+            error_title="LT_DATA生成エラー",
         )
 
     def _on_draw_booking_curve(self) -> None:

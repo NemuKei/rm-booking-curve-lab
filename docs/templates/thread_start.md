@@ -31,5 +31,5 @@
   1) 直ちに締めモード（ログ作成）へ
   2) 新スレッド移行（アンカーZIP＋handoverファイル指定）
 
-## 4) 次スレ冒頭 Docs Gate
+## 4) スレ冒頭 Docs Gate
 - Docs Gate が Yes の場合、docs更新は `docs/templates/prompt_docs_update.md` を唯一の手順として行う

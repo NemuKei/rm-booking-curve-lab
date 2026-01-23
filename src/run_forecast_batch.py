@@ -10,9 +10,9 @@ import pandas as pd
 from booking_curve.config import OUTPUT_DIR
 from booking_curve.forecast_simple import (
     compute_market_pace_7d,
+    forecast_final_from_avg,
     forecast_final_from_pace14,
     forecast_final_from_pace14_market,
-    forecast_final_from_avg,
     forecast_month_from_recent90,
     moving_average_3months,
     moving_average_recent_90days,
@@ -188,9 +188,7 @@ def _resolve_lt_csv_path(month: str, hotel_tag: str, value_type: str) -> Path:
         if path.exists():
             return path
 
-    raise FileNotFoundError(
-        f"LT_DATA csv not found for {value_type}: month={month} hotel={hotel_tag}"
-    )
+    raise FileNotFoundError(f"LT_DATA csv not found for {value_type}: month={month} hotel={hotel_tag}")
 
 
 def load_lt_csv(month: str, hotel_tag: str, value_type: str = "rooms") -> pd.DataFrame:
@@ -475,9 +473,7 @@ def _round_int_series(series: pd.Series) -> pd.Series:
     return pd.Series(result, index=series.index, name=series.name)
 
 
-def _prepare_output(
-    df_target: pd.DataFrame, forecast: dict[pd.Timestamp, float], as_of_ts: pd.Timestamp
-) -> pd.DataFrame:
+def _prepare_output(df_target: pd.DataFrame, forecast: dict[pd.Timestamp, float], as_of_ts: pd.Timestamp) -> pd.DataFrame:
     result = pd.Series(forecast, dtype=float)
     result.sort_index(inplace=True)
 
@@ -687,9 +683,7 @@ def _append_revenue_columns(
     return out_df
 
 
-def _merge_pace14_details(
-    out_df: pd.DataFrame, detail_df: pd.DataFrame, *, prefix: str
-) -> pd.DataFrame:
+def _merge_pace14_details(out_df: pd.DataFrame, detail_df: pd.DataFrame, *, prefix: str) -> pd.DataFrame:
     if detail_df is None or detail_df.empty:
         return out_df
     detail_df = detail_df.copy()

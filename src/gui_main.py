@@ -3027,6 +3027,8 @@ class BookingCurveApp(tk.Tk):
             messagebox.showerror("エラー", "RevPAR計算用キャパシティが取得できません。")
             return
 
+        forecast_cap_value, _, _ = self._get_daily_caps_for_hotel(hotel)
+
         latest_asof_raw = (self.df_latest_asof_var.get() or "").strip()
         latest_asof_ts = None
         latest_asof_for_panel = None
@@ -3070,6 +3072,7 @@ class BookingCurveApp(tk.Tk):
                     as_of_date=asof,
                     model_key=model,
                     rooms_cap=rooms_cap_value,
+                    forecast_cap=forecast_cap_value,
                     phase_factors=phase_factors,
                     phase_clip_pct=clip_pct,
                     forecast_horizon_months=horizon,

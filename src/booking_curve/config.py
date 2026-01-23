@@ -93,8 +93,8 @@ REQUIRED_HOTEL_KEYS = (
 )
 
 DEFAULT_ROUNDING_UNITS = {
-    "rooms": 100,
-    "pax": 100,
+    "rooms": 50,
+    "pax": 50,
     "revenue": 100000,
 }
 
@@ -133,9 +133,7 @@ def _copy_if_missing(src: Path, dst: Path) -> None:
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
     except Exception as exc:
-        _record_runtime_init_error(
-            f"Failed to copy template file: src={src} dst={dst} error={exc}"
-        )
+        _record_runtime_init_error(f"Failed to copy template file: src={src} dst={dst} error={exc}")
 
 
 def _initialize_runtime_files() -> None:
@@ -194,9 +192,7 @@ def _load_local_overrides() -> dict[str, dict[str, Any]]:
 
     version = raw.get("version")
     if version not in (None, LOCAL_OVERRIDES_VERSION):
-        LOGGER.warning(
-            "Unsupported local overrides version at %s: %s", overrides_path, version
-        )
+        LOGGER.warning("Unsupported local overrides version at %s: %s", overrides_path, version)
 
     hotels = raw.get("hotels", {})
     if hotels is None:
@@ -208,9 +204,7 @@ def _load_local_overrides() -> dict[str, dict[str, Any]]:
     normalized: dict[str, dict[str, Any]] = {}
     for hotel_id, overrides in hotels.items():
         if not isinstance(overrides, dict):
-            LOGGER.warning(
-                "Local overrides for hotel_id=%s must be an object: %s", hotel_id, overrides_path
-            )
+            LOGGER.warning("Local overrides for hotel_id=%s must be an object: %s", hotel_id, overrides_path)
             continue
         normalized[hotel_id] = dict(overrides)
     return normalized
@@ -245,9 +239,7 @@ def load_phase_overrides() -> dict[str, dict[str, dict[str, str]]]:
 
     version = raw.get("version")
     if version not in (None, PHASE_OVERRIDES_VERSION):
-        LOGGER.warning(
-            "Unsupported phase overrides version at %s: %s", overrides_path, version
-        )
+        LOGGER.warning("Unsupported phase overrides version at %s: %s", overrides_path, version)
 
     hotels = raw.get("hotels", {})
     if hotels is None:
@@ -259,9 +251,7 @@ def load_phase_overrides() -> dict[str, dict[str, dict[str, str]]]:
     normalized: dict[str, dict[str, dict[str, str]]] = {}
     for hotel_id, overrides in hotels.items():
         if not isinstance(overrides, dict):
-            LOGGER.warning(
-                "Phase overrides for hotel_id=%s must be an object: %s", hotel_id, overrides_path
-            )
+            LOGGER.warning("Phase overrides for hotel_id=%s must be an object: %s", hotel_id, overrides_path)
             continue
         month_map: dict[str, dict[str, str]] = {}
         for month, payload in overrides.items():
@@ -294,9 +284,7 @@ def _resolve_raw_root_dir(hotel_id: str, raw_root_dir: str | Path) -> Path:
     try:
         raw_root_path = Path(raw_root_dir)
     except TypeError as exc:
-        raise TypeError(
-            f"{hotel_id}: raw_root_dir must be a string or Path (got {raw_root_dir!r})"
-        ) from exc
+        raise TypeError(f"{hotel_id}: raw_root_dir must be a string or Path (got {raw_root_dir!r})") from exc
 
     if not raw_root_path.is_absolute():
         raw_root_path = APP_BASE_DIR / raw_root_path
@@ -304,9 +292,7 @@ def _resolve_raw_root_dir(hotel_id: str, raw_root_dir: str | Path) -> Path:
     try:
         return raw_root_path.resolve(strict=False)
     except OSError as exc:
-        raise ValueError(
-            f"{hotel_id}: failed to resolve raw_root_dir={raw_root_dir!r} (key=raw_root_dir)"
-        ) from exc
+        raise ValueError(f"{hotel_id}: failed to resolve raw_root_dir={raw_root_dir!r} (key=raw_root_dir)") from exc
 
 
 def _normalize_display_name(hotel_id: str, display_name: Any) -> str:
@@ -351,9 +337,7 @@ def _normalize_rounding_unit_value(
         return value
     if isinstance(value, float):
         if not value.is_integer():
-            raise ValueError(
-                f"{hotel_id}: rounding_units.{key_name} must be an integer (got {value!r})"
-            )
+            raise ValueError(f"{hotel_id}: rounding_units.{key_name} must be an integer (got {value!r})")
         int_value = int(value)
         if int_value <= 0:
             raise ValueError(f"{hotel_id}: rounding_units.{key_name} must be > 0 (got {value!r})")
@@ -361,19 +345,13 @@ def _normalize_rounding_unit_value(
     if isinstance(value, str):
         stripped = value.strip()
         if not stripped:
-            raise ValueError(
-                f"{hotel_id}: rounding_units.{key_name} must be an integer (got blank string)"
-            )
+            raise ValueError(f"{hotel_id}: rounding_units.{key_name} must be an integer (got blank string)")
         try:
             int_value = int(stripped)
         except ValueError as exc:
-            raise ValueError(
-                f"{hotel_id}: rounding_units.{key_name} must be an integer (got {value!r})"
-            ) from exc
+            raise ValueError(f"{hotel_id}: rounding_units.{key_name} must be an integer (got {value!r})") from exc
         if int_value <= 0:
-            raise ValueError(
-                f"{hotel_id}: rounding_units.{key_name} must be > 0 (got {value!r})"
-            )
+            raise ValueError(f"{hotel_id}: rounding_units.{key_name} must be > 0 (got {value!r})")
         return int_value
     raise TypeError(f"{hotel_id}: rounding_units.{key_name} must be an integer (got {value!r})")
 
@@ -385,10 +363,7 @@ def _normalize_rounding_units(hotel_id: str, rounding_units: Any) -> dict[str, i
     if not isinstance(rounding_units, dict):
         raise TypeError(f"{hotel_id}: rounding_units must be a JSON object")
 
-    return {
-        key: _normalize_rounding_unit_value(hotel_id, key, rounding_units.get(key), defaults[key])
-        for key in defaults
-    }
+    return {key: _normalize_rounding_unit_value(hotel_id, key, rounding_units.get(key), defaults[key]) for key in defaults}
 
 
 def _validate_hotel_config(hotel_id: str, hotel_cfg: dict[str, Any]) -> dict[str, Any]:
@@ -448,10 +423,7 @@ def _load_hotels_json() -> dict[str, Any]:
         init_errors = pop_runtime_init_errors()
         if init_errors:
             details = "\n".join(init_errors)
-            raise RuntimeError(
-                f"Hotel config not found: {HOTEL_CONFIG_PATH}\n"
-                f"Startup init errors:\n{details}"
-            )
+            raise RuntimeError(f"Hotel config not found: {HOTEL_CONFIG_PATH}\nStartup init errors:\n{details}")
         raise RuntimeError(f"Hotel config not found: {HOTEL_CONFIG_PATH}")
 
     try:
@@ -490,16 +462,12 @@ def _apply_local_raw_root_overrides(raw_hotels: dict[str, Any]) -> dict[str, Any
                 if raw_override_str:
                     merged_cfg["raw_root_dir"] = raw_override
                 else:
-                    LOGGER.warning(
-                        "Ignoring blank raw_root_dir override for hotel_id=%s", hotel_id
-                    )
+                    LOGGER.warning("Ignoring blank raw_root_dir override for hotel_id=%s", hotel_id)
         merged[hotel_id] = merged_cfg
 
     for hotel_id in overrides:
         if hotel_id not in raw_hotels:
-            LOGGER.warning(
-                "Ignoring local override for unknown hotel_id=%s", hotel_id
-            )
+            LOGGER.warning("Ignoring local override for unknown hotel_id=%s", hotel_id)
 
     return merged
 

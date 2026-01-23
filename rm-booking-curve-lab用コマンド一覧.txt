@@ -69,3 +69,7 @@ magick "icon.png" -background none -define icon:auto-resize=16,20,24,32,40,48,64
 
 EXE化
 pyinstaller BookingCurveLab.spec --clean --noconfirm
+
+
+python tools/print_market_pace_series.py daikokucho 2026-01-23 90
+python tools/print_market_pace_series.py kansai      2026-01-23 90

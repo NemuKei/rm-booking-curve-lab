@@ -3503,6 +3503,8 @@ class BookingCurveApp(tk.Tk):
             [
                 f"{'YYYYMM':<8}",
                 f"{'FcRevPAR':>10}",
+                f"{'bADR':>8}",
+                f"{'bOcc%':>7}",
                 f"{'A:p10':>10}",
                 f"{'A:p90':>10}",
                 f"{'C:p10':>10}",
@@ -3516,6 +3518,8 @@ class BookingCurveApp(tk.Tk):
             for row in diagnostics:
                 month = row.get("month")
                 revpar = row.get("revpar")
+                basis_adr = row.get("basis_adr")
+                basis_occ = row.get("basis_occ")
                 p10_latest = row.get("p10_latest")
                 p90_latest = row.get("p90_latest")
                 p10_prev = row.get("p10_prev")
@@ -3539,12 +3543,16 @@ class BookingCurveApp(tk.Tk):
                 p10_prev_str = "-" if p10_prev is None else f"{p10_prev:,.0f}"
                 p90_prev_str = "-" if p90_prev is None else f"{p90_prev:,.0f}"
                 revpar_str = "-" if revpar is None else f"{revpar:,.0f}"
+                basis_adr_str = "-" if basis_adr is None else f"{basis_adr:,.0f}"
+                basis_occ_str = "-" if basis_occ is None else f"{basis_occ * 100.0:,.1f}%"
                 month_str = "-" if month is None else str(month)
                 lines.append(
                     " ".join(
                         [
                             f"{month_str:<8}",
                             f"{revpar_str:>10}",
+                            f"{basis_adr_str:>8}",
+                            f"{basis_occ_str:>7}",
                             f"{p10_latest_str:>10}",
                             f"{p90_latest_str:>10}",
                             f"{p10_prev_str:>10}",

@@ -1,0 +1,78 @@
+diff --git a/src/booking_curve/forecast_simple.py b/src/booking_curve/forecast_simple.py
+index 1a2b3c4..5d6e7f8 100644
+--- a/src/booking_curve/forecast_simple.py
++++ b/src/booking_curve/forecast_simple.py
+@@ -38,6 +38,7 @@ WEEKSHAPE_W = 7
+ WEEKSHAPE_CLIP = (0.85, 1.15)
+ WEEKSHAPE_MIN_EVENTS = 10
+ WEEKSHAPE_MIN_SUM_BASE = 1.0
++WEEKSHAPE_WEEK_BOUNDARY = "iso"  # "iso" | "sun" | "mon" (experimental toggle for analysis)
+
+@@
+-def _get_iso_week_id(ts: pd.Timestamp) -> int:
+-    iso = pd.Timestamp(ts).isocalendar()
+-    return int(iso.year) * 100 + int(iso.week)
++def _get_week_id(ts: pd.Timestamp) -> int:
++    """Return week-id for grouping, depending on WEEKSHAPE_WEEK_BOUNDARY.
++
++    - "iso": ISO week-year/week (Mon-based, ISO rules)
++    - "sun": week number with Sunday as first day (%U). year is calendar year.
++    - "mon": week number with Monday as first day (%W). year is calendar year.
++
++    Note: For "sun"/"mon", week numbering around year boundaries differs from ISO.
++    This toggle is for analysis/experimentation; default remains "iso".
++    """
++    ts = pd.Timestamp(ts)
++    boundary = str(WEEKSHAPE_WEEK_BOUNDARY).lower().strip()
++    if boundary == "sun":
++        return int(ts.year) * 100 + int(ts.strftime("%U"))
++    if boundary == "mon":
++        return int(ts.year) * 100 + int(ts.strftime("%W"))
++    iso = ts.isocalendar()
++    return int(iso.year) * 100 + int(iso.week)
+
+@@ def compute_weekshape_flow_factors(
+-) -> tuple[dict[tuple[int, str], float], pd.DataFrame]:
+-    """Compute weekshape flow factors by (iso_week_id, group)."""
++) -> tuple[dict[tuple[int, str], float], pd.DataFrame]:
++    """Compute weekshape flow factors by (week_id, group)."""
+
+@@
+-        iso_week_id = _get_iso_week_id(stay_date)
+-        key = (iso_week_id, group)
++        week_id = _get_week_id(stay_date)
++        key = (week_id, group)
+
+@@
+-    for (iso_week_id, group), entry in accum.items():
++    for (week_id, group), entry in accum.items():
+@@
+-        factor_map[(iso_week_id, group)] = float(factor)
++        factor_map[(week_id, group)] = float(factor)
+         detail_records.append(
+             {
+-                "iso_week_id": iso_week_id,
++                "iso_week_id": week_id,
+                 "week_group": group,
+                 "n_events": n_events,
+                 "sum_base": sum_base,
+                 "sum_actual": sum_actual,
+                 "factor_raw": factor_raw,
+                 "factor": factor,
+                 "gated": gated,
+             }
+         )
+diff --git a/docs/spec_models.md b/docs/spec_models.md
+index 1111111..2222222 100644
+--- a/docs/spec_models.md
++++ b/docs/spec_models.md
+@@ -384,6 +384,13 @@
+ - ガード：
+   - `n_events < WEEKSHAPE_MIN_EVENTS`（デフォルト：10）または `abs(sum_base) < WEEKSHAPE_MIN_SUM_BASE`（デフォルト：1.0）
+   - ガード不成立の場合は係数を `1.0`（neutral）とする
++
++**週境界（week_id の定義）**
++- 集計キーは `week_id × group`。
++- デフォルトは ISO週（`WEEKSHAPE_WEEK_BOUNDARY="iso"`）。
++- 分析用に `sun`（日曜始まり：`%U`）/ `mon`（月曜始まり：`%W`）へ切替可能（暫定）。
++  - 週番号の年跨ぎ挙動は ISO と異なるため、比較検証用途に限定する。

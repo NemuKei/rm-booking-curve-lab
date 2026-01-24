@@ -4,9 +4,9 @@
 
 * Date: 2026-01-24
 * Branch: feature/pace14_market_power_and_clip
-* Commit: c938b8a
-* Version: tag 20260124_0910_samp_feature-pace14_market_power_and_clip_c938b8a
-* Release Zip: rm-booking-curve-lab_20260124_0910_samp_feature-pace14_market_power_and_clip_c938b8a_full.zip
+* Commit: 148b294
+* Version: tag 20260124_0942_samp_feature-pace14_market_power_and_clip_148b294
+* Release Zip: rm-booking-curve-lab_20260124_0942_samp_feature-pace14_market_power_and_clip_148b294_full.zip
 * Scope: pace14_market の power化＋clip調整、weekshape_flow追加、calendar自動生成の実装・検証
 
 ## Context

@@ -24,6 +24,7 @@ INCLUDE_GLOBS = [
     "BookingCurveLab.spec",
     "assets/**/*",
     "tools/**/*",
+    "patches/**/*",
 ]
 
 # 「サンプル出力」を入れるときだけ追加する（git管理外でも入る想定）

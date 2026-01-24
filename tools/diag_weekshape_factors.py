@@ -6,6 +6,11 @@ import pandas as pd
 sys.path.append("src")
 
 import booking_curve.forecast_simple as fs
+
+fs.WEEKSHAPE_MIN_EVENTS = 2
+# 必要なら次も（まずは無しでもOK）
+# fs.WEEKSHAPE_MIN_SUM_BASE = 0.3
+
 import run_full_evaluation as r
 
 HOTEL = "daikokucho"

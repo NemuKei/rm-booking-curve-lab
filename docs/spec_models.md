@@ -383,6 +383,10 @@ OCC モデルの主な入力は、`lt_data_YYYYMM_<hotel>.csv` に代表され�
 - 適用LT帯：`WEEKSHAPE_LT_MIN..WEEKSHAPE_LT_MAX`（デフォルト：15..45）
 - ウィンドウ：`WEEKSHAPE_W`（デフォルト：7）
   - 日次pickupの定義：`pickup = OH(lt_now) - OH(lt_now + WEEKSHAPE_W)`
+- 週境界（week_id の定義）：
+  - デフォルトは ISO週（`WEEKSHAPE_WEEK_BOUNDARY="iso"`）
+  - 分析用に `sun`（日曜始まり）/ `mon`（月曜始まり）へ切替可能
+  - 年跨ぎの週番号挙動が ISO と異なるため、比較検証用途に限定する
 - 係数clip：`WEEKSHAPE_CLIP`（デフォルト：0.85..1.15）
 - ガード：
   - `n_events < WEEKSHAPE_MIN_EVENTS`（デフォルト：10）または `abs(sum_base) < WEEKSHAPE_MIN_SUM_BASE`（デフォルト：1.0）

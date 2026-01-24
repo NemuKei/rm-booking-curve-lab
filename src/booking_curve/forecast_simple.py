@@ -40,6 +40,7 @@ WEEKSHAPE_W = 7
 WEEKSHAPE_CLIP = (0.85, 1.15)
 WEEKSHAPE_MIN_EVENTS = 10
 WEEKSHAPE_MIN_SUM_BASE = 1.0
+WEEKSHAPE_WEEK_BOUNDARY = "iso"  # "iso" | "sun" | "mon"
 
 
 def _ensure_int_columns(columns: Iterable) -> list[int]:
@@ -538,8 +539,20 @@ def forecast_final_from_pace14_market(
     return pd.Series(forecasts, dtype=float), pd.DataFrame.from_dict(details, orient="index")
 
 
-def _get_iso_week_id(ts: pd.Timestamp) -> int:
-    iso = pd.Timestamp(ts).isocalendar()
+def _get_week_id(ts: pd.Timestamp) -> int:
+    """Return a week identifier based on WEEKSHAPE_WEEK_BOUNDARY.
+
+    Note: week numbering around year boundaries differs from ISO when using
+    "sun"/"mon", so use those modes only for comparison analysis.
+    """
+
+    ts = pd.Timestamp(ts)
+    boundary = str(WEEKSHAPE_WEEK_BOUNDARY or "iso").lower()
+    if boundary == "sun":
+        return int(ts.strftime("%Y")) * 100 + int(ts.strftime("%U"))
+    if boundary == "mon":
+        return int(ts.strftime("%Y")) * 100 + int(ts.strftime("%W"))
+    iso = ts.isocalendar()
     return int(iso.year) * 100 + int(iso.week)
 
 
@@ -602,7 +615,7 @@ def compute_weekshape_flow_factors(
     lt_max: int = WEEKSHAPE_LT_MAX,
     w: int = WEEKSHAPE_W,
 ) -> tuple[dict[tuple[int, str], float], pd.DataFrame]:
-    """Compute weekshape flow factors by (iso_week_id, group)."""
+    """Compute weekshape flow factors by (week_id, group)."""
 
     working_df = lt_df.copy()
     working_df.index = pd.to_datetime(working_df.index)
@@ -645,8 +658,8 @@ def compute_weekshape_flow_factors(
             cal_row = cal_df.loc[stay_date.normalize()] if stay_date.normalize() in cal_df.index else None
 
         group = _classify_week_group(stay_date, cal_row)
-        iso_week_id = _get_iso_week_id(stay_date)
-        key = (iso_week_id, group)
+        week_id = _get_week_id(stay_date)
+        key = (week_id, group)
 
         entry = accum.setdefault(
             key,
@@ -658,7 +671,7 @@ def compute_weekshape_flow_factors(
 
     detail_records: list[dict[str, object]] = []
     factor_map: dict[tuple[int, str], float] = {}
-    for (iso_week_id, group), entry in accum.items():
+    for (week_id, group), entry in accum.items():
         n_events = int(entry["n_events"])
         sum_base = float(entry["sum_base"])
         sum_actual = float(entry["sum_actual"])
@@ -674,10 +687,10 @@ def compute_weekshape_flow_factors(
             factor_raw = sum_actual / sum_base
             factor = _clip_value(factor_raw, *WEEKSHAPE_CLIP)
 
-        factor_map[(iso_week_id, group)] = float(factor)
+        factor_map[(week_id, group)] = float(factor)
         detail_records.append(
             {
-                "iso_week_id": iso_week_id,
+                "iso_week_id": week_id,
                 "week_group": group,
                 "n_events": n_events,
                 "sum_base": sum_base,
@@ -779,8 +792,8 @@ def forecast_final_from_pace14_weekshape_flow(
         if not cal_df.empty:
             cal_row = cal_df.loc[stay_date.normalize()] if stay_date.normalize() in cal_df.index else None
         week_group = _classify_week_group(stay_date, cal_row)
-        week_iso_id = _get_iso_week_id(stay_date)
-        week_key = (week_iso_id, week_group)
+        week_id = _get_week_id(stay_date)
+        week_key = (week_id, week_group)
         detail_info = detail_map.get(week_key, {})
 
         weekshape_factor = float(detail_info.get("factor", 1.0))
@@ -802,7 +815,7 @@ def forecast_final_from_pace14_weekshape_flow(
         pf_info.update(
             {
                 "lt_now": lt_now,
-                "week_iso_id": week_iso_id,
+                "week_iso_id": week_id,
                 "week_group": week_group,
                 "weekshape_factor": weekshape_factor,
                 "weekshape_factor_raw": weekshape_factor_raw,

@@ -389,7 +389,8 @@ OCC モデルの主な入力は、`lt_data_YYYYMM_<hotel>.csv` に代表され�
   - 年跨ぎの週番号挙動が ISO と異なるため、比較検証用途に限定する
 - 係数clip：`WEEKSHAPE_CLIP`（デフォルト：0.85..1.15）
 - ガード：
-  - `n_events < WEEKSHAPE_MIN_EVENTS`（デフォルト：10）または `abs(sum_base) < WEEKSHAPE_MIN_SUM_BASE`（デフォルト：1.0）
+  - `n_events < WEEKSHAPE_MIN_EVENTS`（デフォルト：2）または `abs(sum_base) < WEEKSHAPE_MIN_SUM_BASE`（デフォルト：1.0）
+  - `WEEKSHAPE_MIN_EVENTS` は `(week_id, group)` の `n_events` が最大でも 7（group 分割でさらに小さくなる）ため、到達可能な値（<=7）にすること
   - ガード不成立の場合は係数を `1.0`（neutral）とする
 
 ---

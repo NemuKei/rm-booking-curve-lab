@@ -38,7 +38,7 @@ WEEKSHAPE_LT_MIN = 15
 WEEKSHAPE_LT_MAX = 45
 WEEKSHAPE_W = 7
 WEEKSHAPE_CLIP = (0.85, 1.15)
-WEEKSHAPE_MIN_EVENTS = 10
+WEEKSHAPE_MIN_EVENTS = 2  # (week_id, group) aggregation implies max 7 events
 WEEKSHAPE_MIN_SUM_BASE = 1.0
 WEEKSHAPE_WEEK_BOUNDARY = "iso"  # "iso" | "sun" | "mon"
 

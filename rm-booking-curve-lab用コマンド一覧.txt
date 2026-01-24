@@ -79,3 +79,6 @@ git apply --check patches/your.patch
 git apply patches/your.patch
 git status
 git diff
+
+
+python tools/check_weekshape_boundary.py

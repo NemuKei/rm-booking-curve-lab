@@ -1391,3 +1391,21 @@ A-019
 * Status: spec反映済
 
 ---
+
+Proposed patch target: docs/decision_log.md
+
+## D-20260124-004 pace14_weekshape_flow の gating 閾値（MIN_EVENTS）を到達可能値へ修正
+
+* Decision:
+
+  * `compute_weekshape_flow_factors` は `(week_id, group)` 単位集計のため、`WEEKSHAPE_MIN_EVENTS` は到達可能な値（<=7）を前提に設定する。
+  * デフォルトの `WEEKSHAPE_MIN_EVENTS=10` は到達不能になり得るため、デフォルト値を引き下げる（候補：2 or 3）。
+* Why:
+
+  * 到達不能な閾値だと weekshape係数が常に 1.0 となり、モデルが実質OFFになって検証・運用の双方で誤解を生むため。
+* Spec link:
+
+  * `docs/spec_models.md`: pace14_weekshape_flow（gating条件とデフォルト値の記載）
+* Status: 未反映
+
+---

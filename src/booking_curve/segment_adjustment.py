@@ -89,10 +89,10 @@ def apply_segment_adjustment(forecast_df: pd.DataFrame, hotel_tag: str) -> pd.Da
     if "projected_rooms" not in forecast_df.columns:
         raise ValueError("forecast_df に 'projected_rooms' 列が必要です。")
 
-    cal = _load_calendar(hotel_tag, dates=df.index)
-
     df = forecast_df.copy()
     df.index = pd.to_datetime(df.index)
+
+    cal = _load_calendar(hotel_tag, dates=df.index)
 
     df = df.join(cal, how="left")
 

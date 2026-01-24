@@ -315,15 +315,16 @@ def forecast_final_from_pace14(
     return pd.Series(forecasts, dtype=float), pd.DataFrame.from_dict(details, orient="index")
 
 
-def _market_pace_raw(
+def _market_pace_raw_with_diag(
     lt_df: pd.DataFrame,
     baseline_curves: dict[int, pd.Series],
     as_of_ts: pd.Timestamp,
     *,
     upper_lt: int = PACE14_UPPER_LT,
-) -> float:
+) -> tuple[float, float, float, int]:
     total_actual = 0.0
     total_base = 0.0
+    n_events = 0
 
     df = lt_df.copy()
     df.index = pd.to_datetime(df.index)
@@ -352,10 +353,30 @@ def _market_pace_raw(
 
         total_actual += pickup
         total_base += base_pickup
+        n_events += 1
 
     if abs(total_base) <= PACE14_EPSILON:
-        return np.nan
-    return total_actual / total_base
+        mp_raw = np.nan
+    else:
+        mp_raw = total_actual / total_base
+
+    return float(mp_raw) if not pd.isna(mp_raw) else np.nan, total_actual, total_base, n_events
+
+
+def _market_pace_raw(
+    lt_df: pd.DataFrame,
+    baseline_curves: dict[int, pd.Series],
+    as_of_ts: pd.Timestamp,
+    *,
+    upper_lt: int = PACE14_UPPER_LT,
+) -> float:
+    mp_raw, _, _, _ = _market_pace_raw_with_diag(
+        lt_df,
+        baseline_curves,
+        as_of_ts,
+        upper_lt=upper_lt,
+    )
+    return mp_raw
 
 
 def compute_market_pace_7d(
@@ -366,14 +387,19 @@ def compute_market_pace_7d(
     baseline_curves: dict[int, pd.Series] | None = None,
     lt_min: int = -1,
     lt_max: int = 90,
-    min_count: int = 1,
+    min_count: int = 10,
     days: int = 7,
+    min_events_7d: int = 20,
+    min_abs_base_7d: float = 1.0,
 ) -> tuple[float, pd.DataFrame]:
     """Compute 7-day market pace average and daily diagnostics."""
 
     records = []
+    sum_actual_7d = 0.0
+    sum_base_7d = 0.0
+    n_events_7d = 0
     for offset in range(days):
-        target_date = as_of_ts - pd.Timedelta(days=offset)
+        target_date = (as_of_ts - pd.Timedelta(days=offset)).normalize()
         if history_by_weekday:
             baseline_curves_for_date = {}
             for weekday, history_df in history_by_weekday.items():
@@ -389,11 +415,33 @@ def compute_market_pace_7d(
         else:
             baseline_curves_for_date = baseline_curves or {}
 
-        mp_raw = _market_pace_raw(lt_df, baseline_curves_for_date, target_date)
-        records.append({"as_of_date": target_date.normalize(), "mp_raw": mp_raw})
+        mp_raw, sum_actual, sum_base, n_events = _market_pace_raw_with_diag(
+            lt_df,
+            baseline_curves_for_date,
+            target_date,
+        )
+        records.append(
+            {
+                "as_of_date": target_date,
+                "mp_raw": mp_raw,
+                "sum_actual": sum_actual,
+                "sum_base": sum_base,
+                "n_events": n_events,
+            }
+        )
+
+        if not np.isnan(mp_raw):
+            sum_actual_7d += sum_actual
+            sum_base_7d += sum_base
+            n_events_7d += n_events
 
     df = pd.DataFrame(records).sort_values("as_of_date")
-    mp_7d = float(df["mp_raw"].mean(skipna=True)) if not df.empty else np.nan
+    if abs(sum_base_7d) < min_abs_base_7d or n_events_7d < min_events_7d:
+        mp_7d = np.nan
+    else:
+        mp_7d = sum_actual_7d / sum_base_7d
+
+    mp_7d = float(mp_7d) if not pd.isna(mp_7d) else np.nan
     return mp_7d, df
 
 

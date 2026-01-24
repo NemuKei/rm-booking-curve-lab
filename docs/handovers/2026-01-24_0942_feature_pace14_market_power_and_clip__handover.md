@@ -1,7 +1,3 @@
-Proposed file path: docs/handovers/2026-01-24_0930_feature-pace14_market_power_and_clip_pace14_market_power_and_clip.md
-
----
-
 ## 1. スレッド移行宣言（新スレッドに貼る前提の文面）
 
 * このスレッドは、`pace14_market` の market補正を **power化**し、あわせて **weekshape_flow（週×グループのフロー補正）** と **calendar自動生成** を実装・検証した作業ログです。
@@ -110,8 +106,8 @@ Proposed file path: docs/handovers/2026-01-24_0930_feature-pace14_market_power_a
 * バッチ：`python src/run_forecast_batch.py`（ファイル内の設定値で実行）
 * 評価：`python src/run_full_evaluation.py`（スクリプト側の設定に従う）
 * ログ：`gui_app.log`（環境により配置は異なる）
-* source_zip（引継書作成の材料ZIP）：`rm-booking-curve-lab_20260124_0910_samp_feature-pace14_market_power_and_clip_c938b8a_full.zip`
-* anchor_zip（次スレで添付するアンカーZIP）：`rm-booking-curve-lab_20260124_0910_samp_feature-pace14_market_power_and_clip_c938b8a_full.zip`
+* source_zip（引継書作成の材料ZIP）：`rm-booking-curve-lab_20260124_0942_samp_feature-pace14_market_power_and_clip_148b294_full.zip`
+* anchor_zip（次スレで添付するアンカーZIP）：`rm-booking-curve-lab_20260124_0942_samp_feature-pace14_market_power_and_clip_148b294_full.zip`
 
 ---
 

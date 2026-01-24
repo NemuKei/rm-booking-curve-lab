@@ -1336,3 +1336,54 @@ A-019
 * Status: 実装反映済
 
 ---
+
+## D-20260124-001 pace14_market の market補正を線形からpowerへ変更（clip/減衰パラメータ含む）
+
+* Decision:
+
+  * `pace14_market` の market_factor は「線形」ではなく **`market_pace_eff ** beta`（power）** で算出する方針とする。
+  * factor の clip 初期値は **0.85–1.15** とし、LT帯は従来方針（market補正の適用帯）を維持する。
+* Why:
+
+  * market補正をより自然に効かせつつ、LTが遠いほど影響が弱まる（beta減衰）形に揃えるため。
+  * 線形補正は外れ値・負値等の取り扱いが難しく、直感的な効き方になりにくいため。
+* Spec link:
+
+  * `docs/spec_models.md`: pace14_market セクション（market_factorの定義・clip方針）
+* Status: 実装反映済
+
+---
+
+## D-20260124-002 pace14_weekshape_flow を追加（LT15–45の週×グループのフロー補正、W=7、clip 0.85–1.15）
+
+* Decision:
+
+  * pace14の守備範囲外（LT 15–45）で「週単位の強弱」を拾う補正として **weekshape_flow（フロー/B2）** を新モデルとして追加する。
+  * 窓幅は **W=7**、factor clip は **0.85–1.15** を初期値とする。
+* Why:
+
+  * 個別日のpickup補正（pace14）だけでは拾いにくい「週単位の強弱」や月末月初の弱さ等を補正できるようにするため。
+* Spec link:
+
+  * `docs/spec_models.md`: モデル一覧／weekshape_flow（新規）定義
+  * `docs/spec_evaluation.md`: 評価対象モデル一覧（必要なら）
+* Status: 実装反映済
+
+---
+
+## D-20260124-003 calendar_features が無い/不足のときは自動生成する（手動生成不要）
+
+* Decision:
+
+  * `calendar_features_{hotel}.csv` が存在しない、または必要な日付範囲を満たさない場合、実行時に **自動生成**して補完する。
+  * 生成は最低1年分（min_span_days）を確保し、手動の事前生成を必須にしない。
+* Why:
+
+  * 実行前の手動オペ（生成忘れ）でモデルが落ちる/neutral化する事故を減らし、運用を安定させるため。
+* Spec link:
+
+  * `docs/spec_data_layer.md`: calendar_features の扱い（生成/必須性の位置づけ）
+  * `docs/spec_models.md`: calendar依存モデルの前提（必要なら）
+* Status: 実装反映済
+
+---

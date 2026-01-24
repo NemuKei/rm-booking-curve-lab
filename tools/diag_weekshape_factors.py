@@ -1,5 +1,5 @@
-from pathlib import Path
 import sys
+from pathlib import Path
 
 
 def _setup_paths() -> None:
@@ -10,8 +10,9 @@ def _setup_paths() -> None:
 def main() -> None:
     _setup_paths()
 
-    import booking_curve.forecast_simple as fs
     import pandas as pd
+
+    import booking_curve.forecast_simple as fs
     import run_full_evaluation as r
 
     HOTEL = "daikokucho"
@@ -155,21 +156,14 @@ def main() -> None:
     sun_fc, sun_df1, sun_df2, sun_map = run("sun")
 
     # compare forecasts
-    diff_days = int(
-        (
-            iso_fc.fillna(0).round().astype("Int64")
-            != sun_fc.fillna(0).round().astype("Int64")
-        ).sum()
-    )
+    diff_days = int((iso_fc.fillna(0).round().astype("Int64") != sun_fc.fillna(0).round().astype("Int64")).sum())
     print("\n=== iso vs sun compare ===")
     print("different_days=", diff_days, "of", len(iso_fc))
     print("delta_sum=", float((sun_fc - iso_fc).sum(skipna=True)))
 
     # compare factor maps (how many keys differ)
     common = set(iso_map.keys()) & set(sun_map.keys())
-    diff_keys = sum(
-        1 for k in common if float(iso_map[k]) != float(sun_map[k])
-    )
+    diff_keys = sum(1 for k in common if float(iso_map[k]) != float(sun_map[k]))
     print(
         "factor_map common=",
         len(common),

@@ -58,7 +58,7 @@
 - 引き継ぎ本文は **ファイルとして出力**してください。
 
 ### 3-1. Proposed file path（必須・1行）
-- `Proposed file path: docs/handovers/YYYY-MM-DD_HHMM_<branch>_<scope>.md`
+- `Proposed file path: docs/handovers/YYYY-MM-DD_HHMM_<type>_<scope>__handover.md`
 
 **命名ルール**
 - YYYY-MM-DD：この引継書の作成日

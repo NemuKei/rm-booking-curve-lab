@@ -25,6 +25,9 @@ INCLUDE_GLOBS = [
     "assets/**/*",
     "tools/**/*",
     "patches/**/*",
+    ".editorconfig",
+    ".gitattributes",
+    ".gitignore",
 ]
 
 # 「サンプル出力」を入れるときだけ追加する（git管理外でも入る想定）

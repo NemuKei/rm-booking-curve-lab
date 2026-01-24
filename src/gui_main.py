@@ -2549,6 +2549,7 @@ class BookingCurveApp(tk.Tk):
             "recent90w",
             "pace14",
             "pace14_market",
+            "pace14_weekshape_flow",
         ]
         general_settings = self._settings.get("general") or {}
         default_model = "recent90w"
@@ -5097,7 +5098,7 @@ class BookingCurveApp(tk.Tk):
             side=tk.LEFT,
             pady=(UI_GRID_PADY + 1, UI_GRID_PADY),
         )
-        model_values = ["recent90", "recent90w", "pace14", "pace14_market"]
+        model_values = ["recent90", "recent90w", "pace14", "pace14_market", "pace14_weekshape_flow"]
         general_settings = self._settings.get("general") or {}
         default_model = "recent90w"
         saved_model = general_settings.get("last_bc_model")

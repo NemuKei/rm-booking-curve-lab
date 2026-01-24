@@ -13,6 +13,7 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
+import build_calendar_features
 from booking_curve.segment_adjustment import apply_segment_adjustment
 
 HOTEL_TAG = "daikokucho"
@@ -27,8 +28,18 @@ PACE14_EPSILON = 1e-6
 
 MARKET_PACE_LT_MIN = 15
 MARKET_PACE_LT_MAX = 30
-MARKET_PACE_CLIP = (0.95, 1.05)
-MARKET_PACE_DECAY_K = 0.2
+MARKET_PACE_CLIP = (0.85, 1.15)
+MARKET_PACE_DECAY_K = 0.15
+MARKET_PACE_FLOOR = 0.20
+MARKET_PACE_RAW_CLIP = (0.50, 2.20)
+MARKET_PACE_MODE = "power"
+
+WEEKSHAPE_LT_MIN = 15
+WEEKSHAPE_LT_MAX = 45
+WEEKSHAPE_W = 7
+WEEKSHAPE_CLIP = (0.85, 1.15)
+WEEKSHAPE_MIN_EVENTS = 10
+WEEKSHAPE_MIN_SUM_BASE = 1.0
 
 
 def _ensure_int_columns(columns: Iterable) -> list[int]:
@@ -417,6 +428,8 @@ def forecast_final_from_pace14_market(
     forecasts: dict[pd.Timestamp, float] = {}
     details: dict[pd.Timestamp, dict[str, float | int | bool]] = {}
     market_pace_value = 1.0 if pd.isna(market_pace_7d) else float(market_pace_7d)
+    market_pace_eff = max(market_pace_value, MARKET_PACE_FLOOR)
+    market_pace_eff = _clip_value(market_pace_eff, *MARKET_PACE_RAW_CLIP)
 
     future_df = working_df.loc[working_df.index >= as_of_ts]
     for stay_date, row in future_df.iterrows():
@@ -442,11 +455,12 @@ def forecast_final_from_pace14_market(
         pf_value = pf_info["pf_clipped"]
 
         market_factor = 1.0
+        market_factor_raw = np.nan
         market_beta = np.nan
         if MARKET_PACE_LT_MIN <= lt_now <= MARKET_PACE_LT_MAX:
             market_beta = float(np.exp(-decay_k * (lt_now - MARKET_PACE_LT_MIN)))
-            raw_factor = 1.0 + market_beta * (market_pace_value - 1.0)
-            market_factor = _clip_value(raw_factor, *MARKET_PACE_CLIP)
+            market_factor_raw = float(market_pace_eff ** market_beta)
+            market_factor = _clip_value(market_factor_raw, *MARKET_PACE_CLIP)
 
         if lt_now <= PACE14_UPPER_LT:
             final_forecast = float(current_oh + pf_value * base_delta)
@@ -465,8 +479,287 @@ def forecast_final_from_pace14_market(
                 "market_pace_7d": float(market_pace_7d)
                 if not pd.isna(market_pace_7d)
                 else np.nan,
+                "market_pace_eff": market_pace_eff,
                 "market_beta": market_beta,
+                "market_factor_raw": market_factor_raw,
                 "market_factor": market_factor,
+            }
+        )
+        details[stay_date] = pf_info
+
+    return pd.Series(forecasts, dtype=float), pd.DataFrame.from_dict(details, orient="index")
+
+
+def _get_iso_week_id(ts: pd.Timestamp) -> int:
+    iso = pd.Timestamp(ts).isocalendar()
+    return int(iso.year) * 100 + int(iso.week)
+
+
+def _safe_bool(value: object) -> bool:
+    if pd.isna(value):
+        return False
+    return bool(value)
+
+
+def _load_calendar_df_for_dates(hotel_tag: str, dates: pd.DatetimeIndex) -> pd.DataFrame:
+    path = build_calendar_features.ensure_calendar_for_dates(hotel_tag, dates)
+    try:
+        cal = pd.read_csv(path, parse_dates=["date"])
+    except Exception:
+        return pd.DataFrame(index=pd.DatetimeIndex([]))
+
+    if cal.empty or "date" not in cal.columns:
+        return pd.DataFrame(index=pd.DatetimeIndex([]))
+
+    cal = cal.copy()
+    cal["date"] = pd.to_datetime(cal["date"], errors="coerce").dt.normalize()
+    cal = cal.dropna(subset=["date"])
+    cal = cal.set_index("date")
+    return cal
+
+
+def _classify_week_group(stay_date: pd.Timestamp, cal_row: pd.Series | None) -> str:
+    if cal_row is not None and not cal_row.empty:
+        block_len = pd.to_numeric(cal_row.get("holiday_block_len", 0), errors="coerce")
+        block_len = int(block_len) if not pd.isna(block_len) else 0
+        position = str(cal_row.get("holiday_position", "none"))
+        if block_len >= 3:
+            if position in {"first", "middle"}:
+                return "G4"
+            if position == "last":
+                return "G1"
+
+        is_jp_holiday = _safe_bool(cal_row.get("is_jp_holiday", False))
+        is_before_holiday = _safe_bool(cal_row.get("is_before_holiday", False))
+        if is_jp_holiday and is_before_holiday:
+            return "G4"
+
+    weekday = pd.Timestamp(stay_date).weekday()
+    if weekday in (6, 0):
+        return "G1"
+    if weekday in (1, 2, 3):
+        return "G2"
+    if weekday == 4:
+        return "G3"
+    return "G4"
+
+
+def compute_weekshape_flow_factors(
+    lt_df: pd.DataFrame,
+    as_of_ts: pd.Timestamp,
+    *,
+    baseline_curves_by_weekday: dict[int, pd.Series],
+    hotel_tag: str,
+    lt_min: int = WEEKSHAPE_LT_MIN,
+    lt_max: int = WEEKSHAPE_LT_MAX,
+    w: int = WEEKSHAPE_W,
+) -> tuple[dict[tuple[int, str], float], pd.DataFrame]:
+    """Compute weekshape flow factors by (iso_week_id, group)."""
+
+    working_df = lt_df.copy()
+    working_df.index = pd.to_datetime(working_df.index)
+    working_df.columns = _ensure_int_columns(working_df.columns)
+
+    cal_df = _load_calendar_df_for_dates(hotel_tag, working_df.index)
+
+    baseline_curves_int: dict[int, pd.Series] = {}
+    for weekday, curve in baseline_curves_by_weekday.items():
+        curve = curve.copy()
+        curve.index = curve.index.astype(int)
+        baseline_curves_int[weekday] = curve
+
+    accum: dict[tuple[int, str], dict[str, float | int]] = {}
+    future_df = working_df.loc[working_df.index >= as_of_ts]
+    for stay_date, row in future_df.iterrows():
+        lt_now = (stay_date - as_of_ts).days
+        if lt_now < lt_min or lt_now > lt_max:
+            continue
+        if lt_now not in working_df.columns or (lt_now + w) not in working_df.columns:
+            continue
+
+        actual_now = pd.to_numeric(row.get(lt_now, np.nan), errors="coerce")
+        actual_next = pd.to_numeric(row.get(lt_now + w, np.nan), errors="coerce")
+        if pd.isna(actual_now) or pd.isna(actual_next):
+            continue
+        actual_pickup = float(actual_now - actual_next)
+
+        baseline_curve = baseline_curves_int.get(stay_date.weekday())
+        if baseline_curve is None:
+            continue
+        base_now = pd.to_numeric(baseline_curve.get(lt_now, np.nan), errors="coerce")
+        base_next = pd.to_numeric(baseline_curve.get(lt_now + w, np.nan), errors="coerce")
+        if pd.isna(base_now) or pd.isna(base_next):
+            continue
+        base_pickup = float(base_now - base_next)
+
+        cal_row = None
+        if not cal_df.empty:
+            cal_row = cal_df.loc[stay_date.normalize()] if stay_date.normalize() in cal_df.index else None
+
+        group = _classify_week_group(stay_date, cal_row)
+        iso_week_id = _get_iso_week_id(stay_date)
+        key = (iso_week_id, group)
+
+        entry = accum.setdefault(
+            key,
+            {"sum_actual": 0.0, "sum_base": 0.0, "n_events": 0},
+        )
+        entry["sum_actual"] = float(entry["sum_actual"]) + actual_pickup
+        entry["sum_base"] = float(entry["sum_base"]) + base_pickup
+        entry["n_events"] = int(entry["n_events"]) + 1
+
+    detail_records: list[dict[str, object]] = []
+    factor_map: dict[tuple[int, str], float] = {}
+    for (iso_week_id, group), entry in accum.items():
+        n_events = int(entry["n_events"])
+        sum_base = float(entry["sum_base"])
+        sum_actual = float(entry["sum_actual"])
+        factor_raw = np.nan
+        gated = False
+
+        if n_events < WEEKSHAPE_MIN_EVENTS or abs(sum_base) < WEEKSHAPE_MIN_SUM_BASE:
+            gated = True
+            if abs(sum_base) > 0:
+                factor_raw = sum_actual / sum_base
+            factor = 1.0
+        else:
+            factor_raw = sum_actual / sum_base
+            factor = _clip_value(factor_raw, *WEEKSHAPE_CLIP)
+
+        factor_map[(iso_week_id, group)] = float(factor)
+        detail_records.append(
+            {
+                "iso_week_id": iso_week_id,
+                "week_group": group,
+                "n_events": n_events,
+                "sum_base": sum_base,
+                "sum_actual": sum_actual,
+                "factor_raw": factor_raw,
+                "factor": factor,
+                "gated": gated,
+            }
+        )
+
+    detail_df = pd.DataFrame(detail_records)
+    return factor_map, detail_df
+
+
+def forecast_final_from_pace14_weekshape_flow(
+    lt_df: pd.DataFrame,
+    *,
+    baseline_curves_by_weekday: dict[int, pd.Series],
+    history_by_weekday: dict[int, pd.DataFrame],
+    as_of_date: pd.Timestamp,
+    capacity: float,
+    hotel_tag: str,
+    lt_min: int = 0,
+    lt_max: int = 90,
+) -> tuple[pd.Series, pd.DataFrame]:
+    """Forecast final rooms per stay date using pace14 + weekshape flow adjustments."""
+
+    if lt_min > lt_max:
+        raise ValueError("lt_min must be less than or equal to lt_max")
+
+    working_df = lt_df.copy()
+    working_df.index = pd.to_datetime(working_df.index)
+    working_df.columns = _ensure_int_columns(working_df.columns)
+    as_of_ts = pd.Timestamp(as_of_date)
+
+    thresholds_by_weekday: dict[int, dict[int, dict[str, float]]] = {}
+    for weekday, history_df in history_by_weekday.items():
+        thresholds_by_weekday[weekday] = build_pace14_spike_thresholds(history_df)
+
+    factor_map, factor_detail = compute_weekshape_flow_factors(
+        lt_df=working_df,
+        as_of_ts=as_of_ts,
+        baseline_curves_by_weekday=baseline_curves_by_weekday,
+        hotel_tag=hotel_tag,
+        lt_min=WEEKSHAPE_LT_MIN,
+        lt_max=WEEKSHAPE_LT_MAX,
+        w=WEEKSHAPE_W,
+    )
+
+    detail_map: dict[tuple[int, str], dict[str, object]] = {}
+    if not factor_detail.empty:
+        for _, row in factor_detail.iterrows():
+            key = (int(row["iso_week_id"]), str(row["week_group"]))
+            detail_map[key] = {
+                "n_events": int(row.get("n_events", 0)),
+                "sum_base": float(row.get("sum_base", np.nan)),
+                "factor_raw": row.get("factor_raw", np.nan),
+                "factor": float(row.get("factor", 1.0)),
+            }
+
+    cal_df = _load_calendar_df_for_dates(hotel_tag, working_df.index)
+
+    forecasts: dict[pd.Timestamp, float] = {}
+    details: dict[pd.Timestamp, dict[str, float | int | bool | str]] = {}
+
+    future_df = working_df.loc[working_df.index >= as_of_ts]
+    for stay_date, row in future_df.iterrows():
+        lt_now = (stay_date - as_of_ts).days
+        if lt_now < lt_min or lt_now > lt_max:
+            forecasts[stay_date] = np.nan
+            continue
+
+        baseline_curve = baseline_curves_by_weekday.get(stay_date.weekday())
+        if baseline_curve is None:
+            forecasts[stay_date] = np.nan
+            continue
+        baseline_curve = baseline_curve.copy()
+        baseline_curve.index = baseline_curve.index.astype(int)
+
+        current_oh = pd.to_numeric(row.get(lt_now, np.nan), errors="coerce")
+        base_now = pd.to_numeric(baseline_curve.get(lt_now, np.nan), errors="coerce")
+        base_final = pd.to_numeric(baseline_curve.get(-1, np.nan), errors="coerce")
+
+        if any(pd.isna(val) for val in (current_oh, base_now, base_final)):
+            forecasts[stay_date] = np.nan
+            continue
+
+        pf_info = _calc_pace14_pf(
+            row,
+            baseline_curve=baseline_curve,
+            lt_now=lt_now,
+            thresholds=thresholds_by_weekday.get(stay_date.weekday(), {}),
+        )
+        pf_value = pf_info["pf_clipped"]
+
+        base_delta = float(base_final - base_now)
+
+        cal_row = None
+        if not cal_df.empty:
+            cal_row = cal_df.loc[stay_date.normalize()] if stay_date.normalize() in cal_df.index else None
+        week_group = _classify_week_group(stay_date, cal_row)
+        week_iso_id = _get_iso_week_id(stay_date)
+        week_key = (week_iso_id, week_group)
+        detail_info = detail_map.get(week_key, {})
+
+        weekshape_factor = float(detail_info.get("factor", 1.0))
+        weekshape_factor_raw = detail_info.get("factor_raw", np.nan)
+        weekshape_n_events = int(detail_info.get("n_events", 0))
+        weekshape_sum_base = detail_info.get("sum_base", np.nan)
+
+        if lt_now <= PACE14_UPPER_LT:
+            final_forecast = float(current_oh + pf_value * base_delta)
+        elif WEEKSHAPE_LT_MIN <= lt_now <= WEEKSHAPE_LT_MAX:
+            final_forecast = float(current_oh + weekshape_factor * base_delta)
+        else:
+            final_forecast = float(current_oh + base_delta)
+
+        if not pd.isna(final_forecast):
+            final_forecast = min(final_forecast, capacity)
+
+        forecasts[stay_date] = final_forecast
+        pf_info.update(
+            {
+                "lt_now": lt_now,
+                "week_iso_id": week_iso_id,
+                "week_group": week_group,
+                "weekshape_factor": weekshape_factor,
+                "weekshape_factor_raw": weekshape_factor_raw,
+                "weekshape_n_events": weekshape_n_events,
+                "weekshape_sum_base": weekshape_sum_base,
             }
         )
         details[stay_date] = pf_info

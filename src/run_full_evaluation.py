@@ -12,6 +12,7 @@ from booking_curve.forecast_simple import (
     forecast_final_from_avg,
     forecast_final_from_pace14,
     forecast_final_from_pace14_market,
+    forecast_final_from_pace14_weekshape_flow,
     forecast_month_from_recent90,
     moving_average_3months,
     moving_average_recent_90days,
@@ -211,7 +212,7 @@ def build_monthly_forecast(lt_df: pd.DataFrame, model_name: str, as_of_date: str
     lt_df:
         LT_DATA for a single target month (index = stay_date).
     model_name:
-        "avg", "recent90", "recent90w", "pace14", or "pace14_market".
+        "avg", "recent90", "recent90w", "pace14", "pace14_market", or "pace14_weekshape_flow".
     as_of_date:
         ASOF date string (YYYYMMDD).
     hotel_tag:
@@ -249,7 +250,7 @@ def build_monthly_forecast(lt_df: pd.DataFrame, model_name: str, as_of_date: str
     history_all_by_weekday: dict[int, pd.DataFrame] = {}
     market_pace_7d = np.nan
 
-    if model_name in {"pace14", "pace14_market"}:
+    if model_name in {"pace14", "pace14_market", "pace14_weekshape_flow"}:
         for weekday in range(7):
             history_dfs = []
             for df_m in history_raw.values():
@@ -282,95 +283,111 @@ def build_monthly_forecast(lt_df: pd.DataFrame, model_name: str, as_of_date: str
                 min_count=RECENT90_MIN_COUNT_WEEKDAY,
             )
 
-    # 4) build weekday-wise forecasts
-    for weekday in range(7):
-        history_dfs = []
-        history_all = None
-        avg_curve = None
-
-        if model_name in {"pace14", "pace14_market"}:
-            history_all = history_all_by_weekday.get(weekday)
-            avg_curve = baseline_curves_by_weekday.get(weekday)
-            if history_all is None or avg_curve is None:
-                continue
-        else:
-            for df_m in history_raw.values():
-                df_m_wd = filter_by_weekday(df_m, weekday=weekday)
-                if not df_m_wd.empty:
-                    history_dfs.append(df_m_wd)
-
-            if not history_dfs:
-                continue
-
-            if model_name == "avg":
-                avg_curve = moving_average_3months(history_dfs, lt_min=LT_MIN, lt_max=LT_MAX)
-            elif model_name == "recent90":
-                history_all = pd.concat(history_dfs, axis=0)
-                history_all.index = pd.to_datetime(history_all.index)
-                avg_curve = moving_average_recent_90days(
-                    lt_df=history_all,
-                    as_of_date=as_of_ts,
-                    lt_min=LT_MIN,
-                    lt_max=LT_MAX,
-                    min_count=RECENT90_MIN_COUNT_WEEKDAY,
-                )
-            elif model_name == "recent90w":
-                history_all = pd.concat(history_dfs, axis=0)
-                history_all.index = pd.to_datetime(history_all.index)
-                avg_curve = moving_average_recent_90days_weighted(
-                    lt_df=history_all,
-                    as_of_date=as_of_ts,
-                    lt_min=LT_MIN,
-                    lt_max=LT_MAX,
-                    min_count=RECENT90_MIN_COUNT_WEEKDAY,
-                )
-            else:
-                raise ValueError(f"Unknown model_name: {model_name}")
-
-        df_target_wd = filter_by_weekday(lt_df, weekday=weekday)
-        if df_target_wd.empty:
-            continue
-
-        if model_name in {"pace14", "pace14_market"}:
-            if model_name == "pace14_market":
-                fc_series, detail_df = forecast_final_from_pace14_market(
-                    lt_df=df_target_wd,
-                    baseline_curve=avg_curve,
-                    history_df=history_all,
-                    as_of_date=as_of_ts,
-                    capacity=cap,
-                    market_pace_7d=market_pace_7d,
-                    lt_min=0,
-                    lt_max=LT_MAX,
-                )
-            else:
-                fc_series, detail_df = forecast_final_from_pace14(
-                    lt_df=df_target_wd,
-                    baseline_curve=avg_curve,
-                    history_df=history_all,
-                    as_of_date=as_of_ts,
-                    capacity=cap,
-                    lt_min=0,
-                    lt_max=LT_MAX,
-                )
-        else:
-            fc_series = forecast_final_from_avg(
-                lt_df=df_target_wd,
-                avg_curve=avg_curve,
-                as_of_date=as_of_ts,
-                capacity=cap,
-                lt_min=0,
-                lt_max=LT_MAX,
-            )
-
+    if model_name == "pace14_weekshape_flow":
+        if not baseline_curves_by_weekday or not history_all_by_weekday:
+            return pd.Series(dtype=float)
+        fc_series, _ = forecast_final_from_pace14_weekshape_flow(
+            lt_df=lt_df,
+            baseline_curves_by_weekday=baseline_curves_by_weekday,
+            history_by_weekday=history_all_by_weekday,
+            as_of_date=as_of_ts,
+            capacity=cap,
+            hotel_tag=hotel_tag,
+            lt_min=0,
+            lt_max=LT_MAX,
+        )
         for stay_date, value in fc_series.items():
             all_forecasts[stay_date] = value
+    # 4) build weekday-wise forecasts
+    if model_name != "pace14_weekshape_flow":
+        for weekday in range(7):
+            history_dfs = []
+            history_all = None
+            avg_curve = None
+
+            if model_name in {"pace14", "pace14_market"}:
+                history_all = history_all_by_weekday.get(weekday)
+                avg_curve = baseline_curves_by_weekday.get(weekday)
+                if history_all is None or avg_curve is None:
+                    continue
+            else:
+                for df_m in history_raw.values():
+                    df_m_wd = filter_by_weekday(df_m, weekday=weekday)
+                    if not df_m_wd.empty:
+                        history_dfs.append(df_m_wd)
+
+                if not history_dfs:
+                    continue
+
+                if model_name == "avg":
+                    avg_curve = moving_average_3months(history_dfs, lt_min=LT_MIN, lt_max=LT_MAX)
+                elif model_name == "recent90":
+                    history_all = pd.concat(history_dfs, axis=0)
+                    history_all.index = pd.to_datetime(history_all.index)
+                    avg_curve = moving_average_recent_90days(
+                        lt_df=history_all,
+                        as_of_date=as_of_ts,
+                        lt_min=LT_MIN,
+                        lt_max=LT_MAX,
+                        min_count=RECENT90_MIN_COUNT_WEEKDAY,
+                    )
+                elif model_name == "recent90w":
+                    history_all = pd.concat(history_dfs, axis=0)
+                    history_all.index = pd.to_datetime(history_all.index)
+                    avg_curve = moving_average_recent_90days_weighted(
+                        lt_df=history_all,
+                        as_of_date=as_of_ts,
+                        lt_min=LT_MIN,
+                        lt_max=LT_MAX,
+                        min_count=RECENT90_MIN_COUNT_WEEKDAY,
+                    )
+                else:
+                    raise ValueError(f"Unknown model_name: {model_name}")
+
+            df_target_wd = filter_by_weekday(lt_df, weekday=weekday)
+            if df_target_wd.empty:
+                continue
+
+            if model_name in {"pace14", "pace14_market"}:
+                if model_name == "pace14_market":
+                    fc_series, detail_df = forecast_final_from_pace14_market(
+                        lt_df=df_target_wd,
+                        baseline_curve=avg_curve,
+                        history_df=history_all,
+                        as_of_date=as_of_ts,
+                        capacity=cap,
+                        market_pace_7d=market_pace_7d,
+                        lt_min=0,
+                        lt_max=LT_MAX,
+                    )
+                else:
+                    fc_series, detail_df = forecast_final_from_pace14(
+                        lt_df=df_target_wd,
+                        baseline_curve=avg_curve,
+                        history_df=history_all,
+                        as_of_date=as_of_ts,
+                        capacity=cap,
+                        lt_min=0,
+                        lt_max=LT_MAX,
+                    )
+            else:
+                fc_series = forecast_final_from_avg(
+                    lt_df=df_target_wd,
+                    avg_curve=avg_curve,
+                    as_of_date=as_of_ts,
+                    capacity=cap,
+                    lt_min=0,
+                    lt_max=LT_MAX,
+                )
+
+            for stay_date, value in fc_series.items():
+                all_forecasts[stay_date] = value
 
     if not all_forecasts:
         return pd.Series(dtype=float)
 
     # avg model only needs the projected series
-    if model_name in {"avg", "pace14", "pace14_market"}:
+    if model_name in {"avg", "pace14", "pace14_market", "pace14_weekshape_flow"}:
         return _build_projected_series(
             lt_df=lt_df,
             forecasts=all_forecasts,
@@ -416,7 +433,7 @@ def build_evaluation_detail(hotel_tag: str, target_months: list[str]) -> pd.Data
         for asof_type, asof_date_str in resolve_asof_dates_for_month(target_month):
             asof_ts = pd.to_datetime(asof_date_str)
 
-            for model_name in ["avg", "recent90", "recent90w", "pace14", "pace14_market"]:
+            for model_name in ["avg", "recent90", "recent90w", "pace14", "pace14_market", "pace14_weekshape_flow"]:
                 try:
                     forecast_series = build_monthly_forecast(
                         lt_df=lt_df,

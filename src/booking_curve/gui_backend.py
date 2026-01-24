@@ -27,6 +27,7 @@ from booking_curve.forecast_simple import (
     compute_market_pace_7d,
     forecast_final_from_pace14,
     forecast_final_from_pace14_market,
+    forecast_final_from_pace14_weekshape_flow,
     moving_average_3months,
     moving_average_recent_90days,
     moving_average_recent_90days_weighted,
@@ -582,7 +583,7 @@ def get_booking_curve_data(
             )
     elif model == "avg":
         forecast_curve = avg_curve_3m
-    elif model in {"pace14", "pace14_market"}:
+    elif model in {"pace14", "pace14_market", "pace14_weekshape_flow"}:
         baseline_curves: dict[int, pd.Series] = {}
         history_by_weekday: dict[int, pd.DataFrame] = {}
 
@@ -638,6 +639,22 @@ def get_booking_curve_data(
                     detail_df["market_pace_7d"] = market_pace_7d
                     pace14_detail = detail_df
                     pace14_detail.attrs["market_pace_detail"] = mp_detail
+            elif model == "pace14_weekshape_flow":
+                final_series_full, detail_df = forecast_final_from_pace14_weekshape_flow(
+                    lt_df=lt_df,
+                    baseline_curves_by_weekday=baseline_curves,
+                    history_by_weekday=history_by_weekday,
+                    as_of_date=asof_ts,
+                    capacity=_get_capacity(hotel_tag, None),
+                    hotel_tag=hotel_tag,
+                    lt_min=0,
+                    lt_max=lt_max,
+                )
+                final_series = final_series_full.reindex(df_week.index)
+                if not detail_df.empty:
+                    pace14_detail = detail_df.reindex(df_week.index)
+                else:
+                    pace14_detail = None
             else:
                 final_series, detail_df = forecast_final_from_pace14(
                     lt_df=df_week,
@@ -883,7 +900,7 @@ def run_forecast_for_gui(
     - as_of_date: "YYYY-MM-DD" 形式。run_forecast_batch 側では
       pd.to_datetime で解釈される前提。
     - gui_model: GUI のコンボボックス値
-      ("avg", "recent90", "recent90_adj", "recent90w", "recent90w_adj", "pace14", "pace14_market")
+      ("avg", "recent90", "recent90_adj", "recent90w", "recent90w_adj", "pace14", "pace14_market", "pace14_weekshape_flow")
     - capacity: 予測キャップ (None の場合は run_forecast_batch 側のデフォルトを使用)
     """
     # GUI からは "YYYY-MM-DD" が渡されるので、
@@ -964,6 +981,16 @@ def run_forecast_for_gui(
                 phase_factor=phase_factor,
                 phase_clip_pct=phase_clip_pct,
             )
+        elif base_model == "pace14_weekshape_flow":
+            run_forecast_batch.run_pace14_weekshape_flow_forecast(
+                target_month=ym,
+                as_of_date=asof_tag,
+                capacity=capacity,
+                pax_capacity=pax_capacity,
+                hotel_tag=hotel_tag,
+                phase_factor=phase_factor,
+                phase_clip_pct=phase_clip_pct,
+            )
         else:
             raise ValueError(f"Unsupported gui_model: {gui_model}")
 
@@ -977,6 +1004,7 @@ def _get_forecast_csv_prefix(gui_model: str) -> tuple[str, str]:
         "recent90w_adj": ("forecast_recent90w", "adjusted_projected_rooms"),
         "pace14": ("forecast_pace14", "projected_rooms"),
         "pace14_market": ("forecast_pace14_market", "projected_rooms"),
+        "pace14_weekshape_flow": ("forecast_pace14_weekshape_flow", "projected_rooms"),
     }
     if gui_model not in model_map:
         raise ValueError(f"Unsupported gui_model: {gui_model}")
@@ -1774,7 +1802,7 @@ def get_daily_forecast_table(
         予測基準日 "YYYY-MM-DD"
     gui_model : str
         GUI上で選択されたモデル名
-        ("avg", "recent90", "recent90_adj", "recent90w", "recent90w_adj", "pace14", "pace14_market")
+        ("avg", "recent90", "recent90_adj", "recent90w", "recent90w_adj", "pace14", "pace14_market", "pace14_weekshape_flow")
     capacity : float, optional
         None の場合は HOTEL_CONFIG の設定を使用
     pax_capacity : float, optional
@@ -1811,6 +1839,7 @@ def get_daily_forecast_table(
         "recent90w_adj": ("forecast_recent90w", "adjusted_projected_rooms"),
         "pace14": ("forecast_pace14", "projected_rooms"),
         "pace14_market": ("forecast_pace14_market", "projected_rooms"),
+        "pace14_weekshape_flow": ("forecast_pace14_weekshape_flow", "projected_rooms"),
     }
     if gui_model not in model_map:
         raise ValueError(f"Unsupported gui_model: {gui_model}")

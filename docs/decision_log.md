@@ -1315,6 +1315,10 @@
   * なし（運用決定。spec_* ではない）
 * Status: 反映済
 
+※2026/1/24　下記に修正済
+docs/handovers/YYYY-MM-DD_HHMM_<type>_<scope>__handover.md
+docs/thread_logs/YYYY-MM-DD_HHMM_<type>_<scope>__thread_log.md
+
 ---
 
 A-019

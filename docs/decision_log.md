@@ -1392,8 +1392,6 @@ A-019
 
 ---
 
-Proposed patch target: docs/decision_log.md
-
 ## D-20260124-004 pace14_weekshape_flow の gating 閾値（MIN_EVENTS）を到達可能値へ修正
 
 * Decision:

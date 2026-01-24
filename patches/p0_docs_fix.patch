@@ -1,0 +1,209 @@
+--- a/src/booking_curve/forecast_simple.py
++++ b/src/booking_curve/forecast_simple.py
+@@ -392,7 +392,7 @@
+     min_events_7d: int = 20,
+     min_abs_base_7d: float = 1.0,
+ ) -> tuple[float, pd.DataFrame]:
+-    """Compute 7-day market pace average and daily diagnostics."""
++    """Compute 7-day market pace (sum_actual/sum_base) and daily diagnostics."""
+ 
+     records = []
+     sum_actual_7d = 0.0
+
+--- a/docs/spec_models.md
++++ b/docs/spec_models.md
+@@ -310,51 +310,128 @@
+ 
+ #### 3.4.2 pace14_market
+ 
+-##### 概要
+-
+-- **目的**：pace14（直近LT帯）だけだと効きが短いので、**中間LT帯（例：15〜30日）に対して「直近の市場ペース（7日平均）」で補正**する。
+-- **重要**：現行実装では **pace14（PF）と market_factor は“掛け合わせない”**。LT帯で **排他的に適用**する。
+-
+-##### 市場ペース（market_pace）
+-
+-- 1日（target_date）あたりの市場ペース（概念）は、同一ホテルの複数stay_dateを集計して以下で定義する：
+-
+-  - `pickup_actual = OH(lt_now) - OH(lt_now+1)`
+-  - `pickup_base   = BASE(lt_now) - BASE(lt_now+1)`
+-  - `market_pace_raw = Σ pickup_actual / Σ pickup_base`
+-
+-  ※ `pickup_base` の分母が極小の場合は欠損（NaN）扱い。
+-
+-- `market_pace_7d` は直近7日分の `market_pace_raw` を平均して求める（欠損は除外）。  
+-  ※ 実装では診断用に日次の内訳も保持する。
+-
+-##### market_factor（線形＋clip：現行実装）
+-
+-- `market_beta` を用いて、`market_pace_7d` を **線形**に 1.00 周りで弱め/強めする：
+-
+-  - `raw_factor = 1 + market_beta * (market_pace_7d - 1)`
+-  - `market_factor = clip(raw_factor, 0.95, 1.05)`  （初期値）
+-
+-  - βの意味：
+-    - `β = 0`：無効（raw_factor=1）
+-    - `0 < β < 1`：市場ペースを弱めて反映（安全寄り）
+-    - `β = 1`：市場ペースをそのまま反映（ただしclipあり）
+-
+-##### 予測への適用（LT帯で排他）
+-
+-`base_delta = base_final - base_now` として、stay_dateごとの最終予測は以下：
+-
+-- `lt_now <= 14`：`final_forecast = OH_now + pace14_pf * base_delta`
+-- `15 <= lt_now <= 30`：`final_forecast = OH_now + market_factor * base_delta`
+-- `lt_now > 30`：`final_forecast = OH_now + base_delta`（market補正なし）
++`pace14` の PF（Pace Factor）に、直近のマーケットの強弱（market_pace）を反映して補正するモデル。
++
++- 適用LT帯：`MARKET_PACE_LT_MIN..MARKET_PACE_LT_MAX`（デフォルト：15..30）
++- 目的：PFが「自館だけの強弱」に過剰反応するのを避けつつ、直近のマーケットトレンドを穏やかに反映する
++
++---
++
++##### 3.4.2.1 market_pace_raw（1日ぶん）
++
++**定義（1日ぶんの market_pace_raw）**
++
++- 対象stay_date：`stay_date >= as_of_date` かつ `lt_now in [MARKET_PACE_LT_MIN, MARKET_PACE_LT_MAX]`
++- 対象pickup：`w = MARKET_PACE_LT_MAX - lt_now` として
++  - `actual_pickup = OH(lt_now) - OH(MARKET_PACE_LT_MAX)`
++  - `base_pickup   = BASE(lt_now) - BASE(MARKET_PACE_LT_MAX)`
++- 集計：上記pickupを stay_date で合算し、比で `market_pace_raw = sum_actual / sum_base` を算出
++- ガード：`n_events < min_events` または `abs(sum_base) < min_abs_base` の場合は `NaN`（無効扱い）
++
++---
++
++##### 3.4.2.2 market_pace_7d（直近7日・合算比）
++
++**定義（直近7日 market_pace_7d）**
++
++- as_of_date を `as_of_date, as_of_date-1, ..., as_of_date-6` とずらし、
++  各日について 3.4.2.1 の `sum_actual`, `sum_base`, `n_events` を取得する
++- 直近7日を合算し、比で `market_pace_7d = SUM(sum_actual) / SUM(sum_base)` を算出
++  - ※「日ごとの market_pace_raw の単純平均」ではなく、**pickup合算比（重み付き）**
++- ガード：`SUM(n_events) < min_events_7d` または `abs(SUM(sum_base)) < min_abs_base_7d` の場合は `NaN`
++
++---
++
++##### 3.4.2.3 market_factor（power補正）
++
++`market_pace_7d` を PF に掛ける係数（LTごとに減衰）。
++
++1) `market_pace_eff`（入力の安全化）
++
++- `market_pace_7d` が `NaN` の場合は `1.0`
++- `market_pace_raw_clip = clip(market_pace_7d, *MARKET_PACE_RAW_CLIP)`（デフォルト：0.50..2.20）
++- `market_pace_eff = max(market_pace_raw_clip, MARKET_PACE_FLOOR)`（デフォルト：0.20）
++
++2) `market_beta`（LTによる減衰）
++
++- `market_beta = exp(-MARKET_PACE_DECAY_K * (lt_now - MARKET_PACE_LT_MIN))`
++  - `MARKET_PACE_DECAY_K` デフォルト：0.15
++
++3) `market_factor_raw`（power）
++
++- `market_factor_raw = market_pace_eff ** market_beta`
++
++4) `market_factor`（最終clip）
++
++- `market_factor = clip(market_factor_raw, *MARKET_PACE_CLIP)`（デフォルト：0.85..1.15）
++
++5) PF反映（LT帯内のみ）
++
++- `pf_market = pf_clipped * market_factor`
++- LT帯外（`lt_now < MARKET_PACE_LT_MIN` または `lt_now > MARKET_PACE_LT_MAX`）は `pf_market = pf_clipped`
++
++---
++
++#### 3.4.3 pace14_weekshape_flow
++
++`pace14` の「14日以内はPF、それ以降はベースライン」ルールに対し、  
++`LT 15..45` の範囲で「週の形（iso_week × グループ）」に応じた flow（pickup）係数を適用するモデル。
++
++- 適用LT帯：`WEEKSHAPE_LT_MIN..WEEKSHAPE_LT_MAX`（デフォルト：15..45）
++- ウィンドウ：`WEEKSHAPE_W`（デフォルト：7）  
++  `OH(lt_now) - OH(lt_now + W)` の pickup を「実績」として扱う
++- 係数clip：`WEEKSHAPE_CLIP`（デフォルト：0.85..1.15）
++- ガード：
++  - `n_events < WEEKSHAPE_MIN_EVENTS`（デフォルト：10） または
++  - `abs(sum_base) < WEEKSHAPE_MIN_SUM_BASE`（デフォルト：1.0）
++  の場合は係数 `1.0`（gated=True）
++
++##### 3.4.3.1 week_group（G1..G4）
++（略：パッチ本文の続きは上記の新規節に含まれる）
+@@
+-#### 3.4.3 診断情報（UI表示用）
++#### 3.4.4 診断情報（UI表示用）
+
+--- a/docs/spec_data_layer.md
++++ b/docs/spec_data_layer.md
+@@ -345,6 +345,39 @@
+   欠損セルが存在する場合でも、**monthly_curve レベルでは補間は行わない**（描画時に NOCB 適用予定）。
+ ---
+ 
++
++### 2-5. calendar_features（カレンダー特徴量）
++
++セグメント補正（`segment_adjustment`）や一部モデルのグルーピングで使用する「日付特徴量」テーブル。
++
++- ファイル：`output/calendar_features_<hotel_tag>.csv`
++- 生成スクリプト：`src/build_calendar_features.py`
++- 自動生成：`build_calendar_features.ensure_calendar_for_dates()` により、**ファイルが無い／範囲不足の場合は必要範囲を自動生成**する  
++  - 呼び出し元例：`booking_curve/segment_adjustment.py`（`_load_calendar`）
++
++#### カラム定義（現行実装）
++
++- `date`（日付、YYYY-MM-DD）
++- `year`, `month`, `day`
++- `weekday`（0=Mon..6=Sun）
++- `is_weekend`（土日）
++- `is_jp_holiday`（日本の祝日。`jpholiday` が無い環境では常に False）
++- `is_holiday_or_weekend`（祝日 or 週末）
++- `is_before_holiday`（翌日が祝日or週末）
++- `is_after_holiday`（前日が祝日or週末）
++- `holiday_block_id`（祝日or週末の連続ブロックID。該当なしは空）
++- `holiday_block_len`（ブロック長。該当なしは 0）
++- `holiday_position`（`none/single/first/middle/last`）
++- `is_long_holiday_middle`（3連休以上の中日フラグ）
++
++#### 運用メモ
++
++- 祝日判定は `jpholiday` に依存する。EXE配布環境で未導入の場合、祝日は検知できない（週末のみで判定）。
++- 自動生成を前提とするため、通常運用では事前生成は必須ではない。
++  ただし「祝日判定を有効にしたい」場合は `jpholiday` を同梱／導入したうえで生成する。
++
++---
+
+--- a/docs/spec_evaluation.md
++++ b/docs/spec_evaluation.md
+@@ -15,7 +15,7 @@
+ ## 1. 目的
+ 
+-1. 各モデル（`avg`, `recent90`, `recent90_adj`, `recent90w`, `recent90w_adj`）が  
++1. 各モデル（`avg`, `recent90`, `recent90_adj`, `recent90w`, `recent90w_adj`, `pace14`, `pace14_market`, `pace14_weekshape_flow`）が  
+    **どの程度の誤差で月次室数を予測しているか** を定量化する。
+@@ -34,7 +34,7 @@
+ - ホテル：`hotel_tag`
+ - 宿泊月：`target_month`（例：`202512`）
+-- モデル：`model`（`avg`, `recent90`, `recent90_adj`, `recent90w`, `recent90w_adj`）
++- モデル：`model`（`avg`, `recent90`, `recent90_adj`, `recent90w`, `recent90w_adj`, `pace14`, `pace14_market`, `pace14_weekshape_flow`）
+@@
+-  - `model` … `avg`, `recent90`, `recent90_adj`, `recent90w`, `recent90w_adj`
++  - `model` … `avg`, `recent90`, `recent90_adj`, `recent90w`, `recent90w_adj`, `pace14`, `pace14_market`, `pace14_weekshape_flow`
+
+--- a/docs/decision_log.md
++++ b/docs/decision_log.md
+@@ -1354,7 +1354,7 @@
+   * `docs/spec_models.md`: pace14_market セクション（market_factorの定義・clip方針）
+-* Status: 実装反映済
++* Status: spec反映済
+@@ -1371,7 +1371,7 @@
+   * `docs/spec_models.md`: モデル一覧／weekshape_flow（新規）定義
+   * `docs/spec_evaluation.md`: 評価対象モデル一覧（必要なら）
+-* Status: 実装反映済
++* Status: spec反映済
+@@ -1388,6 +1388,6 @@
+   * `docs/spec_data_layer.md`: calendar_features の扱い（生成/必須性の位置づけ）
+   * `docs/spec_models.md`: calendar依存モデルの前提（必要なら）
+-* Status: 実装反映済
++* Status: spec反映済

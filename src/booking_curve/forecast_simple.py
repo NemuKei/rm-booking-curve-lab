@@ -392,7 +392,7 @@ def compute_market_pace_7d(
     min_events_7d: int = 20,
     min_abs_base_7d: float = 1.0,
 ) -> tuple[float, pd.DataFrame]:
-    """Compute 7-day market pace average and daily diagnostics."""
+    """Compute 7-day market pace (sum_actual/sum_base) and daily diagnostics."""
 
     records = []
     sum_actual_7d = 0.0

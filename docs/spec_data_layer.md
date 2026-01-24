@@ -345,6 +345,37 @@ LT_DATA と並ぶ、もう一つの重要な LT 系データが **月次ブッ�
   欠損セルが存在する場合でも、**monthly_curve レベルでは補間は行わない**（描画時に NOCB 適用予定）。
 ---
 
+## 2.5 calendar_features（カレンダー特徴量）
+
+セグメント補正（`segment_adjustment`）や一部の評価集計（休日/連休ポジション等）で使用する日付特徴量テーブル。
+
+- ファイル：`output/calendar_features_<hotel_tag>.csv`
+- 生成：`src/build_calendar_features.py`
+- 自動生成：`build_calendar_features.ensure_calendar_for_dates()` により、ファイルが無い／範囲不足の場合は必要範囲を自動生成して補完する
+
+### 2.5-1. カラム（現行実装）
+
+- `date`（YYYY-MM-DD）
+- `year`, `month`, `day`
+- `weekday`（0=Mon..6=Sun）
+- `is_weekend`（土日）
+- `is_jp_holiday`（日本の祝日。`jpholiday` が無い環境では常に False）
+- `is_holiday_or_weekend`（祝日 or 週末）
+- `is_before_holiday`（翌日が祝日or週末）
+- `is_after_holiday`（前日が祝日or週末）
+- `holiday_block_id`（祝日or週末の連続ブロックID。該当なしは空）
+- `holiday_block_len`（ブロック長。該当なしは 0）
+- `holiday_position`（`none/single/first/middle/last`）
+- `is_long_holiday_middle`（3連休以上の中日フラグ）
+
+### 2.5-2. 運用メモ
+
+- 祝日判定は `jpholiday` に依存する。EXE配布環境で未導入の場合、祝日は検知できない（週末のみで判定）。
+- 自動生成を前提とするため、通常運用では事前生成は必須ではない。
+  - ただし「祝日判定を有効にしたい」場合は `jpholiday` を同梱／導入したうえで生成する。
+
+---
+
 ## 3. 評価用データ
 
 評価レイヤーのデータは、大きく以下の 3 種類に分かれます。

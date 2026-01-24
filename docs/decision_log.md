@@ -1354,7 +1354,7 @@ A-019
 * Spec link:
 
   * `docs/spec_models.md`: pace14_market セクション（market_factorの定義・clip方針）
-* Status: 実装反映済
+* Status: spec反映済
 
 ---
 
@@ -1371,7 +1371,7 @@ A-019
 
   * `docs/spec_models.md`: モデル一覧／weekshape_flow（新規）定義
   * `docs/spec_evaluation.md`: 評価対象モデル一覧（必要なら）
-* Status: 実装反映済
+* Status: spec反映済
 
 ---
 
@@ -1388,6 +1388,6 @@ A-019
 
   * `docs/spec_data_layer.md`: calendar_features の扱い（生成/必須性の位置づけ）
   * `docs/spec_models.md`: calendar依存モデルの前提（必要なら）
-* Status: 実装反映済
+* Status: spec反映済
 
 ---

@@ -17,7 +17,12 @@
 python -m venv .venv
 .\.venv\Scripts\activate
 pip install -U pip
-pip install -r requirements.txt
+
+# 推奨（開発者）：pyproject.toml の依存＋dev（ruff）を一括導入
+pip install -e ".[dev]"
+
+# 代替（最小）：requirements.txt のみ（ruff等は別途）
+# pip install -r requirements.txt
 ````
 
 ---
@@ -74,7 +79,7 @@ python make_release_zip.py
 
 ## 5) Lint / Format（導入している場合）
 
-※プロジェクトで ruff を使っている前提。未導入ならこの章は消す。
+※ ruff は pyproject.toml の dev extras（.[dev]）で導入する前提。
 
 ```powershell
 .\.venv\Scripts\activate

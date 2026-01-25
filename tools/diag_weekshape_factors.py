@@ -78,14 +78,44 @@ def main() -> None:
             print(tag, "detail: EMPTY")
             return
         cols = set(detail.columns)
-        gated_true = int(detail["gated"].sum()) if "gated" in cols else -1
-        neq1 = int((detail["factor"] != 1.0).sum()) if "factor" in cols else -1
-        print(
-            tag,
-            f"detail_rows={len(detail)} gated_true={gated_true} factor!=1={neq1}",
-        )
-        if "factor" in cols:
+        if "gated" in cols and "factor" in cols:
+            gated_true = int(detail["gated"].sum())
+            neq1 = int((detail["factor"] != 1.0).sum())
+            print(
+                tag,
+                f"detail_rows={len(detail)} gated_true={gated_true} factor!=1={neq1}",
+            )
             f = detail["factor"].astype(float)
+            print(
+                tag,
+                "factor stats:",
+                "min=",
+                float(f.min()),
+                "p50=",
+                float(f.median()),
+                "max=",
+                float(f.max()),
+            )
+            return
+        if "weekshape_factor" in cols:
+            weekshape_n_events = detail.get("weekshape_n_events")
+            if weekshape_n_events is None:
+                weekshape_n_events = pd.Series([float("nan")] * len(detail), index=detail.index)
+            weekshape_sum_base = detail.get("weekshape_sum_base")
+            if weekshape_sum_base is None:
+                weekshape_sum_base = pd.Series([float("nan")] * len(detail), index=detail.index)
+            gated = (
+                (weekshape_n_events < fs.WEEKSHAPE_MIN_EVENTS)
+                | (weekshape_sum_base.abs() < fs.WEEKSHAPE_MIN_SUM_BASE)
+                | weekshape_sum_base.isna()
+            )
+            gated_true = int(gated.sum())
+            neq1 = int((detail["weekshape_factor"] != 1.0).sum())
+            print(
+                tag,
+                f"detail_rows={len(detail)} gated_true={gated_true} factor!=1={neq1}",
+            )
+            f = detail["weekshape_factor"].astype(float)
             print(
                 tag,
                 "factor stats:",

@@ -80,7 +80,3 @@
 ## References
 - 参照ファイル（パス＋一言理由）
   - `docs/spec_*.md` / `AGENTS.md` / 該当コード / ログ など
-
-## Questions (if any)
-- 不足情報がある場合のみ。最大5つ。
-- Yes/No か短文で答えられる形を優先。

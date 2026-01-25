@@ -23,7 +23,7 @@ pip install -e ".[dev]"
 
 # 代替（最小）：requirements.txt のみ（ruff等は別途）
 # pip install -r requirements.txt
-````
+```
 
 ---
 

@@ -1408,7 +1408,7 @@ A-019
 
 ---
 
-## D-20260125-XXX 開発依存（ruff）を pyproject の dev extras で固定し、LFを正として運用する
+## D-20260125-001 開発依存（ruff）を pyproject の dev extras で固定し、LFを正として運用する
 
 * Decision:
 
@@ -1425,7 +1425,7 @@ A-019
 
 ---
 
-## D-20260125-XXX capacity 定義は固定室数とし、“ベース小”判定はLT帯別に持つ
+## D-20260125-002 capacity 定義は固定室数とし、“ベース小”判定はLT帯別に持つ
 
 * Decision:
 

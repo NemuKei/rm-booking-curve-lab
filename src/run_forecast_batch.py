@@ -1454,42 +1454,6 @@ def run_pace14_market_forecast(
     baseline_curves_pax: dict[int, pd.Series] = {}
     history_by_weekday_pax: dict[int, pd.DataFrame] = {}
     pax_cap_for_forecast = _resolve_pax_capacity_for_forecast(pax_capacity)
-    rescue_cfg = HOTEL_CONFIG.get(hotel_tag, {}).get("base_small_rescue", {})
-    if not isinstance(rescue_cfg, dict):
-        rescue_cfg = {}
-    learned_params = HOTEL_CONFIG.get(hotel_tag, {}).get("learned_params", {})
-    if not isinstance(learned_params, dict):
-        learned_params = {}
-    learned_rescue = learned_params.get("base_small_rescue", {})
-    if not isinstance(learned_rescue, dict):
-        learned_rescue = {}
-    learned_weekshape = learned_rescue.get("weekshape", {})
-    if not isinstance(learned_weekshape, dict):
-        learned_weekshape = {}
-    base_small_rescue_params = None
-    if learned_weekshape:
-        base_small_rescue_params = {
-            "rescue_cfg": rescue_cfg,
-            "learned_weekshape": learned_weekshape,
-        }
-    rescue_cfg = HOTEL_CONFIG.get(hotel_tag, {}).get("base_small_rescue", {})
-    if not isinstance(rescue_cfg, dict):
-        rescue_cfg = {}
-    learned_params = HOTEL_CONFIG.get(hotel_tag, {}).get("learned_params", {})
-    if not isinstance(learned_params, dict):
-        learned_params = {}
-    learned_rescue = learned_params.get("base_small_rescue", {})
-    if not isinstance(learned_rescue, dict):
-        learned_rescue = {}
-    learned_weekshape = learned_rescue.get("weekshape", {})
-    if not isinstance(learned_weekshape, dict):
-        learned_weekshape = {}
-    base_small_rescue_params = None
-    if learned_weekshape:
-        base_small_rescue_params = {
-            "rescue_cfg": rescue_cfg,
-            "learned_weekshape": learned_weekshape,
-        }
 
     for weekday in range(7):
         history_dfs = []
@@ -1691,6 +1655,24 @@ def run_pace14_weekshape_flow_forecast(
     baseline_curves_pax: dict[int, pd.Series] = {}
     history_by_weekday_pax: dict[int, pd.DataFrame] = {}
     pax_cap_for_forecast = _resolve_pax_capacity_for_forecast(pax_capacity)
+    base_small_rescue_params: dict[str, object] | None = None
+    rescue_cfg = HOTEL_CONFIG.get(hotel_tag, {}).get("base_small_rescue", {})
+    if not isinstance(rescue_cfg, dict):
+        rescue_cfg = {}
+    learned_params = HOTEL_CONFIG.get(hotel_tag, {}).get("learned_params", {})
+    if not isinstance(learned_params, dict):
+        learned_params = {}
+    learned_rescue = learned_params.get("base_small_rescue", {})
+    if not isinstance(learned_rescue, dict):
+        learned_rescue = {}
+    learned_weekshape = learned_rescue.get("weekshape", {})
+    if not isinstance(learned_weekshape, dict):
+        learned_weekshape = {}
+    if learned_weekshape:
+        base_small_rescue_params = {
+            "rescue_cfg": rescue_cfg,
+            "learned_weekshape": learned_weekshape,
+        }
 
     for weekday in range(7):
         history_dfs = []
@@ -1761,7 +1743,7 @@ def run_pace14_weekshape_flow_forecast(
             as_of_date=as_of_ts,
             capacity=pax_cap_for_forecast,
             hotel_tag=hotel_tag,
-            base_small_rescue_params=base_small_rescue_params,
+            base_small_rescue_params=None,
             lt_min=0,
             lt_max=LT_MAX,
         )

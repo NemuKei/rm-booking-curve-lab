@@ -562,6 +562,57 @@ def _safe_bool(value: object) -> bool:
     return bool(value)
 
 
+def _normalize_rescue_mode(value: object | None) -> str:
+    if value is None:
+        return "hybrid"
+    mode = str(value).strip().lower()
+    if mode not in {"add", "hybrid"}:
+        return "hybrid"
+    return mode
+
+
+def _coerce_cap_ratio(value: object | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        ratio = float(value)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(ratio):
+        return None
+    return ratio
+
+
+def _resolve_base_small_rescue_settings(
+    base_small_rescue_params: dict[str, object] | None,
+) -> tuple[bool, str, float | None, str]:
+    if not isinstance(base_small_rescue_params, dict):
+        return False, "hybrid", None, "no_params"
+
+    rescue_cfg = base_small_rescue_params.get("rescue_cfg")
+    learned_weekshape = base_small_rescue_params.get("learned_weekshape")
+
+    mode = _normalize_rescue_mode(rescue_cfg.get("mode") if isinstance(rescue_cfg, dict) else None)
+
+    if not isinstance(learned_weekshape, dict) or not learned_weekshape:
+        return False, mode, None, "no_learned_params"
+
+    if isinstance(rescue_cfg, dict) and "cap_ratio_override" in rescue_cfg:
+        candidate = rescue_cfg.get("cap_ratio_override")
+    elif "cap_ratio_selected" in learned_weekshape:
+        candidate = learned_weekshape.get("cap_ratio_selected")
+    elif "p95" in learned_weekshape:
+        candidate = learned_weekshape.get("p95")
+    else:
+        return False, mode, None, "no_cap_ratio"
+
+    cap_ratio = _coerce_cap_ratio(candidate)
+    if cap_ratio is None or cap_ratio < 0.0 or cap_ratio > 1.0:
+        return False, mode, None, "invalid_cap_ratio"
+
+    return True, mode, float(cap_ratio), "applied"
+
+
 def _load_calendar_df_for_dates(hotel_tag: str, dates: pd.DatetimeIndex) -> pd.DataFrame:
     path = build_calendar_features.ensure_calendar_for_dates(hotel_tag, dates)
     try:
@@ -713,6 +764,7 @@ def forecast_final_from_pace14_weekshape_flow(
     as_of_date: pd.Timestamp,
     capacity: float,
     hotel_tag: str,
+    base_small_rescue_params: dict[str, object] | None = None,
     lt_min: int = 0,
     lt_max: int = 90,
 ) -> tuple[pd.Series, pd.DataFrame]:
@@ -749,6 +801,7 @@ def forecast_final_from_pace14_weekshape_flow(
                 "sum_base": float(row.get("sum_base", np.nan)),
                 "factor_raw": row.get("factor_raw", np.nan),
                 "factor": float(row.get("factor", 1.0)),
+                "gated": bool(row.get("gated", False)),
             }
 
     cal_df = _load_calendar_df_for_dates(hotel_tag, working_df.index)
@@ -800,11 +853,41 @@ def forecast_final_from_pace14_weekshape_flow(
         weekshape_factor_raw = detail_info.get("factor_raw", np.nan)
         weekshape_n_events = int(detail_info.get("n_events", 0))
         weekshape_sum_base = detail_info.get("sum_base", np.nan)
+        weekshape_gated = bool(detail_info.get("gated", False))
+
+        base_small_rescue_applied = False
+        base_small_rescue_mode = "hybrid"
+        base_small_rescue_cap_ratio = np.nan
+        base_small_rescue_pickup = np.nan
+        base_small_rescue_reason = "not_gated"
 
         if lt_now <= PACE14_UPPER_LT:
             final_forecast = float(current_oh + pf_value * base_delta)
         elif WEEKSHAPE_LT_MIN <= lt_now <= WEEKSHAPE_LT_MAX:
-            final_forecast = float(current_oh + weekshape_factor * base_delta)
+            if weekshape_gated:
+                enabled, mode, cap_ratio, reason = _resolve_base_small_rescue_settings(base_small_rescue_params)
+                base_small_rescue_mode = mode
+                base_small_rescue_reason = reason
+                if enabled and cap_ratio is not None:
+                    base_small_rescue_cap_ratio = float(cap_ratio)
+                    rescue_pickup_cap = float(base_small_rescue_cap_ratio * capacity)
+                    remaining_capacity = max(0.0, float(capacity - float(current_oh)))
+                    rescue_pickup = min(rescue_pickup_cap, remaining_capacity)
+                    base_small_rescue_pickup = float(rescue_pickup)
+
+                    base_delta_nonneg = max(float(base_delta), 0.0)
+                    if mode == "add":
+                        remaining = base_delta_nonneg + rescue_pickup
+                    else:
+                        remaining = max(base_delta_nonneg, rescue_pickup)
+
+                    final_forecast = float(current_oh + remaining)
+                    base_small_rescue_applied = True
+                    base_small_rescue_reason = "applied"
+                else:
+                    final_forecast = float(current_oh + weekshape_factor * base_delta)
+            else:
+                final_forecast = float(current_oh + weekshape_factor * base_delta)
         else:
             final_forecast = float(current_oh + base_delta)
 
@@ -821,6 +904,12 @@ def forecast_final_from_pace14_weekshape_flow(
                 "weekshape_factor_raw": weekshape_factor_raw,
                 "weekshape_n_events": weekshape_n_events,
                 "weekshape_sum_base": weekshape_sum_base,
+                "weekshape_gated": weekshape_gated,
+                "base_small_rescue_applied": base_small_rescue_applied,
+                "base_small_rescue_mode": base_small_rescue_mode,
+                "base_small_rescue_cap_ratio": base_small_rescue_cap_ratio,
+                "base_small_rescue_pickup": base_small_rescue_pickup,
+                "base_small_rescue_reason": base_small_rescue_reason,
             }
         )
         details[stay_date] = pf_info

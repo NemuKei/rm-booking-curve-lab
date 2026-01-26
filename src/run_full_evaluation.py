@@ -286,6 +286,24 @@ def build_monthly_forecast(lt_df: pd.DataFrame, model_name: str, as_of_date: str
     if model_name == "pace14_weekshape_flow":
         if not baseline_curves_by_weekday or not history_all_by_weekday:
             return pd.Series(dtype=float)
+        rescue_cfg = HOTEL_CONFIG.get(hotel_tag, {}).get("base_small_rescue", {})
+        if not isinstance(rescue_cfg, dict):
+            rescue_cfg = {}
+        learned_params = HOTEL_CONFIG.get(hotel_tag, {}).get("learned_params", {})
+        if not isinstance(learned_params, dict):
+            learned_params = {}
+        learned_rescue = learned_params.get("base_small_rescue", {})
+        if not isinstance(learned_rescue, dict):
+            learned_rescue = {}
+        learned_weekshape = learned_rescue.get("weekshape", {})
+        if not isinstance(learned_weekshape, dict):
+            learned_weekshape = {}
+        base_small_rescue_params = None
+        if learned_weekshape:
+            base_small_rescue_params = {
+                "rescue_cfg": rescue_cfg,
+                "learned_weekshape": learned_weekshape,
+            }
         fc_series, _ = forecast_final_from_pace14_weekshape_flow(
             lt_df=lt_df,
             baseline_curves_by_weekday=baseline_curves_by_weekday,
@@ -293,6 +311,7 @@ def build_monthly_forecast(lt_df: pd.DataFrame, model_name: str, as_of_date: str
             as_of_date=as_of_ts,
             capacity=cap,
             hotel_tag=hotel_tag,
+            base_small_rescue_params=base_small_rescue_params,
             lt_min=0,
             lt_max=LT_MAX,
         )

@@ -737,6 +737,26 @@ def get_booking_curve_data(
                     pace14_detail = detail_df
                     pace14_detail.attrs["market_pace_detail"] = mp_detail
             elif model == "pace14_weekshape_flow":
+                rescue_cfg = HOTEL_CONFIG.get(hotel_tag, {}).get("base_small_rescue", {})
+                if not isinstance(rescue_cfg, dict):
+                    rescue_cfg = {}
+                learned_params = HOTEL_CONFIG.get(hotel_tag, {}).get("learned_params", {})
+                if not isinstance(learned_params, dict):
+                    learned_params = {}
+                learned_rescue = learned_params.get("base_small_rescue", {})
+                if not isinstance(learned_rescue, dict):
+                    learned_rescue = {}
+                learned_weekshape = learned_rescue.get("weekshape", {})
+                if not isinstance(learned_weekshape, dict):
+                    learned_weekshape = {}
+
+                base_small_rescue_params = None
+                if learned_weekshape:
+                    base_small_rescue_params = {
+                        "rescue_cfg": rescue_cfg,
+                        "learned_weekshape": learned_weekshape,
+                    }
+
                 final_series_full, detail_df = forecast_final_from_pace14_weekshape_flow(
                     lt_df=lt_df,
                     baseline_curves_by_weekday=baseline_curves,
@@ -744,6 +764,7 @@ def get_booking_curve_data(
                     as_of_date=asof_ts,
                     capacity=_get_capacity(hotel_tag, None),
                     hotel_tag=hotel_tag,
+                    base_small_rescue_params=base_small_rescue_params,
                     lt_min=0,
                     lt_max=lt_max,
                 )

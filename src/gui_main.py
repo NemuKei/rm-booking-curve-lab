@@ -5511,13 +5511,14 @@ class BookingCurveApp(tk.Tk):
                         window_months=3,
                         sample_stride_days=7,
                     )
-                except Exception:  # noqa: BLE001
+                except Exception as exc:  # noqa: BLE001
                     logging.exception("base-small weekshape learning failed")
+                    err_msg = str(exc)
                     self.after(
                         0,
-                        lambda: messagebox.showwarning(
+                        lambda err_msg=err_msg: messagebox.showwarning(
                             "学習警告",
-                            f"base-small週次学習に失敗しました（非致命）:\n{exc}",
+                            f"base-small週次学習に失敗しました（非致命）:\n{err_msg}",
                         ),
                     )
                     return

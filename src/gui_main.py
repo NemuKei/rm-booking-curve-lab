@@ -241,12 +241,14 @@ try:
         LOCAL_OVERRIDES_DIR,
         STARTUP_INIT_LOG_PATH,
         clear_local_override_raw_root_dir,
+        get_hotel_base_small_rescue_cfg,
         get_hotel_rounding_units,
         get_local_overrides_path,
         load_phase_overrides,
         pop_runtime_init_errors,
         reload_hotel_config_inplace,
         set_local_override_raw_root_dir,
+        update_hotel_base_small_rescue_cfg,
         update_hotel_rounding_units,
         write_phase_overrides,
     )
@@ -474,6 +476,7 @@ class BookingCurveApp(tk.Tk):
 
         self._refresh_master_rounding_units()
         self._update_master_rounding_units_state()
+        self._refresh_master_base_small_rescue()
 
         try:
             clear_evaluation_detail_cache()
@@ -1412,6 +1415,47 @@ class BookingCurveApp(tk.Tk):
             round_save_btn,
         ]
 
+        # ------- ベース小救済（rooms） -------
+        base_small_frame = ttk.LabelFrame(frame, text="ベース小救済（rooms）")
+        base_small_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, UI_SECTION_PADY))
+
+        ttk.Label(base_small_frame, text="mode:").grid(
+            row=0,
+            column=0,
+            sticky="w",
+            padx=UI_GRID_PADX,
+            pady=UI_GRID_PADY,
+        )
+        self.master_base_small_mode_var = tk.StringVar()
+        base_small_mode_combo = ttk.Combobox(
+            base_small_frame,
+            textvariable=self.master_base_small_mode_var,
+            state="readonly",
+            width=10,
+        )
+        base_small_mode_combo["values"] = ["hybrid", "add"]
+        base_small_mode_combo.grid(row=0, column=1, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
+
+        ttk.Label(base_small_frame, text="cap_ratio_override:").grid(
+            row=0,
+            column=2,
+            sticky="w",
+            padx=UI_GRID_PADX * 2,
+            pady=UI_GRID_PADY,
+        )
+        self.master_base_small_cap_ratio_var = tk.StringVar()
+        ttk.Entry(
+            base_small_frame,
+            textvariable=self.master_base_small_cap_ratio_var,
+            width=10,
+        ).grid(row=0, column=3, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
+
+        ttk.Button(
+            base_small_frame,
+            text="保存（このホテルのみ）",
+            command=self._on_save_master_base_small_rescue,
+        ).grid(row=0, column=4, padx=UI_GRID_PADX * 2, pady=UI_GRID_PADY, sticky="e")
+
         # ------- RAW取込元（このPCのみ） -------
         raw_root_frame = ttk.LabelFrame(frame, text="RAW取込元（このPCのみ）")
         raw_root_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, UI_SECTION_PADY))
@@ -1582,6 +1626,7 @@ class BookingCurveApp(tk.Tk):
         self._refresh_master_daily_caps()
         self._refresh_master_rounding_units()
         self._update_master_rounding_units_state()
+        self._refresh_master_base_small_rescue()
         self._refresh_master_raw_root_dir()
         self._update_master_missing_check_status()
 
@@ -1591,6 +1636,7 @@ class BookingCurveApp(tk.Tk):
         self._refresh_master_daily_caps()
         self._refresh_master_rounding_units()
         self._update_master_rounding_units_state()
+        self._refresh_master_base_small_rescue()
         self._refresh_master_raw_root_dir()
         self._update_master_missing_check_status()
 
@@ -1608,6 +1654,7 @@ class BookingCurveApp(tk.Tk):
         self._refresh_master_daily_caps()
         self._refresh_master_rounding_units()
         self._update_master_rounding_units_state()
+        self._refresh_master_base_small_rescue()
         self._refresh_master_raw_root_dir()
         self._update_master_missing_check_status()
 
@@ -1783,6 +1830,73 @@ class BookingCurveApp(tk.Tk):
 
         self._refresh_master_rounding_units()
         messagebox.showinfo("保存完了", "月次丸め単位を保存しました。")
+
+    def _refresh_master_base_small_rescue(self) -> None:
+        if not hasattr(self, "master_base_small_mode_var"):
+            return
+
+        hotel_tag = self.hotel_var.get().strip()
+        if not hotel_tag:
+            self.master_base_small_mode_var.set("")
+            self.master_base_small_cap_ratio_var.set("")
+            return
+
+        rescue_cfg = get_hotel_base_small_rescue_cfg(hotel_tag)
+        mode_raw = rescue_cfg.get("mode") if isinstance(rescue_cfg, dict) else None
+        mode = str(mode_raw).strip().lower() if mode_raw is not None else ""
+        if mode not in {"hybrid", "add"}:
+            mode = "hybrid"
+        self.master_base_small_mode_var.set(mode)
+
+        cap_ratio = rescue_cfg.get("cap_ratio_override") if isinstance(rescue_cfg, dict) else None
+        if cap_ratio is None:
+            self.master_base_small_cap_ratio_var.set("")
+        else:
+            try:
+                cap_ratio_val = float(cap_ratio)
+            except (TypeError, ValueError):
+                self.master_base_small_cap_ratio_var.set(str(cap_ratio))
+            else:
+                if np.isnan(cap_ratio_val):
+                    self.master_base_small_cap_ratio_var.set("")
+                else:
+                    self.master_base_small_cap_ratio_var.set(f"{cap_ratio_val:g}")
+
+    def _on_save_master_base_small_rescue(self) -> None:
+        hotel_tag = self.hotel_var.get().strip()
+        if not hotel_tag:
+            messagebox.showerror("エラー", "ホテルが選択されていません。")
+            return
+
+        mode = self.master_base_small_mode_var.get().strip().lower()
+        if mode not in {"hybrid", "add"}:
+            messagebox.showerror("エラー", "mode は hybrid / add のいずれかを選択してください。")
+            return
+
+        cap_ratio_str = self.master_base_small_cap_ratio_var.get().strip()
+        if not cap_ratio_str:
+            cap_ratio = None
+        else:
+            try:
+                cap_ratio = float(cap_ratio_str)
+            except Exception:
+                messagebox.showerror("エラー", "cap_ratio_override は数値で入力してください。")
+                return
+            if cap_ratio <= 0:
+                messagebox.showerror("エラー", "cap_ratio_override は 0 より大きい数値を入力してください。")
+                return
+
+        try:
+            update_hotel_base_small_rescue_cfg(
+                hotel_tag,
+                {"mode": mode, "cap_ratio_override": cap_ratio},
+            )
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("エラー", f"ベース小救済の保存に失敗しました。\n{exc}")
+            return
+
+        self._refresh_master_base_small_rescue()
+        messagebox.showinfo("保存完了", "ベース小救済の設定を保存しました。")
 
     def _refresh_master_raw_root_dir(self) -> None:
         if not hasattr(self, "master_raw_root_dir_var"):

@@ -498,6 +498,14 @@ def get_hotel_rounding_units(hotel_id: str) -> dict[str, int]:
         return dict(DEFAULT_ROUNDING_UNITS)
 
 
+def get_hotel_base_small_rescue_cfg(hotel_id: str) -> dict[str, object]:
+    cfg = HOTEL_CONFIG.get(hotel_id, {})
+    rescue_cfg = cfg.get("base_small_rescue")
+    if not isinstance(rescue_cfg, dict):
+        return {}
+    return dict(rescue_cfg)
+
+
 def reload_hotel_config_inplace() -> Dict[str, Dict[str, Any]]:
     """Reload hotels.json and update HOTEL_CONFIG in place.
 
@@ -548,6 +556,32 @@ def update_hotel_rounding_units(hotel_id: str, rounding_units: dict[str, int]) -
     normalized_units = _normalize_rounding_units(hotel_id, rounding_units)
     updated_cfg = dict(raw[hotel_id])
     updated_cfg["rounding_units"] = normalized_units
+    raw[hotel_id] = updated_cfg
+    _write_hotels_json(raw)
+
+    HOTEL_CONFIG[hotel_id] = _validate_hotel_config(hotel_id, updated_cfg)
+
+
+def update_hotel_base_small_rescue_cfg(hotel_id: str, rescue_cfg: dict[str, object]) -> None:
+    if not isinstance(rescue_cfg, dict):
+        raise TypeError("rescue_cfg must be a dict")
+
+    raw = _load_hotels_json()
+    if hotel_id not in raw:
+        raise ValueError(f"Unknown hotel_id: {hotel_id}")
+
+    hotel_cfg = raw[hotel_id]
+    if not isinstance(hotel_cfg, dict):
+        raise TypeError(f"{hotel_id}: hotel config must be a JSON object")
+
+    existing = hotel_cfg.get("base_small_rescue")
+    if existing is None or not isinstance(existing, dict):
+        existing = {}
+
+    merged = dict(existing)
+    merged.update(rescue_cfg)
+    updated_cfg = dict(hotel_cfg)
+    updated_cfg["base_small_rescue"] = merged
     raw[hotel_id] = updated_cfg
     _write_hotels_json(raw)
 

@@ -711,6 +711,12 @@ def _merge_pace14_details(out_df: pd.DataFrame, detail_df: pd.DataFrame, *, pref
         "weekshape_n_events": "weekshape_n_events",
         "weekshape_sum_base": "weekshape_sum_base",
         "weekshape_factor_raw": "weekshape_factor_raw",
+        "weekshape_gated": "weekshape_gated",
+        "base_small_rescue_applied": "base_small_rescue_applied",
+        "base_small_rescue_mode": "base_small_rescue_mode",
+        "base_small_rescue_cap_ratio": "base_small_rescue_cap_ratio",
+        "base_small_rescue_pickup": "base_small_rescue_pickup",
+        "base_small_rescue_reason": "base_small_rescue_reason",
     }
     for col, renamed in rename_map.items():
         if col in detail_df.columns:

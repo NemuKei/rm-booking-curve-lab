@@ -379,12 +379,62 @@ def train_base_small_weekshape_for_gui(
                 "trained_until_asof": latest_asof,
             }
 
-    result = learning_base_small.train_weekshape_base_small_quantiles(
-        hotel_tag=hotel_tag,
-        asof_end=latest_asof,
-        window_months=window_months,
-        sample_stride_days=sample_stride_days,
-    )
+    try:
+        result = learning_base_small.train_weekshape_base_small_quantiles(
+            hotel_tag=hotel_tag,
+            asof_end=latest_asof,
+            window_months=window_months,
+            sample_stride_days=sample_stride_days,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "base-small weekshape learning failed: hotel=%s asof=%s error=%s",
+            hotel_tag,
+            latest_asof,
+            exc,
+        )
+        return {
+            "ok": False,
+            "reason": "learning_failed",
+            "trained_until_asof": latest_asof,
+        }
+
+    if not isinstance(result, dict):
+        logger.warning(
+            "base-small weekshape learning result invalid: hotel=%s asof=%s reason=invalid_result",
+            hotel_tag,
+            latest_asof,
+        )
+        return {
+            "ok": False,
+            "reason": "invalid_result",
+            "trained_until_asof": latest_asof,
+            "result": result,
+        }
+
+    try:
+        n_samples = int(result.get("n_samples", 0))
+    except Exception:
+        n_samples = 0
+
+    cap_ratio_candidates = result.get("cap_ratio_candidates")
+    has_candidates = isinstance(cap_ratio_candidates, list) and len(cap_ratio_candidates) > 0
+
+    if n_samples <= 0 or not has_candidates:
+        reason = result.get("reason") or ("insufficient_samples" if n_samples <= 0 else "invalid_result")
+        logger.warning(
+            "base-small weekshape learning skipped: hotel=%s asof=%s reason=%s n_samples=%s",
+            hotel_tag,
+            latest_asof,
+            reason,
+            n_samples,
+        )
+        return {
+            "ok": False,
+            "reason": reason,
+            "trained_until_asof": latest_asof,
+            "result": result,
+        }
 
     update_hotel_learned_params(
         hotel_tag,

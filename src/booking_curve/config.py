@@ -554,6 +554,38 @@ def update_hotel_rounding_units(hotel_id: str, rounding_units: dict[str, int]) -
     HOTEL_CONFIG[hotel_id] = _validate_hotel_config(hotel_id, updated_cfg)
 
 
+def update_hotel_learned_params(hotel_id: str, learned_params: dict[str, object]) -> None:
+    if not isinstance(learned_params, dict):
+        raise TypeError("learned_params must be a dict")
+
+    raw = _load_hotels_json()
+    if hotel_id not in raw:
+        raise ValueError(f"Unknown hotel_id: {hotel_id}")
+
+    hotel_cfg = raw[hotel_id]
+    if not isinstance(hotel_cfg, dict):
+        raise TypeError(f"{hotel_id}: hotel config must be a JSON object")
+
+    existing = hotel_cfg.get("learned_params")
+    if existing is None or not isinstance(existing, dict):
+        existing = {}
+
+    merged = dict(existing)
+    merged.update(learned_params)
+    updated_cfg = dict(hotel_cfg)
+    updated_cfg["learned_params"] = merged
+    raw[hotel_id] = updated_cfg
+    _write_hotels_json(raw)
+
+    if hotel_id in HOTEL_CONFIG:
+        current = HOTEL_CONFIG[hotel_id]
+        current_existing = current.get("learned_params")
+        if current_existing is None or not isinstance(current_existing, dict):
+            current_existing = {}
+        current_existing.update(learned_params)
+        current["learned_params"] = current_existing
+
+
 def clear_local_override_raw_root_dir(hotel_id: str) -> None:
     """端末ローカルの raw_root_dir 上書きを削除して hotels.json の値に戻す。"""
     raw = _load_hotels_json()

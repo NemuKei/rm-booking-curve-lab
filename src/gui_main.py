@@ -303,6 +303,7 @@ try:
         run_import_missing_only,
         run_missing_audit_for_gui,
         run_missing_check_for_gui,
+        train_base_small_weekshape_for_gui,
     )
 except Exception as exc:
     logging.exception("Failed to import booking_curve.gui_backend")
@@ -5499,6 +5500,50 @@ class BookingCurveApp(tk.Tk):
                 self._update_master_missing_check_status()
             except Exception:
                 logging.warning("欠損検査ステータスの更新に失敗しました", exc_info=True)
+
+        if success and snapshots_updated:
+            hotel_tag = self.hotel_var.get().strip()
+
+            def _run_base_small_learning() -> None:
+                try:
+                    result = train_base_small_weekshape_for_gui(
+                        hotel_tag,
+                        window_months=3,
+                        sample_stride_days=7,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logging.exception("base-small weekshape learning failed")
+                    self.after(
+                        0,
+                        lambda: messagebox.showwarning(
+                            "学習警告",
+                            f"base-small週次学習に失敗しました（非致命）:\n{exc}",
+                        ),
+                    )
+                    return
+
+                if isinstance(result, dict) and not result.get("ok", True):
+                    reason = result.get("reason", "unknown")
+                    self.after(
+                        0,
+                        lambda: messagebox.showwarning(
+                            "学習警告",
+                            f"base-small週次学習を実行できませんでした（非致命）:\n{reason}",
+                        ),
+                    )
+                    return
+
+                skipped = bool(result.get("skipped")) if isinstance(result, dict) else False
+
+                def _notify() -> None:
+                    msg = "base-small週次学習: 既に最新のためスキップ" if skipped else "base-small週次学習: 完了"
+                    self.lt_data_status_var.set(msg)
+                    self.after(3000, lambda: self.lt_data_status_var.set(""))
+
+                self.after(0, _notify)
+
+            if hotel_tag:
+                threading.Thread(target=_run_base_small_learning, daemon=True).start()
 
         if success:
             messagebox.showinfo(

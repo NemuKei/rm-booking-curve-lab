@@ -13,7 +13,12 @@ import build_calendar_features
 import run_build_lt_csv
 import run_forecast_batch
 from booking_curve import monthly_rounding
-from booking_curve.config import HOTEL_CONFIG, OUTPUT_DIR, get_hotel_rounding_units
+from booking_curve.config import (
+    HOTEL_CONFIG,
+    OUTPUT_DIR,
+    get_hotel_rounding_units,
+    update_hotel_learned_params,
+)
 from booking_curve.daily_snapshots import (
     get_daily_snapshots_path,
     get_latest_asof_date,
@@ -32,6 +37,7 @@ from booking_curve.forecast_simple import (
     moving_average_recent_90days,
     moving_average_recent_90days_weighted,
 )
+from booking_curve import learning_base_small
 from booking_curve.missing_report import build_missing_report, find_unconverted_raw_pairs
 from booking_curve.pms_adapter_nface import (
     build_daily_snapshots_fast,
@@ -345,6 +351,47 @@ def get_latest_asof_for_hotel(hotel_tag: str) -> Optional[str]:
         return None
 
     return pd.to_datetime(latest_asof).normalize().strftime("%Y-%m-%d")
+
+
+def train_base_small_weekshape_for_gui(
+    hotel_tag: str,
+    *,
+    window_months: int = 3,
+    sample_stride_days: int = 7,
+) -> dict[str, object]:
+    latest_asof = get_latest_asof_for_hotel(hotel_tag)
+    if latest_asof is None:
+        return {"ok": False, "reason": "latest_asof_not_found"}
+
+    learned_params = HOTEL_CONFIG.get(hotel_tag, {}).get("learned_params")
+    if not isinstance(learned_params, dict):
+        learned_params = {}
+    base_small = learned_params.get("base_small_rescue")
+    if not isinstance(base_small, dict):
+        base_small = {}
+    weekshape = base_small.get("weekshape")
+    if isinstance(weekshape, dict):
+        trained_until = weekshape.get("trained_until_asof")
+        if trained_until == latest_asof:
+            return {
+                "ok": True,
+                "skipped": True,
+                "trained_until_asof": latest_asof,
+            }
+
+    result = learning_base_small.train_weekshape_base_small_quantiles(
+        hotel_tag=hotel_tag,
+        asof_end=latest_asof,
+        window_months=window_months,
+        sample_stride_days=sample_stride_days,
+    )
+
+    update_hotel_learned_params(
+        hotel_tag,
+        {"base_small_rescue": {"weekshape": result, "version": 1}},
+    )
+
+    return {"ok": True, "skipped": False, "result": result}
 
 
 def _load_lt_data(hotel_tag: str, target_month: str) -> pd.DataFrame:

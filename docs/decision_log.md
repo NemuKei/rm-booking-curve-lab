@@ -1440,3 +1440,37 @@ A-019
 * Status: 未反映
 
 ---
+
+## D-20260126-001 base_small_rescue weekshape 学習を hotels.json に永続化し、学習ゲートを導入する
+
+* Decision:
+
+  * weekshape帯（LT15–45）の “ベース小救済” 用に、`residual_rate` 分布の分位（P90/P95/P97.5）から `cap_ratio_candidates` を学習し、`learned_params.base_small_rescue.weekshape` として hotels.json に保存する。
+  * 学習結果には `trained_until_asof / n_samples / n_unique_stay_dates / window_months_used` を含め、`trained_until_asof == latest_asof` の場合は学習をスキップして再実行を抑制する。
+* Why:
+
+  * “ベース小” で倍率補正が効かないケースに対して、施設規模差を吸収しつつ安全に救済上限（cap比）を決めるため。
+  * 再現性（いつのデータで学習したか）と運用負荷（無駄な再学習）の両立が必要なため。
+* Spec link:
+
+  * `docs/spec_models.md`: `3.4.3 pace14_weekshape_flow`（ベース小救済weekshapeの定義追記先）
+* Status: 実装反映済
+
+---
+
+## D-20260126-002 forecast CSV に weekshape_gated / base_small_rescue_* の診断列を出力する
+
+* Decision:
+
+  * run_forecast_batch が出力する forecast CSV に、`weekshape_gated` と `base_small_rescue_*`（applied/mode/cap_ratio/pickup/reason）を含める。
+  * 後方互換のため、detail_df に列が存在する場合のみCSVへ出力する（存在しないモデルでは無影響）。
+* Why:
+
+  * 救済が「どの日に」「どの理由で」「どれだけ」効いたかを、CSVだけで検証・監査できるようにするため。
+* Spec link:
+
+  * `docs/spec_models.md`: `3.4.3 pace14_weekshape_flow`（出力/診断項目の追記先）
+  * `docs/spec_evaluation.md`: （必要なら）検証観点として診断列の参照を明記
+* Status: 実装反映済
+
+---

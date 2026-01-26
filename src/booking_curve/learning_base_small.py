@@ -117,6 +117,7 @@ def train_weekshape_base_small_quantiles(
         return {
             "reason": "capacity_missing_or_invalid",
             "n_samples": 0,
+            "n_unique_stay_dates": 0,
             "trained_until_asof": asof_end_ts.strftime("%Y-%m-%d"),
             "window_months": window_months,
             "sample_stride_days": sample_stride_days,
@@ -126,6 +127,7 @@ def train_weekshape_base_small_quantiles(
     sample_asof_dates = _build_sample_asof_dates(asof_end_ts, window_months, sample_stride_days)
     lt_cache: dict[str, pd.DataFrame] = {}
     residual_rates: list[float] = []
+    n_unique_stay_dates = 0
 
     for asof_ts in sample_asof_dates:
         months = _months_around_asof(asof_ts, months_back=months_back, months_forward=months_forward)
@@ -194,7 +196,13 @@ def train_weekshape_base_small_quantiles(
             continue
 
         gated_mask = gated.fillna(False)
-        for _, row in detail_df.loc[gated_mask].iterrows():
+        gated_rows = detail_df.loc[gated_mask]
+        n_events_series = gated_rows.get("n_events")
+        if n_events_series is not None:
+            n_events = pd.to_numeric(n_events_series, errors="coerce").fillna(0)
+            n_unique_stay_dates += int(n_events.sum())
+
+        for _, row in gated_rows.iterrows():
             sum_actual = pd.to_numeric(row.get("sum_actual", np.nan), errors="coerce")
             if pd.isna(sum_actual):
                 continue
@@ -208,6 +216,7 @@ def train_weekshape_base_small_quantiles(
         return {
             "reason": "no_gated_samples",
             "n_samples": 0,
+            "n_unique_stay_dates": 0,
             "trained_until_asof": asof_end_ts.strftime("%Y-%m-%d"),
             "window_months": window_months,
             "sample_stride_days": sample_stride_days,
@@ -225,6 +234,7 @@ def train_weekshape_base_small_quantiles(
         "p975": p975,
         "cap_ratio_candidates": [p90, p95, p975],
         "n_samples": int(series.size),
+        "n_unique_stay_dates": int(n_unique_stay_dates),
         "trained_until_asof": asof_end_ts.strftime("%Y-%m-%d"),
         "window_months": window_months,
         "sample_stride_days": sample_stride_days,

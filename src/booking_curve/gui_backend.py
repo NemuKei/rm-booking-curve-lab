@@ -363,6 +363,11 @@ def train_base_small_weekshape_for_gui(
     if latest_asof is None:
         return {"ok": False, "reason": "latest_asof_not_found"}
 
+    MIN_SAMPLES = 10
+    TARGET_SAMPLES = 30
+    MIN_UNIQUE_DATES = 7
+    TARGET_UNIQUE_DATES = 21
+
     learned_params = HOTEL_CONFIG.get(hotel_tag, {}).get("learned_params")
     if not isinstance(learned_params, dict):
         learned_params = {}
@@ -379,29 +384,120 @@ def train_base_small_weekshape_for_gui(
                 "trained_until_asof": latest_asof,
             }
 
-    try:
-        result = learning_base_small.train_weekshape_base_small_quantiles(
-            hotel_tag=hotel_tag,
-            asof_end=latest_asof,
-            window_months=window_months,
-            sample_stride_days=sample_stride_days,
-        )
-    except Exception as exc:  # noqa: BLE001
+    window_candidates = [3, 6, 12]
+    if window_months in window_candidates:
+        window_candidates = window_candidates[window_candidates.index(window_months) :]
+    else:
+        window_candidates = [window_months] + window_candidates
+
+    best_attempt: dict[str, object] | None = None
+    selected_result: dict[str, object] | None = None
+    selected_window: int | None = None
+
+    def _safe_int(value: object) -> int:
+        try:
+            return int(value)
+        except Exception:
+            return 0
+
+    for candidate_months in window_candidates:
+        try:
+            result = learning_base_small.train_weekshape_base_small_quantiles(
+                hotel_tag=hotel_tag,
+                asof_end=latest_asof,
+                window_months=candidate_months,
+                sample_stride_days=sample_stride_days,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "base-small weekshape learning failed: hotel=%s asof=%s window_months=%s error=%s",
+                hotel_tag,
+                latest_asof,
+                candidate_months,
+                exc,
+            )
+            return {
+                "ok": False,
+                "reason": "learning_failed",
+                "trained_until_asof": latest_asof,
+            }
+
+        if not isinstance(result, dict):
+            logger.warning(
+                "base-small weekshape learning result invalid: hotel=%s asof=%s reason=invalid_result",
+                hotel_tag,
+                latest_asof,
+            )
+            return {
+                "ok": False,
+                "reason": "invalid_result",
+                "trained_until_asof": latest_asof,
+                "result": result,
+            }
+
+        n_samples = _safe_int(result.get("n_samples", 0))
+        n_unique = _safe_int(result.get("n_unique_stay_dates", 0))
+
+        cap_ratio_candidates = result.get("cap_ratio_candidates")
+        has_candidates = isinstance(cap_ratio_candidates, list) and len(cap_ratio_candidates) > 0
+
+        attempt = {
+            "result": result,
+            "window_months": candidate_months,
+            "n_samples": n_samples,
+            "n_unique_stay_dates": n_unique,
+            "has_candidates": has_candidates,
+        }
+
+        if best_attempt is None:
+            best_attempt = attempt
+        else:
+            prev_samples = _safe_int(best_attempt.get("n_samples", 0))
+            prev_unique = _safe_int(best_attempt.get("n_unique_stay_dates", 0))
+            if (n_samples, n_unique) > (prev_samples, prev_unique):
+                best_attempt = attempt
+
+        if has_candidates and n_samples >= TARGET_SAMPLES and n_unique >= TARGET_UNIQUE_DATES:
+            selected_result = result
+            selected_window = candidate_months
+            break
+
+    if selected_result is None or selected_window is None:
+        best_result = best_attempt.get("result") if isinstance(best_attempt, dict) else None
+        best_samples = _safe_int(best_attempt.get("n_samples")) if isinstance(best_attempt, dict) else 0
+        best_unique = _safe_int(best_attempt.get("n_unique_stay_dates")) if isinstance(best_attempt, dict) else 0
+        window_used = best_attempt.get("window_months") if isinstance(best_attempt, dict) else None
+
+        if best_samples < MIN_SAMPLES or best_unique < MIN_UNIQUE_DATES:
+            reason = "insufficient_samples"
+        else:
+            reason = "target_not_met"
+
         logger.warning(
-            "base-small weekshape learning failed: hotel=%s asof=%s error=%s",
+            "base-small weekshape learning skipped: hotel=%s asof=%s reason=%s n_samples=%s n_unique=%s window_months=%s",
             hotel_tag,
             latest_asof,
-            exc,
+            reason,
+            best_samples,
+            best_unique,
+            window_used,
         )
         return {
             "ok": False,
-            "reason": "learning_failed",
+            "reason": reason,
             "trained_until_asof": latest_asof,
+            "window_months_used": window_used,
+            "n_samples": best_samples,
+            "n_unique_stay_dates": best_unique,
+            "result": best_result,
         }
 
-    if not isinstance(result, dict):
+    p90 = selected_result.get("p90")
+    p95 = selected_result.get("p95")
+    p975 = selected_result.get("p975")
+    if p90 is None or p95 is None or p975 is None:
         logger.warning(
-            "base-small weekshape learning result invalid: hotel=%s asof=%s reason=invalid_result",
+            "base-small weekshape learning result invalid: hotel=%s asof=%s reason=missing_quantiles",
             hotel_tag,
             latest_asof,
         )
@@ -409,39 +505,30 @@ def train_base_small_weekshape_for_gui(
             "ok": False,
             "reason": "invalid_result",
             "trained_until_asof": latest_asof,
-            "result": result,
+            "result": selected_result,
         }
 
-    try:
-        n_samples = int(result.get("n_samples", 0))
-    except Exception:
-        n_samples = 0
-
-    cap_ratio_candidates = result.get("cap_ratio_candidates")
-    has_candidates = isinstance(cap_ratio_candidates, list) and len(cap_ratio_candidates) > 0
-
-    if n_samples <= 0 or not has_candidates:
-        reason = result.get("reason") or ("insufficient_samples" if n_samples <= 0 else "invalid_result")
-        logger.warning(
-            "base-small weekshape learning skipped: hotel=%s asof=%s reason=%s n_samples=%s",
-            hotel_tag,
-            latest_asof,
-            reason,
-            n_samples,
-        )
-        return {
-            "ok": False,
-            "reason": reason,
-            "trained_until_asof": latest_asof,
-            "result": result,
-        }
+    trained_until = selected_result.get("trained_until_asof") or latest_asof
+    weekshape_payload = {
+        "cap_ratio_p90": float(p90),
+        "cap_ratio_p95": float(p95),
+        "cap_ratio_p97_5": float(p975),
+        "p90": float(p90),
+        "p95": float(p95),
+        "p975": float(p975),
+        "cap_ratio_candidates": [float(p90), float(p95), float(p975)],
+        "trained_until_asof": trained_until,
+        "n_samples": _safe_int(selected_result.get("n_samples", 0)),
+        "n_unique_stay_dates": _safe_int(selected_result.get("n_unique_stay_dates", 0)),
+        "window_months_used": int(selected_window),
+    }
 
     update_hotel_learned_params(
         hotel_tag,
-        {"base_small_rescue": {"weekshape": result, "version": 1}},
+        {"base_small_rescue": {"weekshape": weekshape_payload, "version": 1}},
     )
 
-    return {"ok": True, "skipped": False, "result": result}
+    return {"ok": True, "skipped": False, "result": weekshape_payload}
 
 
 def _load_lt_data(hotel_tag: str, target_month: str) -> pd.DataFrame:

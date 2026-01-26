@@ -5511,7 +5511,7 @@ class BookingCurveApp(tk.Tk):
                         window_months=3,
                         sample_stride_days=7,
                     )
-                except Exception as exc:  # noqa: BLE001
+                except Exception:  # noqa: BLE001
                     logging.exception("base-small weekshape learning failed")
                     self.after(
                         0,

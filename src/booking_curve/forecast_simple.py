@@ -525,6 +525,11 @@ def forecast_final_from_pace14_market(
         pf_info.update(
             {
                 "lt_now": lt_now,
+                "current_oh": float(current_oh),
+                "base_now": float(base_now),
+                "base_final": float(base_final),
+                "base_delta": float(base_delta),
+                "final_forecast": float(final_forecast),
                 "market_pace_7d": float(market_pace_7d) if not pd.isna(market_pace_7d) else np.nan,
                 "market_pace_eff": market_pace_eff,
                 "market_beta": market_beta,

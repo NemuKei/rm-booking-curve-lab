@@ -132,10 +132,12 @@ print("\n=== MARKET BAND rows ===", len(band))
 print("delta_market.describe()")
 print(band["delta_market"].describe(percentiles=[.1,.25,.5,.75,.9]).to_string())
 
-upper = (band["market_factor"] >= 1.15 - 1e-9).mean()
-lower = (band["market_factor"] <= 0.85 + 1e-9).mean()
-print("\nclip_rate upper(=1.15):", round(float(upper), 4))
-print("clip_rate lower(=0.85):", round(float(lower), 4))
+upper_cap = 1.20
+lower_cap = 0.85
+upper = (band["market_factor"] >= upper_cap - 1e-9).mean()
+lower = (band["market_factor"] <= lower_cap + 1e-9).mean()
+print(f"\nclip_rate upper(={upper_cap}):", round(float(upper), 4))
+print(f"clip_rate lower(={lower_cap}):", round(float(lower), 4))
 
 print("\nmarket_factor_raw stats")
 print(band["market_factor_raw"].describe(percentiles=[.1,.25,.5,.75,.9]).to_string())

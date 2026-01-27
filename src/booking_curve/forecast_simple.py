@@ -28,7 +28,7 @@ PACE14_EPSILON = 1e-6
 
 MARKET_PACE_LT_MIN = 15
 MARKET_PACE_LT_MAX = 30
-MARKET_PACE_CLIP = (0.85, 1.15)
+MARKET_PACE_CLIP = (0.85, 1.25)
 MARKET_PACE_DECAY_K = 0.15
 MARKET_PACE_FLOOR = 0.20
 MARKET_PACE_RAW_CLIP = (0.50, 2.20)
@@ -508,7 +508,7 @@ def forecast_final_from_pace14_market(
         market_beta = np.nan
         if MARKET_PACE_LT_MIN <= lt_now <= MARKET_PACE_LT_MAX:
             market_beta = float(np.exp(-decay_k * (lt_now - MARKET_PACE_LT_MIN)))
-            market_factor_raw = float(market_pace_eff ** market_beta)
+            market_factor_raw = float(market_pace_eff**market_beta)
             market_factor = _clip_value(market_factor_raw, *MARKET_PACE_CLIP)
 
         if lt_now <= PACE14_UPPER_LT:
@@ -525,9 +525,7 @@ def forecast_final_from_pace14_market(
         pf_info.update(
             {
                 "lt_now": lt_now,
-                "market_pace_7d": float(market_pace_7d)
-                if not pd.isna(market_pace_7d)
-                else np.nan,
+                "market_pace_7d": float(market_pace_7d) if not pd.isna(market_pace_7d) else np.nan,
                 "market_pace_eff": market_pace_eff,
                 "market_beta": market_beta,
                 "market_factor_raw": market_factor_raw,

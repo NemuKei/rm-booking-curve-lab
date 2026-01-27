@@ -41,10 +41,10 @@ def load_lt_df_for_market(hotel_tag: str, as_of_ts: pd.Timestamp) -> pd.DataFram
     out = out[~out.index.duplicated(keep="last")]
     return out
 
-hotel_tag   = "daikokucho"
-as_of       = "2026-01-27"
+hotel_tag   = "kansai"
+as_of       = "2026-01-20"
 target_month= "202602"
-capacity    = 168.0
+capacity    = 416.0
 
 as_of_ts = pd.Timestamp(as_of).normalize()
 

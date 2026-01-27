@@ -42,7 +42,7 @@ def load_lt_df_for_market(hotel_tag: str, as_of_ts: pd.Timestamp) -> pd.DataFram
     return out
 
 hotel_tag   = "daikokucho"
-as_of       = "2026-01-20"
+as_of       = "2026-01-27"
 target_month= "202602"
 capacity    = 168.0
 
@@ -132,7 +132,7 @@ print("\n=== MARKET BAND rows ===", len(band))
 print("delta_market.describe()")
 print(band["delta_market"].describe(percentiles=[.1,.25,.5,.75,.9]).to_string())
 
-upper_cap = 1.20
+upper_cap = 1.25
 lower_cap = 0.85
 upper = (band["market_factor"] >= upper_cap - 1e-9).mean()
 lower = (band["market_factor"] <= lower_cap + 1e-9).mean()

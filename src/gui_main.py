@@ -1271,33 +1271,47 @@ class BookingCurveApp(tk.Tk):
     def _create_master_settings_tab(self) -> None:
         frame = self.tab_master_settings
 
-        # ------- カレンダー設定 -------
-        calendar_frame = ttk.LabelFrame(frame, text="カレンダー")
-        calendar_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=UI_SECTION_PADY)
+        # ------- 対象ホテル -------
+        hotel_frame = ttk.LabelFrame(frame, text="対象ホテル")
+        hotel_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=UI_SECTION_PADY)
 
-        ttk.Label(calendar_frame, text="ホテル:").grid(row=0, column=0, sticky="w")
-        self.hotel_combo = ttk.Combobox(calendar_frame, textvariable=self.hotel_var, state="readonly")
+        ttk.Label(hotel_frame, text="ホテル:").grid(
+            row=0,
+            column=0,
+            sticky="w",
+            padx=UI_GRID_PADX,
+            pady=UI_GRID_PADY,
+        )
+        self.hotel_combo = ttk.Combobox(hotel_frame, textvariable=self.hotel_var, state="readonly")
         self.hotel_combo["values"] = sorted(HOTEL_CONFIG.keys())
         self.hotel_combo.grid(row=0, column=1, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
         self.hotel_combo.bind("<<ComboboxSelected>>", self._on_hotel_changed)
 
+        # ------- カレンダー設定 -------
+        calendar_frame = ttk.LabelFrame(frame, text="カレンダー")
+        calendar_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, UI_SECTION_PADY))
+
         self.calendar_coverage_var = tk.StringVar()
         self.calendar_coverage_label = ttk.Label(calendar_frame, textvariable=self.calendar_coverage_var)
         self.calendar_coverage_label.grid(
-            row=1,
+            row=0,
             column=0,
-            columnspan=3,
+            columnspan=2,
             padx=UI_GRID_PADX,
             pady=UI_GRID_PADY,
             sticky="w",
         )
 
+        # ------- メンテナンス（通常不要） -------
+        maintenance_frame = ttk.LabelFrame(frame, text="メンテナンス（通常不要）")
+        maintenance_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, UI_SECTION_PADY))
+
         self.calendar_build_button = ttk.Button(
-            calendar_frame,
+            maintenance_frame,
             text="カレンダー再生成",
             command=self._on_build_calendar_clicked,
         )
-        self.calendar_build_button.grid(row=1, column=3, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="e")
+        self.calendar_build_button.grid(row=0, column=0, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
 
         # ------- 日別FC / ブッキング共通キャパ設定 -------
         caps_frame = ttk.LabelFrame(frame, text="日別フォーキャスト / ブッキングカーブ共通設定")

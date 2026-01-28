@@ -343,7 +343,7 @@ class BookingCurveApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         _apply_window_icon(self)
-        self.title("Booking Curve Lab GUI")
+        self.title("Booking Curve Lab")
         self.geometry("1200x900")
         _setup_gui_logging()
         logging.info("GUI started")

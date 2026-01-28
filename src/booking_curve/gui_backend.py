@@ -327,6 +327,49 @@ def build_range_rebuild_plan_for_gui(
     )
 
 
+def build_range_rebuild_plan_for_gui_with_stay_months(
+    hotel_tag: str,
+    *,
+    stay_months: list[str],
+    buffer_days: int = 30,
+) -> dict[str, object]:
+    if not stay_months:
+        raise ValueError("stay_months must be a non-empty list")
+
+    inventory = _build_raw_inventory_or_raise(hotel_tag)
+    latest_asof_raw = inventory.health.latest_asof_ymd
+    if not latest_asof_raw:
+        raise ValueError("RAWに最新ASOFがないためレンジ更新できません")
+
+    asof_max = _normalize_ymd_timestamp(latest_asof_raw)
+    asof_min = _calculate_asof_min(asof_max, buffer_days)
+
+    normalized_months: list[str] = []
+    for ym in stay_months:
+        try:
+            period = pd.Period(f"{ym[:4]}-{ym[4:]}", freq="M")
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError(f"Invalid stay_month format: {ym}") from exc
+        normalized_months.append(period.strftime("%Y%m"))
+
+    stay_months_list = sorted(set(normalized_months))
+    if not stay_months_list:
+        raise ValueError("stay_months must contain at least one valid month")
+
+    stay_min = pd.Timestamp(f"{stay_months_list[0]}01").normalize()
+    stay_max = (pd.Timestamp(f"{stay_months_list[-1]}01") + pd.offsets.MonthEnd(0)).normalize()
+
+    return {
+        "mode": "RANGE_REBUILD",
+        "buffer_days": buffer_days,
+        "asof_min": asof_min,
+        "asof_max": asof_max,
+        "stay_months": stay_months_list,
+        "stay_min": stay_min,
+        "stay_max": stay_max,
+    }
+
+
 def get_latest_asof_for_hotel(hotel_tag: str) -> Optional[str]:
     """ホテル別の最新 ASOF 日付を asof_dates_<hotel_tag>.csv から取得する。"""
 

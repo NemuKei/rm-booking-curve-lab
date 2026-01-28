@@ -70,6 +70,25 @@ def _validate_target_month(target_month: str, file_path: Path) -> str | None:
     return target_month
 
 
+def _safe_mtime(file_path: Path) -> float | None:
+    try:
+        return file_path.stat().st_mtime
+    except Exception:
+        return None
+
+
+def _resolve_duplicate_path(existing: Path, candidate: Path) -> tuple[Path, Path, str]:
+    existing_mtime = _safe_mtime(existing)
+    candidate_mtime = _safe_mtime(candidate)
+    if existing_mtime is not None and candidate_mtime is not None and existing_mtime != candidate_mtime:
+        if candidate_mtime > existing_mtime:
+            return candidate, existing, "mtime"
+        return existing, candidate, "mtime"
+    if str(candidate) > str(existing):
+        return candidate, existing, "path"
+    return existing, candidate, "path"
+
+
 def _build_health(
     *,
     hotel_id: str,
@@ -143,7 +162,7 @@ def build_raw_inventory(hotel_id: str) -> RawInventory:
 
     files: dict[tuple[str, str], Path] = {}
     parsed_files = 0
-    accepted_asof_dates: list[str] = []
+    accepted_asof_dates: set[str] = set()
 
     for file_path in candidate_paths:
         target_month_raw, asof_ymd_raw = _extract_keys(file_path, adapter_type)
@@ -165,12 +184,20 @@ def build_raw_inventory(hotel_id: str) -> RawInventory:
         key = (target_month, asof_dt.strftime("%Y%m%d"))
         if key in files:
             existing = files[key]
-            raise ValueError(
-                f"Duplicate key detected for {key}: {existing} and {file_path}",
+            keep, drop, rule = _resolve_duplicate_path(existing, file_path)
+            if keep != existing:
+                files[key] = keep
+            logger.warning(
+                "Duplicate key detected for %s: keeping %s, dropping %s (rule=%s)",
+                key,
+                keep,
+                drop,
+                rule,
             )
+            continue
 
         files[key] = file_path
-        accepted_asof_dates.append(key[1])
+        accepted_asof_dates.add(key[1])
 
     latest_asof_ymd = max(accepted_asof_dates) if accepted_asof_dates else None
     health = _build_health(

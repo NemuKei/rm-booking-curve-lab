@@ -282,6 +282,7 @@ try:
         OUTPUT_DIR,
         build_calendar_for_gui,
         build_range_rebuild_plan_for_gui,
+        build_range_rebuild_plan_for_gui_with_stay_months,
         build_topdown_revpar_panel,
         clear_evaluation_detail_cache,
         get_all_target_months_for_lt_from_daily_snapshots,
@@ -5677,19 +5678,31 @@ class BookingCurveApp(tk.Tk):
             return
 
         hotel_tag = self.bc_hotel_var.get()
-        base_ym = self.bc_month_var.get().strip()
 
-        if len(base_ym) != 6 or not base_ym.isdigit():
-            messagebox.showerror("LT_DATA生成エラー", "対象月は 6桁の数字 (YYYYMM) で入力してください。")
+        latest_str = (self.bc_latest_asof_var.get() or "").strip()
+        latest_ts = None
+        if latest_str and latest_str not in ("なし", "(未取得)"):
+            parsed = pd.to_datetime(latest_str, errors="coerce")
+            if not pd.isna(parsed):
+                latest_ts = parsed
+
+        if latest_ts is None:
+            fallback_str = (self.bc_asof_var.get() or "").strip()
+            if fallback_str:
+                parsed = pd.to_datetime(fallback_str, errors="coerce")
+                if not pd.isna(parsed):
+                    latest_ts = parsed
+
+        if latest_ts is None:
+            messagebox.showerror(
+                "LT_DATA生成エラー",
+                "最新ASOFが取得できません。ASOFの日付(YYYY-MM-DD)を確認してください。",
+            )
             return
 
-        try:
-            base_period = pd.Period(f"{base_ym[:4]}-{base_ym[4:]}", freq="M")
-        except Exception:
-            messagebox.showerror("LT_DATA生成エラー", "対象月は 6桁の数字 (YYYYMM) で入力してください。")
-            return
-
-        target_months = [(base_period + i).strftime("%Y%m") for i in range(4)]
+        latest_ts = pd.Timestamp(latest_ts).normalize()
+        base_period = pd.Period(latest_ts, freq="M")
+        target_months = [(base_period - 1 + i).strftime("%Y%m") for i in range(5)]
 
         confirm = messagebox.askokcancel(
             "LT_DATA生成確認",
@@ -5720,10 +5733,10 @@ class BookingCurveApp(tk.Tk):
                 "missing_summary": None,
             }
             if update_snapshots and lt_source == "daily_snapshots":
-                plan = build_range_rebuild_plan_for_gui(
+                plan = build_range_rebuild_plan_for_gui_with_stay_months(
                     hotel_tag,
+                    stay_months=target_months,
                     buffer_days=30,
-                    lookahead_days=120,
                 )
                 missing_summary = self._compute_missing_summary_for_range_rebuild(
                     hotel_tag,

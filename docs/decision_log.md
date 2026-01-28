@@ -1474,3 +1474,55 @@ A-019
 * Status: 実装反映済
 
 ---
+
+## D-20260128-001 pace14_market の市場補正は decay_k=0.25 を暫定デフォルトとし、clipは 0.85–1.25 を維持する
+
+* Decision:
+
+  * pace14_market の市場補正（power+decay）のデフォルトとして `MARKET_PACE_DECAY_K=0.25` を暫定採用する。
+  * 安全弁として `MARKET_PACE_CLIP=(0.85, 1.25)` を維持し、上限張り付きの頻度と“効き”のバランスを取る。
+* Why:
+
+  * clip上限の調整だけでは張り付き問題が解けず、decay_k を上げることで market帯（LT15–30）の上位張り付きを減らしつつ、強い週は自然に上げる挙動が得られたため。
+  * ASOF差（例：市場弱/強）およびホテル差でも、過度なブーストや不自然な抑制が出にくいことを確認できたため。
+* Spec link:
+
+  * `docs/spec_models.md`: pace14_market（market補正の定義・デフォルト値の追記先）
+* Status: 実装反映済（docs未反映）
+
+---
+
+## D-20260128-002 market補正の説明可能性を優先し、detail列の拡充と恒久診断ツールを追加する
+
+* Decision:
+
+  * pace14_market の detail（診断）に `current_oh/base_now/base_final/base_delta/final_forecast` を出力できるようにする。
+  * market帯の効果を再現確認できる恒久ツール `tools/diag_market_effect.py` を追加する（ASOF/ホテル/target/capacity 指定）。
+* Why:
+
+  * deltaが大きい理由が「倍率」なのか「元の増分（base_delta）」なのかを、ログだけで説明・検証できる状態が必要なため。
+  * 一時スクリプト依存を減らし、再現手順を固定化して運用コストと認知負荷を下げるため。
+* Spec link:
+
+  * `docs/spec_models.md`: pace14_market（診断項目の導線）
+  * `docs/spec_evaluation.md`: （必要なら）評価時の診断参照の明記
+* Status: 実装反映済（docs未反映）
+
+---
+
+## D-20260128-003 ローカル設定ファイルを除き、ホテル固有名（実名）をコード上から排除する方針とする
+
+* Decision:
+
+  * ローカル設定ファイルを除き、ホテル固有名（例：daikokucho/kansai 等の実名）はコード・ツール・ログ出力から排除する方針とする。
+  * まずは実名デフォルト（例：`HOTEL_TAG="..."`）を撤去し、hotel_tag未指定時の挙動を統一（例外 or 中立スキップ）する。
+* Why:
+
+  * 外部利用（副業等）との兼ね合いで、コードベースの再利用性と情報分離を確保する必要があるため。
+  * hotel_tag渡し忘れによる誤適用事故（別ホテルに別ホテルの補正が乗る）を予防するため。
+* Spec link:
+
+  * `AGENTS.md`: 運用・ガバナンス方針（必要なら追記箇所）
+  * `docs/spec_overview.md`: （必要なら）データ/設定の責務分離の導線
+* Status: 方針合意（未実装）
+

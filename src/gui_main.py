@@ -1296,19 +1296,28 @@ class BookingCurveApp(tk.Tk):
         self.calendar_coverage_label.grid(
             row=0,
             column=0,
-            padx=UI_GRID_PADX,
+            padx=(UI_GRID_PADX, 8),
             pady=UI_GRID_PADY,
             sticky="w",
         )
-        calendar_frame.grid_columnconfigure(0, weight=1)
-        calendar_frame.grid_columnconfigure(1, weight=0)
 
         self.calendar_build_button = ttk.Button(
             calendar_frame,
             text="カレンダー再生成",
             command=self._on_build_calendar_clicked,
         )
-        self.calendar_build_button.grid(row=0, column=1, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="e")
+        self.calendar_build_button.grid(
+            row=0,
+            column=1,
+            padx=(0, 6),
+            pady=UI_GRID_PADY,
+            sticky="w",
+        )
+        ttk.Label(
+            calendar_frame,
+            text="（通常不要）",
+            foreground="#555555",
+        ).grid(row=0, column=2, padx=(0, UI_GRID_PADX), pady=UI_GRID_PADY, sticky="w")
 
         # ------- 日別FC / ブッキング共通キャパ設定 -------
         caps_frame = ttk.LabelFrame(frame, text="日別フォーキャスト / ブッキングカーブ共通設定")

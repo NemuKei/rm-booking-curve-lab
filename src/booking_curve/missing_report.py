@@ -416,9 +416,11 @@ def find_unconverted_raw_pairs(
     try:
         raw_inventory = build_raw_inventory(hotel_id)
     except Exception as exc:
-        raise ValueError(
-            f"missing_report: failed to build raw inventory for hotel_id '{hotel_id}'",
-        ) from exc
+        msg = (
+            f"missing_report: failed to build raw inventory for hotel_id '{hotel_id}'\n"
+            f"CAUSE: {exc}"
+        )
+        raise ValueError(msg) from exc
     raw_index = build_raw_inventory_index(raw_inventory)
     resolved_daily_path = _resolve_daily_snapshots_path(hotel_id, daily_snapshots_path)
     snapshot_pairs = load_month_asof_index(hotel_id, resolved_daily_path) if resolved_daily_path.exists() else set()
@@ -446,9 +448,11 @@ def build_missing_report(
     try:
         raw_inventory = build_raw_inventory(hotel_id)
     except Exception as exc:
-        raise ValueError(
-            f"missing_report: failed to build raw inventory for hotel_id '{hotel_id}'",
-        ) from exc
+        msg = (
+            f"missing_report: failed to build raw inventory for hotel_id '{hotel_id}'\n"
+            f"CAUSE: {exc}"
+        )
+        raise ValueError(msg) from exc
     raw_index = build_raw_inventory_index(raw_inventory)
     raw_root_dir = raw_inventory.raw_root_dir
 

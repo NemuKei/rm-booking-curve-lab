@@ -1447,6 +1447,18 @@ class BookingCurveApp(tk.Tk):
             textvariable=self.master_base_small_cap_ratio_var,
             width=10,
         ).grid(row=0, column=3, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
+        ttk.Label(
+            base_small_frame,
+            text="（空欄の場合は学習済みパラメータを使用）",
+            foreground="#555555",
+        ).grid(
+            row=1,
+            column=2,
+            columnspan=3,
+            sticky="w",
+            padx=UI_GRID_PADX * 2,
+            pady=(0, UI_GRID_PADY),
+        )
 
         ttk.Button(
             base_small_frame,
@@ -1877,11 +1889,11 @@ class BookingCurveApp(tk.Tk):
         else:
             try:
                 cap_ratio = float(cap_ratio_str)
-            except Exception:
+            except (TypeError, ValueError):
                 messagebox.showerror("エラー", "cap_ratio_override は数値で入力してください。")
                 return
-            if cap_ratio <= 0:
-                messagebox.showerror("エラー", "cap_ratio_override は 0 より大きい数値を入力してください。")
+            if not (0 < cap_ratio <= 1):
+                messagebox.showerror("エラー", "cap_ratio_override は 0 より大きく 1 以下で入力してください。")
                 return
 
         try:

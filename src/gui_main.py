@@ -71,9 +71,7 @@ DEFAULT_APP_USER_MODEL_ID = "BookingCurveLab.App"
 def _init_windows_app_identity() -> None:
     if os.environ.get("BOOKING_CURVE_DISABLE_AUMID") == "1":
         return
-    app_id = os.environ.get("BOOKING_CURVE_APP_ID") or os.environ.get(
-        "BOOKING CURVE APP ID"
-    )
+    app_id = os.environ.get("BOOKING_CURVE_APP_ID") or os.environ.get("BOOKING CURVE APP ID")
     if getattr(sys, "frozen", False):
         if not app_id:
             return
@@ -281,7 +279,6 @@ try:
         HOTEL_CONFIG,
         OUTPUT_DIR,
         build_calendar_for_gui,
-        build_range_rebuild_plan_for_gui,
         build_range_rebuild_plan_for_gui_with_stay_months,
         build_topdown_revpar_panel,
         clear_evaluation_detail_cache,
@@ -5720,11 +5717,7 @@ class BookingCurveApp(tk.Tk):
             )
             return
 
-        success_message = (
-            "LT_DATA CSV の生成が完了しました。\n"
-            "対象月: {months}\n"
-            "必要に応じて「最新に反映」ボタンで ASOF を更新してください。"
-        )
+        success_message = "LT_DATA CSV の生成が完了しました。\n対象月: {months}\n必要に応じて「最新に反映」ボタンで ASOF を更新してください。"
 
         def _prepare() -> dict[str, object]:
             result: dict[str, object] = {

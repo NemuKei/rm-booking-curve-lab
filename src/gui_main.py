@@ -403,6 +403,8 @@ class BookingCurveApp(tk.Tk):
         self._latest_asof_label_defaults: dict[tk.Label, tuple[str, str]] = {}
         self._lt_data_queue: queue.Queue[dict[str, object]] | None = None
         self._lt_data_running = False
+        self._missing_check_queue: queue.Queue[dict[str, object]] | None = None
+        self._missing_check_running = False
         self._hotel_wizard_open = False
 
         self._init_daily_forecast_tab()
@@ -1629,11 +1631,12 @@ class BookingCurveApp(tk.Tk):
             sticky="w",
         )
 
-        ttk.Button(
+        self.missing_check_button = ttk.Button(
             advanced_frame,
             text="欠損チェック（運用）",
             command=self._on_run_missing_check,
-        ).grid(row=3, column=0, padx=UI_GRID_PADX, pady=UI_GRID_PADY + 1, sticky="w")
+        )
+        self.missing_check_button.grid(row=3, column=0, padx=UI_GRID_PADX, pady=UI_GRID_PADY + 1, sticky="w")
         ttk.Button(
             advanced_frame,
             text="欠損一覧（運用）",
@@ -2257,14 +2260,77 @@ class BookingCurveApp(tk.Tk):
             messagebox.showerror("エラー", "ホテルが選択されていません。")
             return
 
+        if self._missing_check_running:
+            messagebox.showwarning("処理中", "欠損チェックは実行中です。完了をお待ちください。")
+            return
+
+        if self._missing_check_queue is None:
+            self._missing_check_queue = queue.Queue()
+
+        self._missing_check_running = True
         try:
-            csv_path = run_missing_check_for_gui(hotel_tag)
+            self.missing_check_button.state(["disabled"])
+        except Exception:
+            logging.debug("欠損チェックボタンの無効化に失敗しました", exc_info=True)
+
+        self._set_master_missing_check_status("欠損検査：実行中...", "#555555")
+
+        def _worker() -> None:
+            try:
+                csv_path = run_missing_check_for_gui(hotel_tag)
+                result = {"success": True, "csv_path": str(csv_path), "error": None}
+            except Exception as exc:  # noqa: BLE001
+                logging.exception("欠損チェックに失敗しました")
+                result = {"success": False, "csv_path": None, "error": exc}
+
+            if self._missing_check_queue is not None:
+                self._missing_check_queue.put(result)
+
+        threading.Thread(target=_worker, daemon=True).start()
+        self.after(200, self._poll_missing_check_queue)
+
+    def _poll_missing_check_queue(self) -> None:
+        if self._missing_check_queue is None:
+            self._missing_check_running = False
+            try:
+                self.missing_check_button.state(["!disabled"])
+            except Exception:
+                logging.debug("欠損チェックボタンの有効化に失敗しました", exc_info=True)
+            self._update_master_missing_check_status()
+            return
+
+        try:
+            result = self._missing_check_queue.get_nowait()
+        except queue.Empty:
+            self.after(200, self._poll_missing_check_queue)
+            return
+
+        self._missing_check_running = False
+        try:
+            self.missing_check_button.state(["!disabled"])
+        except Exception:
+            logging.debug("欠損チェックボタンの有効化に失敗しました", exc_info=True)
+
+        success = bool(result.get("success"))
+        error = result.get("error")
+        csv_path = result.get("csv_path")
+
+        if success and csv_path:
             self._show_stale_asof_warning(csv_path)
-            open_file(csv_path)
+            try:
+                open_file(csv_path)
+            except Exception as exc:
+                logging.warning("欠損チェックCSVの自動オープンに失敗しました", exc_info=True)
+                messagebox.showwarning(
+                    "ファイルオープン失敗",
+                    f"欠損チェックCSVを開けませんでした。\n{exc}",
+                )
             self._update_master_missing_check_status(csv_path)
-        except Exception as e:
-            logging.exception("欠損チェックに失敗しました")
-            messagebox.showerror("エラー", f"欠損チェックに失敗しました:\n{e}")
+            return
+
+        self._set_master_missing_check_status("欠損検査：失敗", "#C62828")
+        messagebox.showerror("エラー", f"欠損チェックに失敗しました:\n{error}")
+        _offer_open_logs_dir("欠損チェック失敗")
 
     def _on_run_missing_audit(self) -> None:
         hotel_tag = self.hotel_var.get().strip()
@@ -4689,6 +4755,15 @@ class BookingCurveApp(tk.Tk):
             messagebox.showerror("エラー", f"CSV出力に失敗しました:\n{e}")
             return
 
+        try:
+            open_file(out_path)
+        except Exception as exc:
+            logging.warning("日別フォーキャストCSVの自動オープンに失敗しました", exc_info=True)
+            messagebox.showwarning(
+                "ファイルオープン失敗",
+                f"CSVを保存しましたが自動で開けませんでした。\n{exc}",
+            )
+
         messagebox.showinfo("保存完了", f"CSV を保存しました:\n{out_path}")
 
     def _get_last_month_int(self) -> int:
@@ -5904,7 +5979,13 @@ class BookingCurveApp(tk.Tk):
 
         latest_ts = pd.Timestamp(latest_ts).normalize()
         base_period = pd.Period(latest_ts, freq="M")
-        target_months = [(base_period - 1 + i).strftime("%Y%m") for i in range(5)]
+        start_period = base_period - 1
+        end_ts_by_days = latest_ts + pd.Timedelta(days=120)
+        end_period_by_days = pd.Period(end_ts_by_days, freq="M")
+        end_period_by_fixed = base_period + 4
+        end_period = max(end_period_by_days, end_period_by_fixed)
+        periods = pd.period_range(start=start_period, end=end_period, freq="M")
+        target_months = [p.strftime("%Y%m") for p in periods]
 
         confirm = messagebox.askokcancel(
             "LT_DATA生成確認",

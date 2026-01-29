@@ -12,7 +12,7 @@ import pandas as pd
 import build_calendar_features
 import run_build_lt_csv
 import run_forecast_batch
-from booking_curve import monthly_rounding
+from booking_curve import learning_base_small, monthly_rounding
 from booking_curve.config import (
     HOTEL_CONFIG,
     OUTPUT_DIR,
@@ -37,7 +37,6 @@ from booking_curve.forecast_simple import (
     moving_average_recent_90days,
     moving_average_recent_90days_weighted,
 )
-from booking_curve import learning_base_small
 from booking_curve.missing_report import build_missing_report, find_unconverted_raw_pairs
 from booking_curve.pms_adapter_nface import (
     build_daily_snapshots_fast,

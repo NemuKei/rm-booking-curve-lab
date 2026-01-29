@@ -1,7 +1,7 @@
 # usage:
-#   python tools/print_market_pace_series.py daikokucho 2026-01-23 90
+#   python tools/print_market_pace_series.py hotel_001 2026-01-23 90
 #
-# hotel_tag = daikokucho / kansai etc.
+# hotel_tag = hotel_001 / hotel_002 etc.
 # end_asof  = YYYY-MM-DD
 # lookback_days = 90 など
 

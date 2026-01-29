@@ -2043,7 +2043,7 @@ def get_daily_forecast_table(
     Parameters
     ----------
     hotel_tag : str
-        ホテル識別子 (例: "daikokucho")
+        ?????? (?: "hotel_001")
     target_month : str
         対象宿泊月 "YYYYMM"
     as_of_date : str

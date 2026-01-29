@@ -15,8 +15,6 @@ import pandas as pd
 
 import build_calendar_features
 from booking_curve.segment_adjustment import apply_segment_adjustment
-
-HOTEL_TAG = "daikokucho"
 PACE14_LOWER_LT_MIN = 7
 PACE14_UPPER_LT = 14
 PACE14_CLIP = (0.70, 1.30)
@@ -41,6 +39,21 @@ WEEKSHAPE_CLIP = (0.85, 1.15)
 WEEKSHAPE_MIN_EVENTS = 2  # (week_id, group) aggregation implies max 7 events
 WEEKSHAPE_MIN_SUM_BASE = 1.0
 WEEKSHAPE_WEEK_BOUNDARY = "iso"  # "iso" | "sun" | "mon"
+
+
+def _require_hotel_tag(hotel_tag: str | None, context: str) -> str:
+    if hotel_tag is None:
+        raise ValueError(
+            f"hotel_tag is required for {context} (hotel-dependent adjustment). "
+            "Select a hotel in the GUI or pass --hotel in CLI/tools."
+        )
+    hotel_value = str(hotel_tag).strip()
+    if not hotel_value:
+        raise ValueError(
+            f"hotel_tag is required for {context} (hotel-dependent adjustment). "
+            "Select a hotel in the GUI or pass --hotel in CLI/tools."
+        )
+    return hotel_value
 
 
 def _ensure_int_columns(columns: Iterable) -> list[int]:
@@ -671,6 +684,7 @@ def compute_weekshape_flow_factors(
 ) -> tuple[dict[tuple[int, str], float], pd.DataFrame]:
     """Compute weekshape flow factors by (week_id, group)."""
 
+    hotel_tag = _require_hotel_tag(hotel_tag, "compute_weekshape_flow_factors")
     working_df = lt_df.copy()
     working_df.index = pd.to_datetime(working_df.index)
     working_df.columns = _ensure_int_columns(working_df.columns)
@@ -773,6 +787,7 @@ def forecast_final_from_pace14_weekshape_flow(
 ) -> tuple[pd.Series, pd.DataFrame]:
     """Forecast final rooms per stay date using pace14 + weekshape flow adjustments."""
 
+    hotel_tag = _require_hotel_tag(hotel_tag, "forecast_final_from_pace14_weekshape_flow")
     if lt_min > lt_max:
         raise ValueError("lt_min must be less than or equal to lt_max")
 
@@ -1189,7 +1204,7 @@ def forecast_month_from_recent90(
     )
     out_df["projected_rooms"] = _round_int_series(out_df["projected_rooms"])
 
-    hotel_tag_value = hotel_tag or HOTEL_TAG
+    hotel_tag_value = _require_hotel_tag(hotel_tag, "forecast_month_from_recent90")
     out_df = apply_segment_adjustment(out_df, hotel_tag=hotel_tag_value)
 
     return out_df

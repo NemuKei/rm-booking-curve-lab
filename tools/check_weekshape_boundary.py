@@ -1,3 +1,4 @@
+import argparse
 import sys
 
 import pandas as pd
@@ -7,18 +8,30 @@ sys.path.append("src")
 import booking_curve.forecast_simple as fs
 import run_full_evaluation as r
 
-HOTEL = "daikokucho"
-ASOF = "20260120"
-TARGET = "202602"
 MODEL = "pace14_weekshape_flow"
 
-asof_ts = pd.to_datetime(ASOF)
-lt = r.load_lt_csv(TARGET, HOTEL)
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Compare weekshape boundary effects.")
+    parser.add_argument("--hotel", required=True, help="Hotel tag (e.g., hotel_001)")
+    parser.add_argument("--asof", required=True, help="As-of date (YYYYMMDD or YYYY-MM-DD)")
+    parser.add_argument("--target", required=True, help="Target month (YYYYMM)")
+    return parser.parse_args()
+
+
+args = _parse_args()
+hotel = str(args.hotel).strip()
+if not hotel:
+    raise SystemExit("hotel_tag is required. Pass --hotel (e.g., hotel_001).")
+
+asof_ts = pd.to_datetime(args.asof)
+target = str(args.target).strip()
+lt = r.load_lt_csv(target, hotel)
 
 # 1) 予測の一致/不一致（既に見たやつ）
 def run_forecast(boundary: str):
     fs.WEEKSHAPE_WEEK_BOUNDARY = boundary
-    s = r.build_monthly_forecast(lt, MODEL, ASOF, HOTEL)
+    s = r.build_monthly_forecast(lt, MODEL, args.asof, hotel)
     s = pd.to_numeric(s, errors="coerce")
     return s
 
@@ -26,7 +39,7 @@ iso = run_forecast("iso")
 sun = run_forecast("sun")
 
 print("=== Forecast compare ===")
-print("hotel=", HOTEL, "asof=", ASOF, "target=", TARGET, "len=", len(iso))
+print("hotel=", hotel, "asof=", args.asof, "target=", target, "len=", len(iso))
 print("sum_iso=", float(iso.sum(skipna=True)), "sum_sun=", float(sun.sum(skipna=True)), "delta=", float((sun - iso).sum(skipna=True)))
 diff_days = int((iso.fillna(0).round().astype("Int64") != sun.fillna(0).round().astype("Int64")).sum())
 print("different_days=", diff_days, "of", len(iso))

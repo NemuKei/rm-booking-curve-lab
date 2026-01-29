@@ -11,7 +11,7 @@ def _setup_paths() -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Learn base-small weekshape quantiles and persist to hotels.json.")
-    parser.add_argument("--hotel", required=True, help="Hotel tag (e.g., daikokucho)")
+    parser.add_argument("--hotel", required=True, help="Hotel tag (e.g., hotel_001)")
     parser.add_argument("--window-months", type=int, default=3, help="Lookback window in months (default: 3)")
     parser.add_argument("--stride-days", type=int, default=7, help="Sampling stride in days (default: 7)")
     args = parser.parse_args()

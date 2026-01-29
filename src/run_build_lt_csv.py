@@ -2,7 +2,7 @@
 直近数ヶ月分の LT_DATA CSV をまとめて出力するスクリプト。
 
 GUI からは run_build_lt_for_gui(hotel_tag, target_months) を呼び出す。
-CLI 実行時は HOTELS_CONFIG の先頭に定義された hotel_tag（現在は daikokucho）を処理する。
+CLI ???? --hotel ? hotel_tag ??????????
 """
 
 import argparse
@@ -21,7 +21,6 @@ from booking_curve.lt_builder import (
     extract_asof_dates_from_timeseries,
 )
 
-DEFAULT_HOTEL_TAG = next(iter(HOTEL_CONFIG.keys()))
 
 # LT_DATA を出したい宿泊月（シート名）リスト（CLI デフォルト）
 TARGET_MONTHS = [
@@ -301,6 +300,11 @@ def run_build_lt_for_gui(
 def main():
     parser = argparse.ArgumentParser(description="LT_DATA CSV batch generator")
     parser.add_argument(
+        "--hotel",
+        required=True,
+        help="Hotel tag (e.g., hotel_001)",
+    )
+    parser.add_argument(
         "--source",
         choices=["timeseries", "daily_snapshots"],
         default="daily_snapshots",
@@ -308,11 +312,13 @@ def main():
     )
     args = parser.parse_args()
 
-    hotel_tag = DEFAULT_HOTEL_TAG
+    hotel_tag = str(args.hotel).strip()
+    if not hotel_tag:
+        raise ValueError("hotel_tag is required. Pass --hotel (e.g., hotel_001).")
     source = args.source
     cfg = HOTEL_CONFIG.get(hotel_tag)
     if cfg is None:
-        raise KeyError(f"Unknown hotel_tag: {hotel_tag!r}")
+        raise ValueError(f"Unknown hotel_tag: {hotel_tag!r}. Update hotels.json and retry.")
     display_name = cfg.get("display_name", hotel_tag)
 
     excel_path = None

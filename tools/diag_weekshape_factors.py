@@ -1,3 +1,4 @@
+import argparse
 import sys
 from pathlib import Path
 
@@ -15,14 +16,22 @@ def main() -> None:
     import booking_curve.forecast_simple as fs
     import run_full_evaluation as r
 
-    HOTEL = "daikokucho"
-    ASOF = "20260120"
-    TARGET = "202602"
+    parser = argparse.ArgumentParser(description="Diagnose weekshape factors.")
+    parser.add_argument("--hotel", required=True, help="Hotel tag (e.g., hotel_001)")
+    parser.add_argument("--asof", required=True, help="As-of date (YYYYMMDD or YYYY-MM-DD)")
+    parser.add_argument("--target", required=True, help="Target month (YYYYMM)")
+    args = parser.parse_args()
 
-    asof_ts = pd.to_datetime(ASOF)
+    hotel = str(args.hotel).strip()
+    if not hotel:
+        raise SystemExit("hotel_tag is required. Pass --hotel (e.g., hotel_001).")
+    asof = str(args.asof).strip()
+    target = str(args.target).strip()
+
+    asof_ts = pd.to_datetime(asof)
 
     # target month lt_data
-    lt_df = r.load_lt_csv(TARGET, hotel_tag=HOTEL)
+    lt_df = r.load_lt_csv(target, hotel_tag=hotel)
 
     # history months (same as build_monthly_forecast)
     history_months = r.get_history_months_around_asof(
@@ -34,7 +43,7 @@ def main() -> None:
     history_raw: dict[str, pd.DataFrame] = {}
     for ym in history_months:
         try:
-            df_m = r.load_lt_csv(ym, hotel_tag=HOTEL)
+            df_m = r.load_lt_csv(ym, hotel_tag=hotel)
         except FileNotFoundError:
             continue
         if df_m.empty:
@@ -44,7 +53,7 @@ def main() -> None:
     if not history_raw:
         raise SystemExit("No history_raw loaded. Cannot diagnose weekshape.")
 
-    cap = r.HOTEL_CONFIG.get(HOTEL, {}).get("capacity", r.CAPACITY)
+    cap = r.HOTEL_CONFIG.get(hotel, {}).get("capacity", r.CAPACITY)
 
     # build baseline_curves_by_weekday & history_by_weekday (same logic as build_monthly_forecast)
     baseline_curves_by_weekday: dict[int, pd.Series] = {}
@@ -135,7 +144,7 @@ def main() -> None:
             lt_df=lt_df,
             as_of_ts=asof_ts,
             baseline_curves_by_weekday=baseline_curves_by_weekday,
-            hotel_tag=HOTEL,
+            hotel_tag=hotel,
             lt_min=15,
             lt_max=45,
             w=7,
@@ -148,7 +157,7 @@ def main() -> None:
             history_by_weekday=history_all_by_weekday,
             as_of_date=asof_ts,
             capacity=cap,
-            hotel_tag=HOTEL,
+            hotel_tag=hotel,
             lt_min=0,
             lt_max=r.LT_MAX,
         )
@@ -170,7 +179,7 @@ def main() -> None:
         # sanity: how many stay_dates change week_id compared to iso
         return fc_n, detail_f, detail_fc, factor_map
 
-    print("HOTEL=", HOTEL, "ASOF=", ASOF, "TARGET=", TARGET)
+    print("HOTEL=", hotel, "ASOF=", asof, "TARGET=", target)
     print(
         "LT_MIN/LT_MAX=",
         r.LT_MIN,

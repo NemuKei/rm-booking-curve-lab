@@ -118,7 +118,7 @@ def _safe_describe(series: pd.Series, label: str) -> None:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Diagnose market pace impact on pace14_market forecasts.")
-    parser.add_argument("--hotel", required=True, help="Hotel tag (e.g., daikokucho)")
+    parser.add_argument("--hotel", required=True, help="Hotel tag (e.g., hotel_001)")
     parser.add_argument("--asof", required=True, help="As-of date (YYYY-MM-DD)")
     parser.add_argument("--target", required=True, help="Target month (YYYYMM)")
     parser.add_argument("--capacity", required=True, type=float, help="Capacity for forecast (float)")

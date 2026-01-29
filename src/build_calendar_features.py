@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -13,7 +14,6 @@ except ImportError:
     jpholiday = None
 
 # ===== 設定ここから =====
-HOTEL_TAG = "daikokucho"
 
 # カレンダーを作りたい日付範囲
 # ※必要に応じてユーザーが変更できるようにハードコードでOK。
@@ -122,7 +122,7 @@ def build_calendar_for_hotel(hotel_tag: str, start_date: date, end_date: date) -
     指定ホテル・期間のカレンダーデータを生成し、CSV に保存する。
 
     Args:
-        hotel_tag: ホテル識別子 (例: "daikokucho", "kansai")
+        hotel_tag: ?????? (?: "hotel_001", "hotel_002")
         start_date: 生成開始日
         end_date: 生成終了日
 
@@ -191,8 +191,15 @@ def ensure_calendar_for_dates(
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Build calendar feature CSV.")
+    parser.add_argument("--hotel", required=True, help="Hotel tag (e.g., hotel_001)")
+    args = parser.parse_args()
+
+    hotel_tag = str(args.hotel).strip()
+    if not hotel_tag:
+        raise ValueError("hotel_tag is required. Pass --hotel (e.g., hotel_001).")
     out_path = build_calendar_for_hotel(
-        hotel_tag=HOTEL_TAG,
+        hotel_tag=hotel_tag,
         start_date=START_DATE,
         end_date=END_DATE,
     )

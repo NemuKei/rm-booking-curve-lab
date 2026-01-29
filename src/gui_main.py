@@ -326,7 +326,6 @@ except Exception as exc:
     sys.exit(1)
 
 # デフォルトホテル (現状は大国町のみ想定)
-DEFAULT_HOTEL = next(iter(HOTEL_CONFIG.keys()), "")
 SETTINGS_FILE = LOCAL_OVERRIDES_DIR / "gui_settings.json"
 LEGACY_SETTINGS_FILE = OUTPUT_DIR / "gui_settings.json"
 PHASE_OPTIONS = ["悪化", "中立", "回復"]
@@ -338,6 +337,10 @@ UI_GRID_PADX = 2
 UI_GRID_PADY = 1
 UI_SECTION_PADX = 6
 UI_SECTION_PADY = 4
+
+
+def _get_default_hotel() -> str:
+    return next(iter(HOTEL_CONFIG.keys()), "")
 
 
 class BookingCurveApp(tk.Tk):
@@ -383,7 +386,7 @@ class BookingCurveApp(tk.Tk):
         general = self._settings.get("general") or {}
         initial_hotel = general.get("last_hotel")
         if initial_hotel not in HOTEL_CONFIG:
-            initial_hotel = DEFAULT_HOTEL
+            initial_hotel = _get_default_hotel()
         self.hotel_var = tk.StringVar(value=initial_hotel)
         self.hotel_var.trace_add("write", self._on_hotel_var_changed)
         self.lt_source_var = tk.StringVar(value="daily_snapshots")
@@ -2934,7 +2937,7 @@ class BookingCurveApp(tk.Tk):
 
         # 予測キャップ / 稼働率キャパ
         # 現在選択されているホテルのキャパを取得
-        current_hotel = self.hotel_var.get().strip() or DEFAULT_HOTEL
+        current_hotel = self.hotel_var.get().strip() or _get_default_hotel()
         fc_cap, pax_cap, occ_cap = self._get_daily_caps_for_hotel(current_hotel)
 
         phase_frame = ttk.LabelFrame(right_row, text="フェーズ補正（売上）")
@@ -3326,7 +3329,7 @@ class BookingCurveApp(tk.Tk):
         if popup is None or not popup.winfo_exists():
             return
 
-        hotel = (self.df_hotel_var.get() or "").strip() or DEFAULT_HOTEL
+        hotel = (self.df_hotel_var.get() or "").strip() or _get_default_hotel()
         month = (self.df_month_var.get() or "").strip()
         asof = (self.df_asof_var.get() or "").strip()
         model = (self.df_model_var.get() or "").strip()
@@ -4173,7 +4176,7 @@ class BookingCurveApp(tk.Tk):
     def _refresh_phase_overrides_ui(self) -> None:
         if not hasattr(self, "df_phase_entries"):
             return
-        hotel = (self.df_hotel_var.get() or "").strip() or DEFAULT_HOTEL
+        hotel = (self.df_hotel_var.get() or "").strip() or _get_default_hotel()
         base_month = (self.df_month_var.get() or "").strip()
         months = self._get_phase_months(base_month)
 
@@ -4204,7 +4207,7 @@ class BookingCurveApp(tk.Tk):
     def _on_phase_clip_changed(self, event=None) -> None:
         if self._phase_override_loading:
             return
-        hotel = (self.df_hotel_var.get() or "").strip() or DEFAULT_HOTEL
+        hotel = (self.df_hotel_var.get() or "").strip() or _get_default_hotel()
         selected = self.df_phase_clip_var.get()
         clip_pct = self._parse_phase_clip_pct(selected)
         if clip_pct is None:
@@ -4216,7 +4219,7 @@ class BookingCurveApp(tk.Tk):
     def _on_phase_override_changed(self, event=None) -> None:
         if self._phase_override_loading:
             return
-        hotel = (self.df_hotel_var.get() or "").strip() or DEFAULT_HOTEL
+        hotel = (self.df_hotel_var.get() or "").strip() or _get_default_hotel()
         hotel_overrides = self._phase_overrides.setdefault(hotel, {})
 
         for entry in getattr(self, "df_phase_entries", []):
@@ -4234,7 +4237,7 @@ class BookingCurveApp(tk.Tk):
         write_phase_overrides(self._phase_overrides)
 
     def _update_df_best_model_label(self) -> None:
-        hotel = (self.df_hotel_var.get() or "").strip() or DEFAULT_HOTEL
+        hotel = (self.df_hotel_var.get() or "").strip() or _get_default_hotel()
         month = (self.df_month_var.get() or "").strip()
 
         if len(month) != 6 or not month.isdigit():
@@ -4283,7 +4286,7 @@ class BookingCurveApp(tk.Tk):
         self._update_bc_best_model_label()
 
     def _update_bc_best_model_label(self) -> None:
-        hotel = (self.bc_hotel_var.get() or "").strip() or DEFAULT_HOTEL
+        hotel = (self.bc_hotel_var.get() or "").strip() or _get_default_hotel()
         month = (self.bc_month_var.get() or "").strip()
 
         if len(month) != 6 or not month.isdigit():
@@ -4796,7 +4799,7 @@ class BookingCurveApp(tk.Tk):
 
         hotel = (self.me_hotel_var.get() or "").strip()
         if not hotel:
-            hotel = DEFAULT_HOTEL
+            hotel = _get_default_hotel()
 
         start = (self.me_from_var.get() or "").strip()
         end = (self.me_to_var.get() or "").strip()
@@ -4831,7 +4834,7 @@ class BookingCurveApp(tk.Tk):
 
         try:
             if getattr(self, "asof_hotel_var", None) is not None:
-                asof_hotel = (self.asof_hotel_var.get() or "").strip() or DEFAULT_HOTEL
+                asof_hotel = (self.asof_hotel_var.get() or "").strip() or _get_default_hotel()
                 if asof_hotel == hotel:
                     self._on_load_asof_eval()
         except Exception:
@@ -4855,7 +4858,7 @@ class BookingCurveApp(tk.Tk):
         )
 
     def _on_load_model_eval(self) -> None:
-        hotel = (self.me_hotel_var.get() or "").strip() or DEFAULT_HOTEL
+        hotel = (self.me_hotel_var.get() or "").strip() or _get_default_hotel()
         try:
             df = get_model_evaluation_table(hotel)
         except FileNotFoundError:
@@ -5104,7 +5107,7 @@ class BookingCurveApp(tk.Tk):
         """
 
         try:
-            hotel = self.asof_hotel_var.get().strip() or DEFAULT_HOTEL
+            hotel = self.asof_hotel_var.get().strip() or _get_default_hotel()
             from_ym = self.asof_from_ym_var.get().strip() or None
             to_ym = self.asof_to_ym_var.get().strip() or None
 
@@ -5481,7 +5484,7 @@ class BookingCurveApp(tk.Tk):
         self.bc_fill_missing_chk.pack(side=tk.LEFT, padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 1, UI_GRID_PADY))
 
         # 現在選択されているホテルのキャパを取得
-        current_hotel = self.hotel_var.get().strip() or DEFAULT_HOTEL
+        current_hotel = self.hotel_var.get().strip() or _get_default_hotel()
         fc_cap, _, _ = self._get_daily_caps_for_hotel(current_hotel)
         self.bc_forecast_cap_var = tk.StringVar(value=str(fc_cap))
 

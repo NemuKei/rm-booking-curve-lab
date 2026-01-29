@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -20,7 +21,6 @@ from booking_curve.forecast_simple import (
 )
 from booking_curve.plot_booking_curve import filter_by_weekday
 
-HOTEL_TAG = "daikokucho"
 TARGET_MONTHS = [
     "202311",
     "202312",
@@ -216,7 +216,7 @@ def build_monthly_forecast(lt_df: pd.DataFrame, model_name: str, as_of_date: str
     as_of_date:
         ASOF date string (YYYYMMDD).
     hotel_tag:
-        Hotel key such as "daikokucho" or "kansai".
+        Hotel key such as "hotel_001".
     """
     as_of_ts = pd.to_datetime(as_of_date)
     target_month = _infer_target_month(lt_df)
@@ -549,7 +549,15 @@ def run_full_evaluation_for_gui(hotel_tag: str, target_months: list[str]) -> tup
 
 
 def main() -> None:
-    hotel_tag = HOTEL_TAG
+    parser = argparse.ArgumentParser(description="Full evaluation runner")
+    parser.add_argument("--hotel", required=True, help="Hotel tag (e.g., hotel_001)")
+    args = parser.parse_args()
+
+    hotel_tag = str(args.hotel).strip()
+    if not hotel_tag:
+        raise ValueError("hotel_tag is required. Pass --hotel (e.g., hotel_001).")
+    if hotel_tag not in HOTEL_CONFIG:
+        raise ValueError(f"Unknown hotel_tag: {hotel_tag!r}. Update hotels.json and retry.")
     target_months = list(TARGET_MONTHS)
 
     df_detail, df_multi, detail_path, summary_path = run_full_evaluation_for_range(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import logging
 from datetime import date, timedelta
 from pathlib import Path
@@ -24,7 +25,6 @@ from booking_curve.plot_booking_curve import filter_by_weekday
 logger = logging.getLogger(__name__)
 
 # ===== 設定ここから =====
-HOTEL_TAG = "daikokucho"
 
 # 評価したい宿泊月 (YYYYMM)。必要に応じて増減可。
 TARGET_MONTHS = [
@@ -763,9 +763,9 @@ def _log_no_forecasts(
 def run_avg_forecast(
     target_month: str,
     as_of_date: str,
+    hotel_tag: str,
     capacity: float | None = None,
     pax_capacity: float | None = None,
-    hotel_tag: str = HOTEL_TAG,
     phase_factor: float | None = None,
     phase_clip_pct: float | None = None,
 ) -> None:
@@ -907,9 +907,9 @@ def run_avg_forecast(
 def run_recent90_forecast(
     target_month: str,
     as_of_date: str,
+    hotel_tag: str,
     capacity: float | None = None,
     pax_capacity: float | None = None,
-    hotel_tag: str = HOTEL_TAG,
     phase_factor: float | None = None,
     phase_clip_pct: float | None = None,
 ) -> None:
@@ -1074,9 +1074,9 @@ def run_recent90_forecast(
 def run_recent90_weighted_forecast(
     target_month: str,
     as_of: str,
+    hotel_tag: str,
     capacity: float | None = None,
     pax_capacity: float | None = None,
-    hotel_tag: str = HOTEL_TAG,
     phase_factor: float | None = None,
     phase_clip_pct: float | None = None,
 ) -> None:
@@ -1246,9 +1246,9 @@ def run_recent90_weighted_forecast(
 def run_pace14_forecast(
     target_month: str,
     as_of_date: str,
+    hotel_tag: str,
     capacity: float | None = None,
     pax_capacity: float | None = None,
-    hotel_tag: str = HOTEL_TAG,
     phase_factor: float | None = None,
     phase_clip_pct: float | None = None,
 ) -> None:
@@ -1414,9 +1414,9 @@ def run_pace14_forecast(
 def run_pace14_market_forecast(
     target_month: str,
     as_of_date: str,
+    hotel_tag: str,
     capacity: float | None = None,
     pax_capacity: float | None = None,
-    hotel_tag: str = HOTEL_TAG,
     phase_factor: float | None = None,
     phase_clip_pct: float | None = None,
 ) -> None:
@@ -1615,9 +1615,9 @@ def run_pace14_market_forecast(
 def run_pace14_weekshape_flow_forecast(
     target_month: str,
     as_of_date: str,
+    hotel_tag: str,
     capacity: float | None = None,
     pax_capacity: float | None = None,
-    hotel_tag: str = HOTEL_TAG,
     phase_factor: float | None = None,
     phase_clip_pct: float | None = None,
 ) -> None:
@@ -1800,26 +1800,36 @@ def run_pace14_weekshape_flow_forecast(
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Batch forecast runner")
+    parser.add_argument("--hotel", required=True, help="Hotel tag (e.g., hotel_001)")
+    args = parser.parse_args()
+
+    hotel_tag = str(args.hotel).strip()
+    if not hotel_tag:
+        raise ValueError("hotel_tag is required. Pass --hotel (e.g., hotel_001).")
+    if hotel_tag not in HOTEL_CONFIG:
+        raise ValueError(f"Unknown hotel_tag: {hotel_tag!r}. Update hotels.json and retry.")
+
     for target_month in TARGET_MONTHS:
         asof_list = get_asof_dates_for_month(target_month)
         for as_of in asof_list:
             logger.info("[avg]       target=%s as_of=%s", target_month, as_of)
-            run_avg_forecast(target_month, as_of)
+            run_avg_forecast(target_month, as_of, hotel_tag=hotel_tag)
 
             logger.info("[recent90]  target=%s as_of=%s", target_month, as_of)
-            run_recent90_forecast(target_month, as_of)
+            run_recent90_forecast(target_month, as_of, hotel_tag=hotel_tag)
 
             logger.info("[recent90w] target=%s as_of=%s", target_month, as_of)
-            run_recent90_weighted_forecast(target_month, as_of)
+            run_recent90_weighted_forecast(target_month, as_of, hotel_tag=hotel_tag)
 
             logger.info("[pace14]   target=%s as_of=%s", target_month, as_of)
-            run_pace14_forecast(target_month, as_of)
+            run_pace14_forecast(target_month, as_of, hotel_tag=hotel_tag)
 
             logger.info("[pace14m]  target=%s as_of=%s", target_month, as_of)
-            run_pace14_market_forecast(target_month, as_of)
+            run_pace14_market_forecast(target_month, as_of, hotel_tag=hotel_tag)
 
             logger.info("[pace14wf] target=%s as_of=%s", target_month, as_of)
-            run_pace14_weekshape_flow_forecast(target_month, as_of)
+            run_pace14_weekshape_flow_forecast(target_month, as_of, hotel_tag=hotel_tag)
 
     logger.info("=== batch forecast finished ===")
 

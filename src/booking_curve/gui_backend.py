@@ -1119,6 +1119,10 @@ def _prepare_monthly_curve_df(df: pd.DataFrame, csv_path: Path, *, fill_missing:
             df_no_act = df_no_act.copy()
         else:
             df_no_act = df_no_act.reindex(index=range(0, int(max_lt) + 1))
+        if act_row is not None and 0 in df_no_act.index:
+            act_value = float(act_row["rooms_total"].iloc[0])
+            if pd.isna(df_no_act.loc[0, "rooms_total"]):
+                df_no_act.loc[0, "rooms_total"] = act_value
         rooms_series = df_no_act["rooms_total"].astype(float)
         rooms_series = rooms_series.interpolate(method="linear", limit_area="inside")
         df_no_act["rooms_total"] = rooms_series

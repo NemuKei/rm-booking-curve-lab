@@ -21,7 +21,6 @@ from booking_curve.lt_builder import (
     extract_asof_dates_from_timeseries,
 )
 
-
 # LT_DATA を出したい宿泊月（シート名）リスト（CLI デフォルト）
 TARGET_MONTHS = [
     "202511",

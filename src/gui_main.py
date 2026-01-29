@@ -238,6 +238,7 @@ try:
         CONFIG_DIR,
         LOCAL_OVERRIDES_DIR,
         STARTUP_INIT_LOG_PATH,
+        add_hotel_config,
         clear_local_override_raw_root_dir,
         get_hotel_base_small_rescue_cfg,
         get_hotel_rounding_units,
@@ -325,7 +326,7 @@ except Exception as exc:
     sys.exit(1)
 
 # デフォルトホテル (現状は大国町のみ想定)
-DEFAULT_HOTEL = next(iter(HOTEL_CONFIG.keys()), "daikokucho")
+DEFAULT_HOTEL = next(iter(HOTEL_CONFIG.keys()), "")
 SETTINGS_FILE = LOCAL_OVERRIDES_DIR / "gui_settings.json"
 LEGACY_SETTINGS_FILE = OUTPUT_DIR / "gui_settings.json"
 PHASE_OPTIONS = ["悪化", "中立", "回復"]
@@ -399,6 +400,7 @@ class BookingCurveApp(tk.Tk):
         self._latest_asof_label_defaults: dict[tk.Label, tuple[str, str]] = {}
         self._lt_data_queue: queue.Queue[dict[str, object]] | None = None
         self._lt_data_running = False
+        self._hotel_wizard_open = False
 
         self._init_daily_forecast_tab()
         self._init_model_eval_tab()
@@ -407,6 +409,8 @@ class BookingCurveApp(tk.Tk):
         self._init_monthly_curve_tab()
         self._create_master_settings_tab()
         self.hotel_var.trace_add("write", self._on_global_hotel_changed)
+        if not HOTEL_CONFIG:
+            self.after(0, lambda: self._open_hotel_wizard(mode="first_run", must_create=True))
 
     def _load_settings(self) -> dict:
         try:
@@ -487,7 +491,7 @@ class BookingCurveApp(tk.Tk):
         )
 
     def _update_hotel_combobox_values(self, old_keys: set[str], new_values: list[str]) -> None:
-        if not old_keys or not new_values:
+        if not new_values:
             return
 
         def walk_widgets(widget: tk.Widget) -> list[tk.Widget]:
@@ -502,9 +506,10 @@ class BookingCurveApp(tk.Tk):
                 continue
             values = widget.cget("values")
             if not values:
+                widget["values"] = new_values
                 continue
             values_set = set(values)
-            if values_set and values_set.issubset(old_keys):
+            if values_set.issubset(old_keys):
                 widget["values"] = new_values
 
     def _ensure_hotel_var_valid(self, var_name: str) -> None:
@@ -1287,6 +1292,12 @@ class BookingCurveApp(tk.Tk):
         self.hotel_combo.grid(row=0, column=1, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
         self.hotel_combo.bind("<<ComboboxSelected>>", self._on_hotel_changed)
 
+        ttk.Button(
+            hotel_frame,
+            text="＋追加…",
+            command=lambda: self._open_hotel_wizard(mode="add", must_create=False),
+        ).grid(row=0, column=2, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
+
         # ------- カレンダー設定 -------
         calendar_frame = ttk.LabelFrame(frame, text="カレンダー")
         calendar_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, UI_SECTION_PADY))
@@ -1659,6 +1670,177 @@ class BookingCurveApp(tk.Tk):
         self._refresh_master_base_small_rescue()
         self._refresh_master_raw_root_dir()
         self._update_master_missing_check_status()
+
+    def _open_hotel_wizard(self, mode: str = "add", must_create: bool = False) -> None:
+        if self._hotel_wizard_open:
+            return
+
+        self._hotel_wizard_open = True
+
+        title = "新規ホテル作成"
+        if mode == "first_run":
+            title = "初回設定: 新規ホテル作成"
+
+        win = tk.Toplevel(self)
+        win.title(title)
+        _apply_window_icon(win)
+        win.transient(self)
+        win.grab_set()
+
+        hotel_id_var = tk.StringVar()
+        display_name_var = tk.StringVar()
+        capacity_var = tk.StringVar()
+        adapter_type_var = tk.StringVar(value="nface")
+        raw_root_dir_var = tk.StringVar()
+        include_subfolders_var = tk.BooleanVar(value=True)
+
+        def _close_wizard() -> None:
+            self._hotel_wizard_open = False
+            try:
+                win.grab_release()
+            except Exception:
+                pass
+            win.destroy()
+
+        def _on_cancel() -> None:
+            _close_wizard()
+            if must_create:
+                messagebox.showwarning(
+                    "設定が必要です",
+                    "ホテル設定が未作成のため、アプリを終了します。",
+                )
+                self.destroy()
+
+        def _on_browse() -> None:
+            selected = filedialog.askdirectory(title="RAW取込元フォルダを選択")
+            if selected:
+                raw_root_dir_var.set(selected)
+
+        def _on_save() -> None:
+            hotel_id = hotel_id_var.get().strip()
+            if not hotel_id:
+                messagebox.showerror("入力エラー", "hotel_id を入力してください。")
+                return
+            if not re.fullmatch(r"[A-Za-z0-9_-]+", hotel_id):
+                messagebox.showerror("入力エラー", "hotel_id は英数字と _ - のみ使用できます。")
+                return
+            if hotel_id in HOTEL_CONFIG:
+                messagebox.showerror("入力エラー", f"hotel_id は既に存在します: {hotel_id}")
+                return
+
+            display_name = display_name_var.get().strip() or hotel_id
+            capacity_str = capacity_var.get().strip()
+            try:
+                capacity = int(capacity_str)
+            except Exception:
+                messagebox.showerror("入力エラー", "capacity は正の整数を入力してください。")
+                return
+            if capacity <= 0:
+                messagebox.showerror("入力エラー", "capacity は正の整数を入力してください。")
+                return
+
+            raw_root_dir = raw_root_dir_var.get().strip()
+            if not raw_root_dir:
+                messagebox.showerror("入力エラー", "raw_root_dir を選択してください。")
+                return
+
+            adapter_type = (adapter_type_var.get().strip() or "nface").lower()
+            if adapter_type != "nface":
+                messagebox.showerror("入力エラー", "adapter_type は nface のみ対応です。")
+                return
+
+            hotel_cfg = {
+                "hotel_id": hotel_id,
+                "display_name": display_name,
+                "capacity": capacity,
+                "forecast_cap": capacity,
+                "adapter_type": adapter_type,
+                "raw_root_dir": raw_root_dir,
+                "include_subfolders": bool(include_subfolders_var.get()),
+            }
+
+            old_keys = set(HOTEL_CONFIG.keys())
+            try:
+                add_hotel_config(hotel_id, hotel_cfg)
+                reload_hotel_config_inplace()
+            except Exception as exc:
+                logging.exception("Failed to add hotel config")
+                messagebox.showerror("エラー", f"ホテル追加に失敗しました。\n{exc}")
+                return
+
+            new_keys = sorted(HOTEL_CONFIG.keys())
+            self._update_hotel_combobox_values(old_keys, new_keys)
+            self.hotel_var.set(hotel_id)
+            self._on_hotel_changed()
+            _close_wizard()
+
+        win.protocol("WM_DELETE_WINDOW", _on_cancel)
+
+        frame = ttk.Frame(win)
+        frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
+        frame.grid_columnconfigure(1, weight=1)
+
+        row = 0
+        ttk.Label(frame, text="hotel_id:").grid(row=row, column=0, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        ttk.Entry(frame, textvariable=hotel_id_var, width=24).grid(
+            row=row, column=1, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY
+        )
+        row += 1
+        ttk.Label(frame, text="英数字 + _- のみ", foreground="#555555").grid(
+            row=row, column=1, sticky="w", padx=UI_GRID_PADX, pady=(0, UI_GRID_PADY)
+        )
+
+        row += 1
+        ttk.Label(frame, text="display_name:").grid(row=row, column=0, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        ttk.Entry(frame, textvariable=display_name_var, width=30).grid(
+            row=row, column=1, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY
+        )
+        row += 1
+        ttk.Label(frame, text="空欄の場合は hotel_id を使用", foreground="#555555").grid(
+            row=row, column=1, sticky="w", padx=UI_GRID_PADX, pady=(0, UI_GRID_PADY)
+        )
+
+        row += 1
+        ttk.Label(frame, text="capacity:").grid(row=row, column=0, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        ttk.Entry(frame, textvariable=capacity_var, width=10).grid(
+            row=row, column=1, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY
+        )
+        row += 1
+        ttk.Label(
+            frame,
+            text="forecast_cap は capacity と同じ値で自動設定（後で変更可能）",
+            foreground="#555555",
+        ).grid(row=row, column=1, sticky="w", padx=UI_GRID_PADX, pady=(0, UI_GRID_PADY))
+
+        row += 1
+        ttk.Label(frame, text="adapter_type:").grid(row=row, column=0, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        adapter_combo = ttk.Combobox(frame, textvariable=adapter_type_var, state="readonly", width=12)
+        adapter_combo["values"] = ["nface"]
+        adapter_combo.grid(row=row, column=1, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        row += 1
+        ttk.Label(frame, text="現状 nface のみ対応", foreground="#555555").grid(
+            row=row, column=1, sticky="w", padx=UI_GRID_PADX, pady=(0, UI_GRID_PADY)
+        )
+
+        row += 1
+        ttk.Label(frame, text="raw_root_dir:").grid(row=row, column=0, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        ttk.Entry(frame, textvariable=raw_root_dir_var, width=40).grid(
+            row=row, column=1, sticky="we", padx=UI_GRID_PADX, pady=UI_GRID_PADY
+        )
+        ttk.Button(frame, text="参照...", command=_on_browse).grid(
+            row=row, column=2, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY
+        )
+
+        row += 1
+        ttk.Checkbutton(frame, text="サブフォルダも検索する", variable=include_subfolders_var).grid(
+            row=row, column=1, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY
+        )
+
+        row += 1
+        button_frame = ttk.Frame(frame)
+        button_frame.grid(row=row, column=1, sticky="e", padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 4, UI_GRID_PADY))
+        ttk.Button(button_frame, text="保存", command=_on_save).pack(side=tk.LEFT, padx=UI_GRID_PADX)
+        ttk.Button(button_frame, text="キャンセル", command=_on_cancel).pack(side=tk.LEFT, padx=UI_GRID_PADX)
 
     def _on_hotel_changed(self, event=None) -> None:
         # マスタ設定タブのホテル変更時に、カレンダー範囲とキャパ設定を両方更新

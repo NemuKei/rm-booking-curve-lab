@@ -434,8 +434,8 @@ def _load_hotels_json() -> dict[str, Any]:
     except OSError as exc:  # pragma: no cover - I/O error boundary
         raise RuntimeError(f"Failed to read hotel config at {HOTEL_CONFIG_PATH}: {exc}") from exc
 
-    if not isinstance(raw, dict) or not raw:
-        raise ValueError(f"hotels.json must contain a non-empty object: {HOTEL_CONFIG_PATH}")
+    if not isinstance(raw, dict):
+        raise ValueError(f"hotels.json must contain a JSON object: {HOTEL_CONFIG_PATH}")
 
     return raw
 
@@ -482,6 +482,9 @@ def load_hotel_config() -> Dict[str, Dict[str, Any]]:
     raw = _load_hotels_json()
     raw = _apply_local_raw_root_overrides(raw)
 
+    if not raw:
+        return {}
+
     validated: Dict[str, Dict[str, Any]] = {}
     for hotel_id, hotel_cfg in raw.items():
         validated[hotel_id] = _validate_hotel_config(hotel_id, hotel_cfg)
@@ -516,6 +519,21 @@ def reload_hotel_config_inplace() -> Dict[str, Dict[str, Any]]:
     HOTEL_CONFIG.clear()
     HOTEL_CONFIG.update(updated)
     return HOTEL_CONFIG
+
+
+def add_hotel_config(hotel_id: str, hotel_cfg: dict[str, Any]) -> None:
+    """Add a new hotel config entry to hotels.json and update HOTEL_CONFIG."""
+    if not hotel_id:
+        raise ValueError("hotel_id cannot be blank")
+
+    raw = _load_hotels_json()
+    if hotel_id in raw:
+        raise ValueError(f"hotel_id already exists: {hotel_id}")
+
+    raw[hotel_id] = hotel_cfg
+    _write_hotels_json(raw)
+
+    HOTEL_CONFIG[hotel_id] = _validate_hotel_config(hotel_id, hotel_cfg)
 
 
 def pop_runtime_init_errors() -> list[str]:

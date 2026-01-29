@@ -153,7 +153,8 @@
   * docs/spec_models.md: （入力整合がモデル前提である旨の導線）
   * docs/spec_data_layer.md: （raw配置ルール、探索範囲、重複扱い、拡張子方針を追記）
   * docs/spec_evaluation.md: （影響小／注記レベル）
-* Status: 未反映
+* Status: 方針変更（D-20260129-XXXで上書き）
+* Note: 重複キーは STOP せず、後勝ち（tie-break: mtime→path）で 1件に解決して運用継続。
 
 ## D-20251224-001 欠損検知は ops/audit の2モードで固定する
 
@@ -1144,6 +1145,40 @@
 
 ---
 
+## D-20260129-003 raw_inventory の重複キーはSTOPせず後勝ちで解決する（tie-break: mtime→path）
+
+* Decision:
+
+  * raw_inventory（RAW入力ファイル台帳）のキー `(target_month, asof_date)` が重複した場合は、**エラー停止しない**。
+  * **後勝ちで1ファイルを採用**し、採用/破棄したパスをWARNINGログに出して運用継続する。
+  * 後勝ちのtie-break は **mtime が新しい方**、同一なら **path の辞書順** とする（実装：`_resolve_duplicate_path`）。
+* Why:
+
+  * 現場運用での二重保存・拡張子違い等で STOP すると復旧コストが大きいため。リスクは WARNING で可視化し、運用継続を優先する。
+* Spec link:
+
+  * docs/spec_data_layer.md: raw_inventory（入力ファイル台帳）
+  * docs/spec_overview.md: データ取り込みの運用ポリシー（必要なら追記）
+* Status: 実装反映済（docs反映中）
+
+---
+
+## D-20260129-004 GUIの「LT_DATA(4ヶ月)」は +120日先に加えて翌4ヶ月先までを最低保証する
+
+* Decision:
+
+  * RANGE_REBUILDの stay_months は `asof_max +120日先` がかかる月まで（両端含む）＋前月を含める（既存決定の踏襲）。
+  * そのうえで GUI の「LT_DATA(4ヶ月)」実行では、運用安全のため **当月から数えて翌4ヶ月先まで** を最低保証する。
+    * 例：`end_month = max(month_by_120days, asof_month + 4)`
+* Why:
+
+  * 「120日先」に月跨ぎが乗らないケースでも、運用で必要な先月（翌月群）が取り込まれない事故を避けるため。
+* Spec link:
+
+  * docs/spec_data_layer.md: 部分生成（Partial rebuild / Upsert）
+  * docs/decision_log.md: D-20251226-001（asof_max起点+120日先＋前月含む）
+* Status: 実装反映済（docs反映中）
+
 ## D-20260121-002 引継書は docs/handovers の単体ファイルで成立させ、連結作業を廃止
 
 * Date: 2026-01-21
@@ -1315,6 +1350,10 @@
   * なし（運用決定。spec_* ではない）
 * Status: 反映済
 
+※2026/1/24　下記に修正済
+docs/handovers/YYYY-MM-DD_HHMM_<type>_<scope>__handover.md
+docs/thread_logs/YYYY-MM-DD_HHMM_<type>_<scope>__thread_log.md
+
 ---
 
 A-019
@@ -1336,3 +1375,231 @@ A-019
 * Status: 実装反映済
 
 ---
+
+## D-20260124-001 pace14_market の market補正を線形からpowerへ変更（clip/減衰パラメータ含む）
+
+* Decision:
+
+  * `pace14_market` の market_factor は「線形」ではなく **`market_pace_eff ** beta`（power）** で算出する方針とする。
+  * factor の clip 初期値は **0.85–1.15** とし、LT帯は従来方針（market補正の適用帯）を維持する。
+* Why:
+
+  * market補正をより自然に効かせつつ、LTが遠いほど影響が弱まる（beta減衰）形に揃えるため。
+  * 線形補正は外れ値・負値等の取り扱いが難しく、直感的な効き方になりにくいため。
+* Spec link:
+
+  * `docs/spec_models.md`: pace14_market セクション（market_factorの定義・clip方針）
+* Status: spec反映済
+
+---
+
+## D-20260124-002 pace14_weekshape_flow を追加（LT15–45の週×グループのフロー補正、W=7、clip 0.85–1.15）
+
+* Decision:
+
+  * pace14の守備範囲外（LT 15–45）で「週単位の強弱」を拾う補正として **weekshape_flow（フロー/B2）** を新モデルとして追加する。
+  * 窓幅は **W=7**、factor clip は **0.85–1.15** を初期値とする。
+* Why:
+
+  * 個別日のpickup補正（pace14）だけでは拾いにくい「週単位の強弱」や月末月初の弱さ等を補正できるようにするため。
+* Spec link:
+
+  * `docs/spec_models.md`: モデル一覧／weekshape_flow（新規）定義
+  * `docs/spec_evaluation.md`: 評価対象モデル一覧（必要なら）
+* Status: spec反映済
+
+---
+
+## D-20260124-003 calendar_features が無い/不足のときは自動生成する（手動生成不要）
+
+* Decision:
+
+  * `calendar_features_{hotel}.csv` が存在しない、または必要な日付範囲を満たさない場合、実行時に **自動生成**して補完する。
+  * 生成は最低1年分（min_span_days）を確保し、手動の事前生成を必須にしない。
+* Why:
+
+  * 実行前の手動オペ（生成忘れ）でモデルが落ちる/neutral化する事故を減らし、運用を安定させるため。
+* Spec link:
+
+  * `docs/spec_data_layer.md`: calendar_features の扱い（生成/必須性の位置づけ）
+  * `docs/spec_models.md`: calendar依存モデルの前提（必要なら）
+* Status: spec反映済
+
+---
+
+## D-20260124-004 pace14_weekshape_flow の gating 閾値（MIN_EVENTS）を到達可能値へ修正
+
+* Decision:
+
+  * `compute_weekshape_flow_factors` は `(week_id, group)` 単位集計のため、`WEEKSHAPE_MIN_EVENTS` は到達可能な値（<=7）を前提に設定する。
+  * デフォルトの `WEEKSHAPE_MIN_EVENTS=10` は到達不能になり得るため、デフォルトは 2 とする。
+* Why:
+
+  * 到達不能な閾値だと weekshape係数が常に 1.0 となり、モデルが実質OFFになって検証・運用の双方で誤解を生むため。
+* Spec link:
+
+  * `docs/spec_models.md`: pace14_weekshape_flow（gating条件とデフォルト値の記載）
+* Status: spec反映済
+
+---
+
+## D-20260125-001 開発依存（ruff）を pyproject の dev extras で固定し、LFを正として運用する
+
+* Decision:
+
+  * `ruff` は `pyproject.toml` の `optional-dependencies.dev`（`.[dev]`）で導入・固定し、開発環境差を減らす。
+  * 改行コードは LF を正とし、`.gitattributes` により正規化する（端末差の温床を減らす）。
+* Why:
+
+  * VSCode保存時の自動適用等が「ruff未導入」で崩れるのを防ぎ、環境依存のトラブルを減らすため。
+  * CRLF/LF差分によるノイズ（パッチ/レビュー/マージ）を減らすため。
+* Spec link:
+
+  * なし（開発運用/環境整備）
+* Status: 反映済
+
+---
+
+## D-20260125-002 capacity 定義は固定室数とし、“ベース小”判定はLT帯別に持つ
+
+* Decision:
+
+  * capacity は「月の販売室数（固定室数）」を採用する（休館/工事反映の有効キャパではなく）。
+  * “ベースが小さい”の判定・閾値は、LT0–14（pace14帯）と LT15–45（weekshape帯）で別々に持つ方針とする。
+* Why:
+
+  * cap正規化により施設規模差を抑えつつ、帯ごとの挙動差（直近と先行）を分けて安定運用するため。
+* Spec link:
+
+  * `docs/spec_models.md`: pace14 / weekshape（“ベース小”救済設計を反映する導線）
+* Status: 未反映
+
+---
+
+## D-20260126-001 base_small_rescue weekshape 学習を hotels.json に永続化し、学習ゲートを導入する
+
+* Decision:
+
+  * weekshape帯（LT15–45）の “ベース小救済” 用に、`residual_rate` 分布の分位（P90/P95/P97.5）から `cap_ratio_candidates` を学習し、`learned_params.base_small_rescue.weekshape` として hotels.json に保存する。
+  * 学習結果には `trained_until_asof / n_samples / n_unique_stay_dates / window_months_used` を含め、`trained_until_asof == latest_asof` の場合は学習をスキップして再実行を抑制する。
+* Why:
+
+  * “ベース小” で倍率補正が効かないケースに対して、施設規模差を吸収しつつ安全に救済上限（cap比）を決めるため。
+  * 再現性（いつのデータで学習したか）と運用負荷（無駄な再学習）の両立が必要なため。
+* Spec link:
+
+  * `docs/spec_models.md`: `3.4.3 pace14_weekshape_flow`（ベース小救済weekshapeの定義追記先）
+* Status: 実装反映済
+
+---
+
+## D-20260126-002 forecast CSV に weekshape_gated / base_small_rescue_* の診断列を出力する
+
+* Decision:
+
+  * run_forecast_batch が出力する forecast CSV に、`weekshape_gated` と `base_small_rescue_*`（applied/mode/cap_ratio/pickup/reason）を含める。
+  * 後方互換のため、detail_df に列が存在する場合のみCSVへ出力する（存在しないモデルでは無影響）。
+* Why:
+
+  * 救済が「どの日に」「どの理由で」「どれだけ」効いたかを、CSVだけで検証・監査できるようにするため。
+* Spec link:
+
+  * `docs/spec_models.md`: `3.4.3 pace14_weekshape_flow`（出力/診断項目の追記先）
+  * `docs/spec_evaluation.md`: （必要なら）検証観点として診断列の参照を明記
+* Status: 実装反映済
+
+---
+
+## D-20260128-001 pace14_market の市場補正は decay_k=0.25 を暫定デフォルトとし、clipは 0.85–1.25 を維持する
+
+* Decision:
+
+  * pace14_market の市場補正（power+decay）のデフォルトとして `MARKET_PACE_DECAY_K=0.25` を暫定採用する。
+  * 安全弁として `MARKET_PACE_CLIP=(0.85, 1.25)` を維持し、上限張り付きの頻度と“効き”のバランスを取る。
+* Why:
+
+  * clip上限の調整だけでは張り付き問題が解けず、decay_k を上げることで market帯（LT15–30）の上位張り付きを減らしつつ、強い週は自然に上げる挙動が得られたため。
+  * ASOF差（例：市場弱/強）およびホテル差でも、過度なブーストや不自然な抑制が出にくいことを確認できたため。
+* Spec link:
+
+  * `docs/spec_models.md`: pace14_market（market補正の定義・デフォルト値の追記先）
+* Status: 実装反映済（docs未反映）
+
+---
+
+## D-20260128-002 market補正の説明可能性を優先し、detail列の拡充と恒久診断ツールを追加する
+
+* Decision:
+
+  * pace14_market の detail（診断）に `current_oh/base_now/base_final/base_delta/final_forecast` を出力できるようにする。
+  * market帯の効果を再現確認できる恒久ツール `tools/diag_market_effect.py` を追加する（ASOF/ホテル/target/capacity 指定）。
+* Why:
+
+  * deltaが大きい理由が「倍率」なのか「元の増分（base_delta）」なのかを、ログだけで説明・検証できる状態が必要なため。
+  * 一時スクリプト依存を減らし、再現手順を固定化して運用コストと認知負荷を下げるため。
+* Spec link:
+
+  * `docs/spec_models.md`: pace14_market（診断項目の導線）
+  * `docs/spec_evaluation.md`: （必要なら）評価時の診断参照の明記
+* Status: 実装反映済（docs未反映）
+
+---
+
+## D-20260128-003 ローカル設定ファイルを除き、ホテル固有名（実名）をコード上から排除する方針とする
+
+* Decision:
+
+  * ローカル設定ファイルを除き、ホテル固有名（例：daikokucho/kansai 等の実名）はコード・ツール・ログ出力から排除する方針とする。
+  * まずは実名デフォルト（例：`HOTEL_TAG="..."`）を撤去し、hotel_tag未指定時の挙動を統一（例外 or 中立スキップ）する。
+* Why:
+
+  * 外部利用（副業等）との兼ね合いで、コードベースの再利用性と情報分離を確保する必要があるため。
+  * hotel_tag渡し忘れによる誤適用事故（別ホテルに別ホテルの補正が乗る）を予防するため。
+* Spec link:
+
+  * `AGENTS.md`: 運用・ガバナンス方針（必要なら追記箇所）
+  * `docs/spec_overview.md`: （必要なら）データ/設定の責務分離の導線
+* Status: 方針合意（未実装）
+
+---
+
+## D-20260129-001 config/hotels.json を空テンプレ化し、初回起動ウィザードでホテル設定を作成する
+
+* Decision:
+
+  * 同梱の `config/hotels.json` は `{}`（空テンプレ）で固定する。
+  * GUI起動時に `HOTEL_CONFIG` が空の場合、初回セットアップウィザードを必ず表示し、最初のホテル設定をGUIから作成させる。
+  * 「対象ホテル」枠に「＋追加…」を設置し、任意でホテル設定を追加できる導線を提供する。
+
+* Why:
+
+  * コード上のホテル実名デフォルト撤去と整合させつつ、初回導入時の誤選択/黙ったフォールバックを防ぐため。
+  * 設定が無い/空のときは安全側に停止・明示設定へ誘導する方針をGUIに落とすため。
+
+* Spec link:
+
+  * docs/spec_overview.md: 「### 2-1. 対象ホテル」（`config/hotels.json` の位置づけ・必須キー）
+
+* Status: 実装反映済
+
+---
+
+## D-20260129-002 hotel_tag 未指定の黙殺を禁止し、CLI/tools は --hotel 必須で統一する
+
+* Decision:
+
+  * `src/` と `tools/`（`src/_archive` 除外）からホテル実名ハードコードを撤去する。
+  * CLI/tools のエントリポイントは `--hotel` を必須化し、未指定で黙って進まないようにする。
+  * ホテル依存の補正ロジックは `hotel_tag` が未指定（None/空）なら ValueError とし、黙って補正をスキップしない。
+
+* Why:
+
+  * 別ホテルの設定/補正が誤って適用される事故を防ぎ、補正が効いていないことに気付けない状態を排除するため（フェイルファスト）。
+  * 「ホテル設定が欠けている/必須キー不足は安全側にSTOP」の方針と整合させるため。
+
+* Spec link:
+
+  * docs/spec_overview.md: 「### 2-1. 対象ホテル」（設定が欠けている場合は安全側にSTOP）
+  * docs/spec_models.md: 「### 3.2 recent90 / recent90_adj モデル」内の `apply_segment_adjustment(...)`（ホテル依存補正の入力契約を明文化対象）
+
+* Status: 実装反映済

@@ -12,8 +12,13 @@ import pandas as pd
 import build_calendar_features
 import run_build_lt_csv
 import run_forecast_batch
-from booking_curve import monthly_rounding
-from booking_curve.config import HOTEL_CONFIG, OUTPUT_DIR, get_hotel_rounding_units
+from booking_curve import learning_base_small, monthly_rounding
+from booking_curve.config import (
+    HOTEL_CONFIG,
+    OUTPUT_DIR,
+    get_hotel_rounding_units,
+    update_hotel_learned_params,
+)
 from booking_curve.daily_snapshots import (
     get_daily_snapshots_path,
     get_latest_asof_date,
@@ -27,6 +32,7 @@ from booking_curve.forecast_simple import (
     compute_market_pace_7d,
     forecast_final_from_pace14,
     forecast_final_from_pace14_market,
+    forecast_final_from_pace14_weekshape_flow,
     moving_average_3months,
     moving_average_recent_90days,
     moving_average_recent_90days_weighted,
@@ -320,6 +326,49 @@ def build_range_rebuild_plan_for_gui(
     )
 
 
+def build_range_rebuild_plan_for_gui_with_stay_months(
+    hotel_tag: str,
+    *,
+    stay_months: list[str],
+    buffer_days: int = 30,
+) -> dict[str, object]:
+    if not stay_months:
+        raise ValueError("stay_months must be a non-empty list")
+
+    inventory = _build_raw_inventory_or_raise(hotel_tag)
+    latest_asof_raw = inventory.health.latest_asof_ymd
+    if not latest_asof_raw:
+        raise ValueError("RAWに最新ASOFがないためレンジ更新できません")
+
+    asof_max = _normalize_ymd_timestamp(latest_asof_raw)
+    asof_min = _calculate_asof_min(asof_max, buffer_days)
+
+    normalized_months: list[str] = []
+    for ym in stay_months:
+        try:
+            period = pd.Period(f"{ym[:4]}-{ym[4:]}", freq="M")
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError(f"Invalid stay_month format: {ym}") from exc
+        normalized_months.append(period.strftime("%Y%m"))
+
+    stay_months_list = sorted(set(normalized_months))
+    if not stay_months_list:
+        raise ValueError("stay_months must contain at least one valid month")
+
+    stay_min = pd.Timestamp(f"{stay_months_list[0]}01").normalize()
+    stay_max = (pd.Timestamp(f"{stay_months_list[-1]}01") + pd.offsets.MonthEnd(0)).normalize()
+
+    return {
+        "mode": "RANGE_REBUILD",
+        "buffer_days": buffer_days,
+        "asof_min": asof_min,
+        "asof_max": asof_max,
+        "stay_months": stay_months_list,
+        "stay_min": stay_min,
+        "stay_max": stay_max,
+    }
+
+
 def get_latest_asof_for_hotel(hotel_tag: str) -> Optional[str]:
     """ホテル別の最新 ASOF 日付を asof_dates_<hotel_tag>.csv から取得する。"""
 
@@ -344,6 +393,184 @@ def get_latest_asof_for_hotel(hotel_tag: str) -> Optional[str]:
         return None
 
     return pd.to_datetime(latest_asof).normalize().strftime("%Y-%m-%d")
+
+
+def train_base_small_weekshape_for_gui(
+    hotel_tag: str,
+    *,
+    window_months: int = 3,
+    sample_stride_days: int = 7,
+) -> dict[str, object]:
+    latest_asof = get_latest_asof_for_hotel(hotel_tag)
+    if latest_asof is None:
+        return {"ok": False, "reason": "latest_asof_not_found"}
+
+    MIN_SAMPLES = 10
+    TARGET_SAMPLES = 30
+    MIN_UNIQUE_DATES = 7
+    TARGET_UNIQUE_DATES = 21
+
+    learned_params = HOTEL_CONFIG.get(hotel_tag, {}).get("learned_params")
+    if not isinstance(learned_params, dict):
+        learned_params = {}
+    base_small = learned_params.get("base_small_rescue")
+    if not isinstance(base_small, dict):
+        base_small = {}
+    weekshape = base_small.get("weekshape")
+    if isinstance(weekshape, dict):
+        trained_until = weekshape.get("trained_until_asof")
+        if trained_until == latest_asof:
+            return {
+                "ok": True,
+                "skipped": True,
+                "trained_until_asof": latest_asof,
+            }
+
+    window_candidates = [3, 6, 12]
+    if window_months in window_candidates:
+        window_candidates = window_candidates[window_candidates.index(window_months) :]
+    else:
+        window_candidates = [window_months] + window_candidates
+
+    best_attempt: dict[str, object] | None = None
+    selected_result: dict[str, object] | None = None
+    selected_window: int | None = None
+
+    def _safe_int(value: object) -> int:
+        try:
+            return int(value)
+        except Exception:
+            return 0
+
+    for candidate_months in window_candidates:
+        try:
+            result = learning_base_small.train_weekshape_base_small_quantiles(
+                hotel_tag=hotel_tag,
+                asof_end=latest_asof,
+                window_months=candidate_months,
+                sample_stride_days=sample_stride_days,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "base-small weekshape learning failed: hotel=%s asof=%s window_months=%s error=%s",
+                hotel_tag,
+                latest_asof,
+                candidate_months,
+                exc,
+            )
+            return {
+                "ok": False,
+                "reason": "learning_failed",
+                "trained_until_asof": latest_asof,
+            }
+
+        if not isinstance(result, dict):
+            logger.warning(
+                "base-small weekshape learning result invalid: hotel=%s asof=%s reason=invalid_result",
+                hotel_tag,
+                latest_asof,
+            )
+            return {
+                "ok": False,
+                "reason": "invalid_result",
+                "trained_until_asof": latest_asof,
+                "result": result,
+            }
+
+        n_samples = _safe_int(result.get("n_samples", 0))
+        n_unique = _safe_int(result.get("n_unique_stay_dates", 0))
+
+        cap_ratio_candidates = result.get("cap_ratio_candidates")
+        has_candidates = isinstance(cap_ratio_candidates, list) and len(cap_ratio_candidates) > 0
+
+        attempt = {
+            "result": result,
+            "window_months": candidate_months,
+            "n_samples": n_samples,
+            "n_unique_stay_dates": n_unique,
+            "has_candidates": has_candidates,
+        }
+
+        if best_attempt is None:
+            best_attempt = attempt
+        else:
+            prev_samples = _safe_int(best_attempt.get("n_samples", 0))
+            prev_unique = _safe_int(best_attempt.get("n_unique_stay_dates", 0))
+            if (n_samples, n_unique) > (prev_samples, prev_unique):
+                best_attempt = attempt
+
+        if has_candidates and n_samples >= TARGET_SAMPLES and n_unique >= TARGET_UNIQUE_DATES:
+            selected_result = result
+            selected_window = candidate_months
+            break
+
+    if selected_result is None or selected_window is None:
+        best_result = best_attempt.get("result") if isinstance(best_attempt, dict) else None
+        best_samples = _safe_int(best_attempt.get("n_samples")) if isinstance(best_attempt, dict) else 0
+        best_unique = _safe_int(best_attempt.get("n_unique_stay_dates")) if isinstance(best_attempt, dict) else 0
+        window_used = best_attempt.get("window_months") if isinstance(best_attempt, dict) else None
+
+        if best_samples < MIN_SAMPLES or best_unique < MIN_UNIQUE_DATES:
+            reason = "insufficient_samples"
+        else:
+            reason = "target_not_met"
+
+        logger.warning(
+            "base-small weekshape learning skipped: hotel=%s asof=%s reason=%s n_samples=%s n_unique=%s window_months=%s",
+            hotel_tag,
+            latest_asof,
+            reason,
+            best_samples,
+            best_unique,
+            window_used,
+        )
+        return {
+            "ok": False,
+            "reason": reason,
+            "trained_until_asof": latest_asof,
+            "window_months_used": window_used,
+            "n_samples": best_samples,
+            "n_unique_stay_dates": best_unique,
+            "result": best_result,
+        }
+
+    p90 = selected_result.get("p90")
+    p95 = selected_result.get("p95")
+    p975 = selected_result.get("p975")
+    if p90 is None or p95 is None or p975 is None:
+        logger.warning(
+            "base-small weekshape learning result invalid: hotel=%s asof=%s reason=missing_quantiles",
+            hotel_tag,
+            latest_asof,
+        )
+        return {
+            "ok": False,
+            "reason": "invalid_result",
+            "trained_until_asof": latest_asof,
+            "result": selected_result,
+        }
+
+    trained_until = selected_result.get("trained_until_asof") or latest_asof
+    weekshape_payload = {
+        "cap_ratio_p90": float(p90),
+        "cap_ratio_p95": float(p95),
+        "cap_ratio_p97_5": float(p975),
+        "p90": float(p90),
+        "p95": float(p95),
+        "p975": float(p975),
+        "cap_ratio_candidates": [float(p90), float(p95), float(p975)],
+        "trained_until_asof": trained_until,
+        "n_samples": _safe_int(selected_result.get("n_samples", 0)),
+        "n_unique_stay_dates": _safe_int(selected_result.get("n_unique_stay_dates", 0)),
+        "window_months_used": int(selected_window),
+    }
+
+    update_hotel_learned_params(
+        hotel_tag,
+        {"base_small_rescue": {"weekshape": weekshape_payload, "version": 1}},
+    )
+
+    return {"ok": True, "skipped": False, "result": weekshape_payload}
 
 
 def _load_lt_data(hotel_tag: str, target_month: str) -> pd.DataFrame:
@@ -582,7 +809,7 @@ def get_booking_curve_data(
             )
     elif model == "avg":
         forecast_curve = avg_curve_3m
-    elif model in {"pace14", "pace14_market"}:
+    elif model in {"pace14", "pace14_market", "pace14_weekshape_flow"}:
         baseline_curves: dict[int, pd.Series] = {}
         history_by_weekday: dict[int, pd.DataFrame] = {}
 
@@ -638,6 +865,43 @@ def get_booking_curve_data(
                     detail_df["market_pace_7d"] = market_pace_7d
                     pace14_detail = detail_df
                     pace14_detail.attrs["market_pace_detail"] = mp_detail
+            elif model == "pace14_weekshape_flow":
+                rescue_cfg = HOTEL_CONFIG.get(hotel_tag, {}).get("base_small_rescue", {})
+                if not isinstance(rescue_cfg, dict):
+                    rescue_cfg = {}
+                learned_params = HOTEL_CONFIG.get(hotel_tag, {}).get("learned_params", {})
+                if not isinstance(learned_params, dict):
+                    learned_params = {}
+                learned_rescue = learned_params.get("base_small_rescue", {})
+                if not isinstance(learned_rescue, dict):
+                    learned_rescue = {}
+                learned_weekshape = learned_rescue.get("weekshape", {})
+                if not isinstance(learned_weekshape, dict):
+                    learned_weekshape = {}
+
+                base_small_rescue_params = None
+                if learned_weekshape:
+                    base_small_rescue_params = {
+                        "rescue_cfg": rescue_cfg,
+                        "learned_weekshape": learned_weekshape,
+                    }
+
+                final_series_full, detail_df = forecast_final_from_pace14_weekshape_flow(
+                    lt_df=lt_df,
+                    baseline_curves_by_weekday=baseline_curves,
+                    history_by_weekday=history_by_weekday,
+                    as_of_date=asof_ts,
+                    capacity=_get_capacity(hotel_tag, None),
+                    hotel_tag=hotel_tag,
+                    base_small_rescue_params=base_small_rescue_params,
+                    lt_min=0,
+                    lt_max=lt_max,
+                )
+                final_series = final_series_full.reindex(df_week.index)
+                if not detail_df.empty:
+                    pace14_detail = detail_df.reindex(df_week.index)
+                else:
+                    pace14_detail = None
             else:
                 final_series, detail_df = forecast_final_from_pace14(
                     lt_df=df_week,
@@ -855,6 +1119,10 @@ def _prepare_monthly_curve_df(df: pd.DataFrame, csv_path: Path, *, fill_missing:
             df_no_act = df_no_act.copy()
         else:
             df_no_act = df_no_act.reindex(index=range(0, int(max_lt) + 1))
+        if act_row is not None and 0 in df_no_act.index:
+            act_value = float(act_row["rooms_total"].iloc[0])
+            if pd.isna(df_no_act.loc[0, "rooms_total"]):
+                df_no_act.loc[0, "rooms_total"] = act_value
         rooms_series = df_no_act["rooms_total"].astype(float)
         rooms_series = rooms_series.interpolate(method="linear", limit_area="inside")
         df_no_act["rooms_total"] = rooms_series
@@ -883,7 +1151,7 @@ def run_forecast_for_gui(
     - as_of_date: "YYYY-MM-DD" 形式。run_forecast_batch 側では
       pd.to_datetime で解釈される前提。
     - gui_model: GUI のコンボボックス値
-      ("avg", "recent90", "recent90_adj", "recent90w", "recent90w_adj", "pace14", "pace14_market")
+      ("avg", "recent90", "recent90_adj", "recent90w", "recent90w_adj", "pace14", "pace14_market", "pace14_weekshape_flow")
     - capacity: 予測キャップ (None の場合は run_forecast_batch 側のデフォルトを使用)
     """
     # GUI からは "YYYY-MM-DD" が渡されるので、
@@ -964,6 +1232,16 @@ def run_forecast_for_gui(
                 phase_factor=phase_factor,
                 phase_clip_pct=phase_clip_pct,
             )
+        elif base_model == "pace14_weekshape_flow":
+            run_forecast_batch.run_pace14_weekshape_flow_forecast(
+                target_month=ym,
+                as_of_date=asof_tag,
+                capacity=capacity,
+                pax_capacity=pax_capacity,
+                hotel_tag=hotel_tag,
+                phase_factor=phase_factor,
+                phase_clip_pct=phase_clip_pct,
+            )
         else:
             raise ValueError(f"Unsupported gui_model: {gui_model}")
 
@@ -977,6 +1255,7 @@ def _get_forecast_csv_prefix(gui_model: str) -> tuple[str, str]:
         "recent90w_adj": ("forecast_recent90w", "adjusted_projected_rooms"),
         "pace14": ("forecast_pace14", "projected_rooms"),
         "pace14_market": ("forecast_pace14_market", "projected_rooms"),
+        "pace14_weekshape_flow": ("forecast_pace14_weekshape_flow", "projected_rooms"),
     }
     if gui_model not in model_map:
         raise ValueError(f"Unsupported gui_model: {gui_model}")
@@ -1767,14 +2046,14 @@ def get_daily_forecast_table(
     Parameters
     ----------
     hotel_tag : str
-        ホテル識別子 (例: "daikokucho")
+        ?????? (?: "hotel_001")
     target_month : str
         対象宿泊月 "YYYYMM"
     as_of_date : str
         予測基準日 "YYYY-MM-DD"
     gui_model : str
         GUI上で選択されたモデル名
-        ("avg", "recent90", "recent90_adj", "recent90w", "recent90w_adj", "pace14", "pace14_market")
+        ("avg", "recent90", "recent90_adj", "recent90w", "recent90w_adj", "pace14", "pace14_market", "pace14_weekshape_flow")
     capacity : float, optional
         None の場合は HOTEL_CONFIG の設定を使用
     pax_capacity : float, optional
@@ -1811,6 +2090,7 @@ def get_daily_forecast_table(
         "recent90w_adj": ("forecast_recent90w", "adjusted_projected_rooms"),
         "pace14": ("forecast_pace14", "projected_rooms"),
         "pace14_market": ("forecast_pace14_market", "projected_rooms"),
+        "pace14_weekshape_flow": ("forecast_pace14_weekshape_flow", "projected_rooms"),
     }
     if gui_model not in model_map:
         raise ValueError(f"Unsupported gui_model: {gui_model}")

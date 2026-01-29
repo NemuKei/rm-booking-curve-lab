@@ -164,20 +164,62 @@ def _discover_excel_files(input_path: Path, glob: str, *, recursive: bool) -> li
     return files
 
 
-def _validate_no_duplicate_keys(files: list[Path]) -> None:
-    """Validate that there are no duplicate (target_month, asof_date) keys among files."""
+def _safe_mtime(file_path: Path) -> float | None:
+    try:
+        return file_path.stat().st_mtime
+    except Exception:
+        return None
+
+
+def _resolve_duplicate_path(existing: Path, candidate: Path) -> tuple[Path, Path, str]:
+    existing_mtime = _safe_mtime(existing)
+    candidate_mtime = _safe_mtime(candidate)
+    if existing_mtime is not None and candidate_mtime is not None and existing_mtime != candidate_mtime:
+        if candidate_mtime > existing_mtime:
+            return candidate, existing, "mtime"
+        return existing, candidate, "mtime"
+    if str(candidate) > str(existing):
+        return candidate, existing, "path"
+    return existing, candidate, "path"
+
+
+def _dedupe_duplicate_keys(files: list[Path]) -> list[Path]:
+    """Resolve duplicate (target_month, asof_date) keys among files and keep one."""
     seen: dict[tuple[str, str], Path] = {}
+    key_map: dict[Path, tuple[str, str]] = {}
+    unkeyed: list[Path] = []
     for file_path in files:
         target_month, asof_ymd = parse_nface_filename(file_path)
         if target_month is None or asof_ymd is None:
+            unkeyed.append(file_path)
+            key_map[file_path] = ("", "")
             continue
         key = (target_month, asof_ymd)
         if key in seen:
             existing = seen[key]
-            raise ValueError(
-                f"Duplicate key detected for {key}: {existing} and {file_path}",
+            keep, drop, rule = _resolve_duplicate_path(existing, file_path)
+            if keep != existing:
+                seen[key] = keep
+                key_map.pop(existing, None)
+                key_map[keep] = key
+            logger.warning(
+                "Duplicate key detected for %s: keeping %s, dropping %s (rule=%s)",
+                key,
+                keep,
+                drop,
+                rule,
             )
+            continue
         seen[key] = file_path
+        key_map[file_path] = key
+
+    deduped_paths = list(seen.values()) + unkeyed
+
+    def _sort_key(path: Path) -> tuple[str, str, str]:
+        target_month, asof_ymd = key_map.get(path, ("", ""))
+        return (target_month, asof_ymd, str(path))
+
+    return sorted(deduped_paths, key=_sort_key)
 
 
 def _normalize_boundary_timestamp(value: pd.Timestamp | str | None, param_name: str) -> pd.Timestamp | None:
@@ -780,7 +822,7 @@ def build_daily_snapshots_fast(
     asof_max_ts = _normalize_boundary_timestamp(asof_max, "asof_max") if asof_max is not None else None
 
     files = _discover_excel_files(input_path, glob, recursive=recursive)
-    _validate_no_duplicate_keys(files)
+    files = _dedupe_duplicate_keys(files)
 
     filtered: list[tuple[Path, str, str]] = []
     for file in files:
@@ -865,7 +907,7 @@ def build_daily_snapshots_full_months(
         return
 
     files = _discover_excel_files(input_path, glob, recursive=recursive)
-    _validate_no_duplicate_keys(files)
+    files = _dedupe_duplicate_keys(files)
 
     filtered: list[tuple[Path, str, str]] = []
     for file in files:
@@ -940,7 +982,7 @@ def build_daily_snapshots_full_all(
         return
 
     files = _discover_excel_files(input_path, glob, recursive=recursive)
-    _validate_no_duplicate_keys(files)
+    files = _dedupe_duplicate_keys(files)
 
     if not files:
         logger.warning("%s 配下に対象ファイルが見つかりません", input_path)
@@ -1016,7 +1058,7 @@ def build_daily_snapshots_from_folder_partial(
     stay_max_ts = _normalize_boundary_timestamp(stay_max, "stay_max") if stay_max is not None else None
 
     files = _discover_excel_files(input_path, glob, recursive=recursive)
-    _validate_no_duplicate_keys(files)
+    files = _dedupe_duplicate_keys(files)
 
     logger.info(
         "%s: partial build filters -> target_months=%s, asof_min=%s, asof_max=%s",

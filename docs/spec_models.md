@@ -310,56 +310,98 @@ OCC モデルの主な入力は、`lt_data_YYYYMM_<hotel>.csv` に代表され�
 
 #### 3.4.2 pace14_market
 
-##### 概要
+`pace14` の PF（Pace Factor）に、直近のマーケットの強弱（market_pace）を反映して補正するモデル。
 
-- **目的**：pace14（直近LT帯）だけだと効きが短いので、**中間LT帯（例：15〜30日）に対して「直近の市場ペース（7日平均）」で補正**する。
-- **重要**：現行実装では **pace14（PF）と market_factor は“掛け合わせない”**。LT帯で **排他的に適用**する。
+- 適用LT帯：`MARKET_PACE_LT_MIN..MARKET_PACE_LT_MAX`（デフォルト：15..30）
+- 目的：PFが「自館だけの強弱」に過剰反応するのを避けつつ、直近のマーケットトレンドを穏やかに反映する
 
-##### 市場ペース（market_pace）
+---
 
-- 1日（target_date）あたりの市場ペース（概念）は、同一ホテルの複数stay_dateを集計して以下で定義する：
+##### 3.4.2.1 market_pace_raw（1日ぶん）
 
-  - `pickup_actual = OH(lt_now) - OH(lt_now+1)`
-  - `pickup_base   = BASE(lt_now) - BASE(lt_now+1)`
-  - `market_pace_raw = Σ pickup_actual / Σ pickup_base`
+1日ぶんの `market_pace_raw` は、対象stay_dateの pickup を合算して比で定義する。
 
-  ※ `pickup_base` の分母が極小の場合は欠損（NaN）扱い。
+- 対象stay_date：`stay_date >= as_of_date`
+- 対象LT帯：`lt_now in [MARKET_PACE_LT_MIN, MARKET_PACE_LT_MAX]`
+- pickup（合算対象）：
+  - `actual_pickup = OH(lt_now) - OH(MARKET_PACE_LT_MAX)`
+  - `base_pickup   = BASE(lt_now) - BASE(MARKET_PACE_LT_MAX)`
+- 合算比：
+  - `sum_actual = Σ actual_pickup`
+  - `sum_base   = Σ base_pickup`
+  - `market_pace_raw = sum_actual / sum_base`
+- ガード：
+  - `n_events < min_events` または `abs(sum_base) < min_abs_base` の場合は `NaN`（無効扱い）
 
-- `market_pace_7d` は直近7日分の `market_pace_raw` を平均して求める（欠損は除外）。  
-  ※ 実装では診断用に日次の内訳も保持する。
+---
 
-##### market_factor（線形＋clip：現行実装）
+##### 3.4.2.2 market_pace_7d（直近7日・合算比）
 
-- `market_beta` を用いて、`market_pace_7d` を **線形**に 1.00 周りで弱め/強めする：
+直近7日ぶんの `market_pace_7d` は、日次 `market_pace_raw` の単純平均ではなく、**7日分のpickup合算比**で定義する（重み付き）。
 
-  - `raw_factor = 1 + market_beta * (market_pace_7d - 1)`
-  - `market_factor = clip(raw_factor, 0.95, 1.05)`  （初期値）
+- 日次で `sum_actual`, `sum_base`, `n_events` を取得し、直近7日を合算する：
+  - `sum_actual_7d = Σ(sum_actual)`
+  - `sum_base_7d   = Σ(sum_base)`
+  - `n_events_7d   = Σ(n_events)`
+  - `market_pace_7d = sum_actual_7d / sum_base_7d`
+- ガード：
+  - `n_events_7d < min_events_7d` または `abs(sum_base_7d) < min_abs_base_7d` の場合は `NaN`
 
-  - βの意味：
-    - `β = 0`：無効（raw_factor=1）
-    - `0 < β < 1`：市場ペースを弱めて反映（安全寄り）
-    - `β = 1`：市場ペースをそのまま反映（ただしclipあり）
+---
 
-##### 予測への適用（LT帯で排他）
+##### 3.4.2.3 market_factor（power補正 + LT減衰 + clip）
 
-`base_delta = base_final - base_now` として、stay_dateごとの最終予測は以下：
+`market_pace_7d` を PF に掛ける係数（LTが遠いほど影響を弱める）。
 
-- `lt_now <= 14`：`final_forecast = OH_now + pace14_pf * base_delta`
-- `15 <= lt_now <= 30`：`final_forecast = OH_now + market_factor * base_delta`
-- その他：`final_forecast = OH_now + base_delta`
+1) 入力の安全化（`market_pace_eff`）
 
-※ capacity 上限で min を取る（NaNはそのまま）。
+- `market_pace_7d` が `NaN` の場合は `1.0`
+- `market_pace_raw_clip = clip(market_pace_7d, *MARKET_PACE_RAW_CLIP)`（デフォルト：0.50..2.20）
+- `market_pace_eff = max(market_pace_raw_clip, MARKET_PACE_FLOOR)`（デフォルト：0.20）
 
-##### 注記（将来検討）
+2) LTによる減衰（`market_beta`）
 
-- power（`market_pace^β`）や `market_pace_raw` 側clip、PF→marketの積などは **現行実装には未反映**。導入する場合は別ブランチで実装→検証→spec更新の順で行う。
+- `market_beta = exp(-MARKET_PACE_DECAY_K * (lt_now - MARKET_PACE_LT_MIN))`
+  - `MARKET_PACE_DECAY_K` デフォルト：0.15
 
-#### 3.4.3 診断情報（UI表示用）
+3) power補正 → 最終clip
+
+- `market_factor_raw = market_pace_eff ** market_beta`
+- `market_factor = clip(market_factor_raw, *MARKET_PACE_CLIP)`（デフォルト：0.85..1.15）
+
+4) PFへの適用（LT帯内のみ）
+
+- `pf_market = pf_clipped * market_factor`
+- LT帯外（`lt_now < MARKET_PACE_LT_MIN` または `lt_now > MARKET_PACE_LT_MAX`）は `pf_market = pf_clipped`（market補正なし）
+
+---
+
+#### 3.4.3 pace14_weekshape_flow
+
+`pace14` の守備範囲外（LT 15–45）で「週単位の強弱」を拾う補正（flow/B2）を適用するモデル。
+
+- 適用LT帯：`WEEKSHAPE_LT_MIN..WEEKSHAPE_LT_MAX`（デフォルト：15..45）
+- ウィンドウ：`WEEKSHAPE_W`（デフォルト：7）
+  - 日次pickupの定義：`pickup = OH(lt_now) - OH(lt_now + WEEKSHAPE_W)`
+- 週境界（week_id の定義）：
+  - デフォルトは ISO週（`WEEKSHAPE_WEEK_BOUNDARY="iso"`）
+  - 分析用に `sun`（日曜始まり）/ `mon`（月曜始まり）へ切替可能
+  - 年跨ぎの週番号挙動が ISO と異なるため、比較検証用途に限定する
+- 係数clip：`WEEKSHAPE_CLIP`（デフォルト：0.85..1.15）
+- ガード：
+  - `n_events < WEEKSHAPE_MIN_EVENTS`（デフォルト：2）または `abs(sum_base) < WEEKSHAPE_MIN_SUM_BASE`（デフォルト：1.0）
+  - `WEEKSHAPE_MIN_EVENTS` は `(week_id, group)` の `n_events` が最大でも 7（group 分割でさらに小さくなる）ため、到達可能な値（<=7）にすること
+  - ガード不成立の場合は係数を `1.0`（neutral）とする
+
+---
+
+#### 3.4.4 診断情報（UI表示用）
 - `pace14` 系は、内部的に以下の診断情報（例）を返し、GUIで「⚠ spike」等を表示できるようにしている：
   - `delta_actual / delta_base`
   - `pf_raw / pf_shrunk / pf_clipped`
   - `q_lo / q_hi`（閾値）と `is_spike`
   - （`pace14_market` の場合）`market_pace_7d`, `market_beta`, `market_factor`
+  - （`pace14_weekshape_flow` の場合）`weekshape_factor`, `gated`（ガード成立フラグ）
 
 **注意**
 - 必要なLT_DATA（履歴）が不足する場合、PFや閾値が安定しないため、ベースモデル（recent90系）へフォールバックすることがある（運用上は「まずベースで外さない」が優先）。

@@ -85,10 +85,10 @@
 ## 命名ルール（最低限）
 
 ### handovers
-- `docs/handovers/YYYY-MM-DD_HHMM_<branch>_<scope>.md`
+- `docs/handovers/YYYY-MM-DD_HHMM_<type>_<scope>__handover.md`
 
 ### thread_logs
-- `docs/thread_logs/YYYY-MM-DD_HHMM_<branch>_<scope>.md`
+- `docs/thread_logs/YYYY-MM-DD_HHMM_<type>_<scope>__thread_log.md`
 
 共通：
 - ファイル名は **英数字・ハイフン・アンダースコアのみ**

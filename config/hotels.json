@@ -1,13 +1,1 @@
-{
-  "setup_me": {
-    "hotel_id": "setup_me",
-    "display_name": "【要設定】ここを自ホテルに書き換えてください",
-    "capacity": 100,
-    "forecast_cap": 100,
-    "data_subdir": "",
-    "timeseries_file": "",
-    "adapter_type": "nface",
-    "raw_root_dir": "__PLEASE_SET_RAW_ROOT_DIR__",
-    "include_subfolders": true
-  }
-}
+{}

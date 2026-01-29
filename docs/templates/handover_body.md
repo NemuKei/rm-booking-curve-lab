@@ -1,6 +1,6 @@
 # Handover（本文テンプレ）
 
-Proposed file path: docs/handovers/YYYY-MM-DD_HHMM_<branch>_<scope>.md
+Proposed file path: docs/handovers/YYYY-MM-DD_HHMM_<type>_<scope>__handover.md
 
 ---
 
@@ -84,8 +84,8 @@ Proposed file path: docs/handovers/YYYY-MM-DD_HHMM_<branch>_<scope>.md
 - 起動：`python src/gui_main.py`
 - バッチ：`python src/run_forecast_batch.py ...`
 - ログ：`<log path>`（例：`gui_app.log`）
-- source_zip（引継書作成の材料ZIP）：`<zip filename>`（同一なら anchor_zip と同じでOK）
-- anchor_zip（次スレで添付するアンカーZIP）：`<zip filename>`
+- source_zip（引継書作成の材料ZIP）：`<zip filename>`
+- anchor_zip（次スレで添付するアンカーZIP）：TBD（クローズ時に make_release_zip.py で作成し、次スレ冒頭で添付する）
 
 ---
 

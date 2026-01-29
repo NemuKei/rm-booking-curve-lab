@@ -71,9 +71,7 @@ DEFAULT_APP_USER_MODEL_ID = "BookingCurveLab.App"
 def _init_windows_app_identity() -> None:
     if os.environ.get("BOOKING_CURVE_DISABLE_AUMID") == "1":
         return
-    app_id = os.environ.get("BOOKING_CURVE_APP_ID") or os.environ.get(
-        "BOOKING CURVE APP ID"
-    )
+    app_id = os.environ.get("BOOKING_CURVE_APP_ID") or os.environ.get("BOOKING CURVE APP ID")
     if getattr(sys, "frozen", False):
         if not app_id:
             return
@@ -240,13 +238,16 @@ try:
         CONFIG_DIR,
         LOCAL_OVERRIDES_DIR,
         STARTUP_INIT_LOG_PATH,
+        add_hotel_config,
         clear_local_override_raw_root_dir,
+        get_hotel_base_small_rescue_cfg,
         get_hotel_rounding_units,
         get_local_overrides_path,
         load_phase_overrides,
         pop_runtime_init_errors,
         reload_hotel_config_inplace,
         set_local_override_raw_root_dir,
+        update_hotel_base_small_rescue_cfg,
         update_hotel_rounding_units,
         write_phase_overrides,
     )
@@ -279,7 +280,7 @@ try:
         HOTEL_CONFIG,
         OUTPUT_DIR,
         build_calendar_for_gui,
-        build_range_rebuild_plan_for_gui,
+        build_range_rebuild_plan_for_gui_with_stay_months,
         build_topdown_revpar_panel,
         clear_evaluation_detail_cache,
         get_all_target_months_for_lt_from_daily_snapshots,
@@ -303,6 +304,7 @@ try:
         run_import_missing_only,
         run_missing_audit_for_gui,
         run_missing_check_for_gui,
+        train_base_small_weekshape_for_gui,
     )
 except Exception as exc:
     logging.exception("Failed to import booking_curve.gui_backend")
@@ -324,7 +326,6 @@ except Exception as exc:
     sys.exit(1)
 
 # デフォルトホテル (現状は大国町のみ想定)
-DEFAULT_HOTEL = next(iter(HOTEL_CONFIG.keys()), "daikokucho")
 SETTINGS_FILE = LOCAL_OVERRIDES_DIR / "gui_settings.json"
 LEGACY_SETTINGS_FILE = OUTPUT_DIR / "gui_settings.json"
 PHASE_OPTIONS = ["悪化", "中立", "回復"]
@@ -338,11 +339,15 @@ UI_SECTION_PADX = 6
 UI_SECTION_PADY = 4
 
 
+def _get_default_hotel() -> str:
+    return next(iter(HOTEL_CONFIG.keys()), "")
+
+
 class BookingCurveApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         _apply_window_icon(self)
-        self.title("Booking Curve Lab GUI")
+        self.title("Booking Curve Lab")
         self.geometry("1200x900")
         _setup_gui_logging()
         logging.info("GUI started")
@@ -381,7 +386,7 @@ class BookingCurveApp(tk.Tk):
         general = self._settings.get("general") or {}
         initial_hotel = general.get("last_hotel")
         if initial_hotel not in HOTEL_CONFIG:
-            initial_hotel = DEFAULT_HOTEL
+            initial_hotel = _get_default_hotel()
         self.hotel_var = tk.StringVar(value=initial_hotel)
         self.hotel_var.trace_add("write", self._on_hotel_var_changed)
         self.lt_source_var = tk.StringVar(value="daily_snapshots")
@@ -398,6 +403,9 @@ class BookingCurveApp(tk.Tk):
         self._latest_asof_label_defaults: dict[tk.Label, tuple[str, str]] = {}
         self._lt_data_queue: queue.Queue[dict[str, object]] | None = None
         self._lt_data_running = False
+        self._missing_check_queue: queue.Queue[dict[str, object]] | None = None
+        self._missing_check_running = False
+        self._hotel_wizard_open = False
 
         self._init_daily_forecast_tab()
         self._init_model_eval_tab()
@@ -406,6 +414,8 @@ class BookingCurveApp(tk.Tk):
         self._init_monthly_curve_tab()
         self._create_master_settings_tab()
         self.hotel_var.trace_add("write", self._on_global_hotel_changed)
+        if not HOTEL_CONFIG:
+            self.after(0, lambda: self._open_hotel_wizard(mode="first_run", must_create=True))
 
     def _load_settings(self) -> dict:
         try:
@@ -473,6 +483,7 @@ class BookingCurveApp(tk.Tk):
 
         self._refresh_master_rounding_units()
         self._update_master_rounding_units_state()
+        self._refresh_master_base_small_rescue()
 
         try:
             clear_evaluation_detail_cache()
@@ -485,7 +496,7 @@ class BookingCurveApp(tk.Tk):
         )
 
     def _update_hotel_combobox_values(self, old_keys: set[str], new_values: list[str]) -> None:
-        if not old_keys or not new_values:
+        if not new_values:
             return
 
         def walk_widgets(widget: tk.Widget) -> list[tk.Widget]:
@@ -500,9 +511,10 @@ class BookingCurveApp(tk.Tk):
                 continue
             values = widget.cget("values")
             if not values:
+                widget["values"] = new_values
                 continue
             values_set = set(values)
-            if values_set and values_set.issubset(old_keys):
+            if values_set.issubset(old_keys):
                 widget["values"] = new_values
 
     def _ensure_hotel_var_valid(self, var_name: str) -> None:
@@ -1269,23 +1281,38 @@ class BookingCurveApp(tk.Tk):
     def _create_master_settings_tab(self) -> None:
         frame = self.tab_master_settings
 
-        # ------- カレンダー設定 -------
-        calendar_frame = ttk.LabelFrame(frame, text="カレンダー")
-        calendar_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=UI_SECTION_PADY)
+        # ------- 対象ホテル -------
+        hotel_frame = ttk.LabelFrame(frame, text="対象ホテル")
+        hotel_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=UI_SECTION_PADY)
 
-        ttk.Label(calendar_frame, text="ホテル:").grid(row=0, column=0, sticky="w")
-        self.hotel_combo = ttk.Combobox(calendar_frame, textvariable=self.hotel_var, state="readonly")
+        ttk.Label(hotel_frame, text="ホテル:").grid(
+            row=0,
+            column=0,
+            sticky="w",
+            padx=UI_GRID_PADX,
+            pady=UI_GRID_PADY,
+        )
+        self.hotel_combo = ttk.Combobox(hotel_frame, textvariable=self.hotel_var, state="readonly")
         self.hotel_combo["values"] = sorted(HOTEL_CONFIG.keys())
         self.hotel_combo.grid(row=0, column=1, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
         self.hotel_combo.bind("<<ComboboxSelected>>", self._on_hotel_changed)
 
+        ttk.Button(
+            hotel_frame,
+            text="＋追加…",
+            command=lambda: self._open_hotel_wizard(mode="add", must_create=False),
+        ).grid(row=0, column=2, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
+
+        # ------- カレンダー設定 -------
+        calendar_frame = ttk.LabelFrame(frame, text="カレンダー")
+        calendar_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, UI_SECTION_PADY))
+
         self.calendar_coverage_var = tk.StringVar()
         self.calendar_coverage_label = ttk.Label(calendar_frame, textvariable=self.calendar_coverage_var)
         self.calendar_coverage_label.grid(
-            row=1,
+            row=0,
             column=0,
-            columnspan=3,
-            padx=UI_GRID_PADX,
+            padx=(UI_GRID_PADX, 8),
             pady=UI_GRID_PADY,
             sticky="w",
         )
@@ -1295,7 +1322,18 @@ class BookingCurveApp(tk.Tk):
             text="カレンダー再生成",
             command=self._on_build_calendar_clicked,
         )
-        self.calendar_build_button.grid(row=1, column=3, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="e")
+        self.calendar_build_button.grid(
+            row=0,
+            column=1,
+            padx=(0, 6),
+            pady=UI_GRID_PADY,
+            sticky="w",
+        )
+        ttk.Label(
+            calendar_frame,
+            text="（通常不要）",
+            foreground="#555555",
+        ).grid(row=0, column=2, padx=(0, UI_GRID_PADX), pady=UI_GRID_PADY, sticky="w")
 
         # ------- 日別FC / ブッキング共通キャパ設定 -------
         caps_frame = ttk.LabelFrame(frame, text="日別フォーキャスト / ブッキングカーブ共通設定")
@@ -1410,6 +1448,59 @@ class BookingCurveApp(tk.Tk):
             round_rev_spin,
             round_save_btn,
         ]
+
+        # ------- ベース小救済（rooms） -------
+        base_small_frame = ttk.LabelFrame(frame, text="ベース小救済（rooms）")
+        base_small_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, UI_SECTION_PADY))
+
+        ttk.Label(base_small_frame, text="mode:").grid(
+            row=0,
+            column=0,
+            sticky="w",
+            padx=UI_GRID_PADX,
+            pady=UI_GRID_PADY,
+        )
+        self.master_base_small_mode_var = tk.StringVar()
+        base_small_mode_combo = ttk.Combobox(
+            base_small_frame,
+            textvariable=self.master_base_small_mode_var,
+            state="readonly",
+            width=10,
+        )
+        base_small_mode_combo["values"] = ["hybrid", "add"]
+        base_small_mode_combo.grid(row=0, column=1, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
+
+        ttk.Label(base_small_frame, text="cap_ratio_override:").grid(
+            row=0,
+            column=2,
+            sticky="w",
+            padx=UI_GRID_PADX * 2,
+            pady=UI_GRID_PADY,
+        )
+        self.master_base_small_cap_ratio_var = tk.StringVar()
+        ttk.Entry(
+            base_small_frame,
+            textvariable=self.master_base_small_cap_ratio_var,
+            width=10,
+        ).grid(row=0, column=3, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="w")
+        ttk.Label(
+            base_small_frame,
+            text="（空欄の場合は学習済みパラメータを使用）",
+            foreground="#555555",
+        ).grid(
+            row=1,
+            column=2,
+            columnspan=3,
+            sticky="w",
+            padx=UI_GRID_PADX * 2,
+            pady=(0, UI_GRID_PADY),
+        )
+
+        ttk.Button(
+            base_small_frame,
+            text="保存（このホテルのみ）",
+            command=self._on_save_master_base_small_rescue,
+        ).grid(row=0, column=4, padx=UI_GRID_PADX * 2, pady=UI_GRID_PADY, sticky="e")
 
         # ------- RAW取込元（このPCのみ） -------
         raw_root_frame = ttk.LabelFrame(frame, text="RAW取込元（このPCのみ）")
@@ -1540,11 +1631,12 @@ class BookingCurveApp(tk.Tk):
             sticky="w",
         )
 
-        ttk.Button(
+        self.missing_check_button = ttk.Button(
             advanced_frame,
             text="欠損チェック（運用）",
             command=self._on_run_missing_check,
-        ).grid(row=3, column=0, padx=UI_GRID_PADX, pady=UI_GRID_PADY + 1, sticky="w")
+        )
+        self.missing_check_button.grid(row=3, column=0, padx=UI_GRID_PADX, pady=UI_GRID_PADY + 1, sticky="w")
         ttk.Button(
             advanced_frame,
             text="欠損一覧（運用）",
@@ -1581,8 +1673,168 @@ class BookingCurveApp(tk.Tk):
         self._refresh_master_daily_caps()
         self._refresh_master_rounding_units()
         self._update_master_rounding_units_state()
+        self._refresh_master_base_small_rescue()
         self._refresh_master_raw_root_dir()
         self._update_master_missing_check_status()
+
+    def _open_hotel_wizard(self, mode: str = "add", must_create: bool = False) -> None:
+        if self._hotel_wizard_open:
+            return
+
+        self._hotel_wizard_open = True
+
+        title = "新規ホテル作成"
+        if mode == "first_run":
+            title = "初回設定: 新規ホテル作成"
+
+        win = tk.Toplevel(self)
+        win.title(title)
+        _apply_window_icon(win)
+        win.transient(self)
+        win.grab_set()
+
+        hotel_id_var = tk.StringVar()
+        display_name_var = tk.StringVar()
+        capacity_var = tk.StringVar()
+        adapter_type_var = tk.StringVar(value="nface")
+        raw_root_dir_var = tk.StringVar()
+        include_subfolders_var = tk.BooleanVar(value=True)
+
+        def _close_wizard() -> None:
+            self._hotel_wizard_open = False
+            try:
+                win.grab_release()
+            except Exception:
+                pass
+            win.destroy()
+
+        def _on_cancel() -> None:
+            _close_wizard()
+            if must_create:
+                messagebox.showwarning(
+                    "設定が必要です",
+                    "ホテル設定が未作成のため、アプリを終了します。",
+                )
+                self.destroy()
+
+        def _on_browse() -> None:
+            selected = filedialog.askdirectory(title="RAW取込元フォルダを選択")
+            if selected:
+                raw_root_dir_var.set(selected)
+
+        def _on_save() -> None:
+            hotel_id = hotel_id_var.get().strip()
+            if not hotel_id:
+                messagebox.showerror("入力エラー", "hotel_id を入力してください。")
+                return
+            if not re.fullmatch(r"[A-Za-z0-9_-]+", hotel_id):
+                messagebox.showerror("入力エラー", "hotel_id は英数字と _ - のみ使用できます。")
+                return
+            if hotel_id in HOTEL_CONFIG:
+                messagebox.showerror("入力エラー", f"hotel_id は既に存在します: {hotel_id}")
+                return
+
+            display_name = display_name_var.get().strip() or hotel_id
+            capacity_str = capacity_var.get().strip()
+            try:
+                capacity = int(capacity_str)
+            except Exception:
+                messagebox.showerror("入力エラー", "capacity は正の整数を入力してください。")
+                return
+            if capacity <= 0:
+                messagebox.showerror("入力エラー", "capacity は正の整数を入力してください。")
+                return
+
+            raw_root_dir = raw_root_dir_var.get().strip()
+            if not raw_root_dir:
+                messagebox.showerror("入力エラー", "raw_root_dir を選択してください。")
+                return
+
+            adapter_type = (adapter_type_var.get().strip() or "nface").lower()
+            if adapter_type != "nface":
+                messagebox.showerror("入力エラー", "adapter_type は nface のみ対応です。")
+                return
+
+            hotel_cfg = {
+                "hotel_id": hotel_id,
+                "display_name": display_name,
+                "capacity": capacity,
+                "forecast_cap": capacity,
+                "adapter_type": adapter_type,
+                "raw_root_dir": raw_root_dir,
+                "include_subfolders": bool(include_subfolders_var.get()),
+            }
+
+            old_keys = set(HOTEL_CONFIG.keys())
+            try:
+                add_hotel_config(hotel_id, hotel_cfg)
+                reload_hotel_config_inplace()
+            except Exception as exc:
+                logging.exception("Failed to add hotel config")
+                messagebox.showerror("エラー", f"ホテル追加に失敗しました。\n{exc}")
+                return
+
+            new_keys = sorted(HOTEL_CONFIG.keys())
+            self._update_hotel_combobox_values(old_keys, new_keys)
+            self.hotel_var.set(hotel_id)
+            self._on_hotel_changed()
+            _close_wizard()
+
+        win.protocol("WM_DELETE_WINDOW", _on_cancel)
+
+        frame = ttk.Frame(win)
+        frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
+        frame.grid_columnconfigure(1, weight=1)
+
+        row = 0
+        ttk.Label(frame, text="hotel_id:").grid(row=row, column=0, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        ttk.Entry(frame, textvariable=hotel_id_var, width=24).grid(row=row, column=1, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        row += 1
+        ttk.Label(frame, text="英数字 + _- のみ", foreground="#555555").grid(row=row, column=1, sticky="w", padx=UI_GRID_PADX, pady=(0, UI_GRID_PADY))
+
+        row += 1
+        ttk.Label(frame, text="display_name:").grid(row=row, column=0, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        ttk.Entry(frame, textvariable=display_name_var, width=30).grid(row=row, column=1, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        row += 1
+        ttk.Label(frame, text="空欄の場合は hotel_id を使用", foreground="#555555").grid(
+            row=row, column=1, sticky="w", padx=UI_GRID_PADX, pady=(0, UI_GRID_PADY)
+        )
+
+        row += 1
+        ttk.Label(frame, text="capacity:").grid(row=row, column=0, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        ttk.Entry(frame, textvariable=capacity_var, width=10).grid(row=row, column=1, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        row += 1
+        ttk.Label(
+            frame,
+            text="forecast_cap は capacity と同じ値で自動設定（後で変更可能）",
+            foreground="#555555",
+        ).grid(row=row, column=1, sticky="w", padx=UI_GRID_PADX, pady=(0, UI_GRID_PADY))
+
+        row += 1
+        ttk.Label(frame, text="adapter_type:").grid(row=row, column=0, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        adapter_combo = ttk.Combobox(frame, textvariable=adapter_type_var, state="readonly", width=12)
+        adapter_combo["values"] = ["nface"]
+        adapter_combo.grid(row=row, column=1, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        row += 1
+        ttk.Label(frame, text="現状 nface のみ対応", foreground="#555555").grid(
+            row=row, column=1, sticky="w", padx=UI_GRID_PADX, pady=(0, UI_GRID_PADY)
+        )
+
+        row += 1
+        ttk.Label(frame, text="raw_root_dir:").grid(row=row, column=0, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        ttk.Entry(frame, textvariable=raw_root_dir_var, width=40).grid(row=row, column=1, sticky="we", padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        ttk.Button(frame, text="参照...", command=_on_browse).grid(row=row, column=2, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+
+        row += 1
+        ttk.Checkbutton(frame, text="サブフォルダも検索する", variable=include_subfolders_var).grid(
+            row=row, column=1, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY
+        )
+
+        row += 1
+        button_frame = ttk.Frame(frame)
+        button_frame.grid(row=row, column=1, sticky="e", padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 4, UI_GRID_PADY))
+        ttk.Button(button_frame, text="保存", command=_on_save).pack(side=tk.LEFT, padx=UI_GRID_PADX)
+        ttk.Button(button_frame, text="キャンセル", command=_on_cancel).pack(side=tk.LEFT, padx=UI_GRID_PADX)
 
     def _on_hotel_changed(self, event=None) -> None:
         # マスタ設定タブのホテル変更時に、カレンダー範囲とキャパ設定を両方更新
@@ -1590,6 +1842,7 @@ class BookingCurveApp(tk.Tk):
         self._refresh_master_daily_caps()
         self._refresh_master_rounding_units()
         self._update_master_rounding_units_state()
+        self._refresh_master_base_small_rescue()
         self._refresh_master_raw_root_dir()
         self._update_master_missing_check_status()
 
@@ -1607,6 +1860,7 @@ class BookingCurveApp(tk.Tk):
         self._refresh_master_daily_caps()
         self._refresh_master_rounding_units()
         self._update_master_rounding_units_state()
+        self._refresh_master_base_small_rescue()
         self._refresh_master_raw_root_dir()
         self._update_master_missing_check_status()
 
@@ -1783,6 +2037,73 @@ class BookingCurveApp(tk.Tk):
         self._refresh_master_rounding_units()
         messagebox.showinfo("保存完了", "月次丸め単位を保存しました。")
 
+    def _refresh_master_base_small_rescue(self) -> None:
+        if not hasattr(self, "master_base_small_mode_var"):
+            return
+
+        hotel_tag = self.hotel_var.get().strip()
+        if not hotel_tag:
+            self.master_base_small_mode_var.set("")
+            self.master_base_small_cap_ratio_var.set("")
+            return
+
+        rescue_cfg = get_hotel_base_small_rescue_cfg(hotel_tag)
+        mode_raw = rescue_cfg.get("mode") if isinstance(rescue_cfg, dict) else None
+        mode = str(mode_raw).strip().lower() if mode_raw is not None else ""
+        if mode not in {"hybrid", "add"}:
+            mode = "hybrid"
+        self.master_base_small_mode_var.set(mode)
+
+        cap_ratio = rescue_cfg.get("cap_ratio_override") if isinstance(rescue_cfg, dict) else None
+        if cap_ratio is None:
+            self.master_base_small_cap_ratio_var.set("")
+        else:
+            try:
+                cap_ratio_val = float(cap_ratio)
+            except (TypeError, ValueError):
+                self.master_base_small_cap_ratio_var.set(str(cap_ratio))
+            else:
+                if np.isnan(cap_ratio_val):
+                    self.master_base_small_cap_ratio_var.set("")
+                else:
+                    self.master_base_small_cap_ratio_var.set(f"{cap_ratio_val:g}")
+
+    def _on_save_master_base_small_rescue(self) -> None:
+        hotel_tag = self.hotel_var.get().strip()
+        if not hotel_tag:
+            messagebox.showerror("エラー", "ホテルが選択されていません。")
+            return
+
+        mode = self.master_base_small_mode_var.get().strip().lower()
+        if mode not in {"hybrid", "add"}:
+            messagebox.showerror("エラー", "mode は hybrid / add のいずれかを選択してください。")
+            return
+
+        cap_ratio_str = self.master_base_small_cap_ratio_var.get().strip()
+        if not cap_ratio_str:
+            cap_ratio = None
+        else:
+            try:
+                cap_ratio = float(cap_ratio_str)
+            except (TypeError, ValueError):
+                messagebox.showerror("エラー", "cap_ratio_override は数値で入力してください。")
+                return
+            if not (0 < cap_ratio <= 1):
+                messagebox.showerror("エラー", "cap_ratio_override は 0 より大きく 1 以下で入力してください。")
+                return
+
+        try:
+            update_hotel_base_small_rescue_cfg(
+                hotel_tag,
+                {"mode": mode, "cap_ratio_override": cap_ratio},
+            )
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("エラー", f"ベース小救済の保存に失敗しました。\n{exc}")
+            return
+
+        self._refresh_master_base_small_rescue()
+        messagebox.showinfo("保存完了", "ベース小救済の設定を保存しました。")
+
     def _refresh_master_raw_root_dir(self) -> None:
         if not hasattr(self, "master_raw_root_dir_var"):
             return
@@ -1939,14 +2260,77 @@ class BookingCurveApp(tk.Tk):
             messagebox.showerror("エラー", "ホテルが選択されていません。")
             return
 
+        if self._missing_check_running:
+            messagebox.showwarning("処理中", "欠損チェックは実行中です。完了をお待ちください。")
+            return
+
+        if self._missing_check_queue is None:
+            self._missing_check_queue = queue.Queue()
+
+        self._missing_check_running = True
         try:
-            csv_path = run_missing_check_for_gui(hotel_tag)
+            self.missing_check_button.state(["disabled"])
+        except Exception:
+            logging.debug("欠損チェックボタンの無効化に失敗しました", exc_info=True)
+
+        self._set_master_missing_check_status("欠損検査：実行中...", "#555555")
+
+        def _worker() -> None:
+            try:
+                csv_path = run_missing_check_for_gui(hotel_tag)
+                result = {"success": True, "csv_path": str(csv_path), "error": None}
+            except Exception as exc:  # noqa: BLE001
+                logging.exception("欠損チェックに失敗しました")
+                result = {"success": False, "csv_path": None, "error": exc}
+
+            if self._missing_check_queue is not None:
+                self._missing_check_queue.put(result)
+
+        threading.Thread(target=_worker, daemon=True).start()
+        self.after(200, self._poll_missing_check_queue)
+
+    def _poll_missing_check_queue(self) -> None:
+        if self._missing_check_queue is None:
+            self._missing_check_running = False
+            try:
+                self.missing_check_button.state(["!disabled"])
+            except Exception:
+                logging.debug("欠損チェックボタンの有効化に失敗しました", exc_info=True)
+            self._update_master_missing_check_status()
+            return
+
+        try:
+            result = self._missing_check_queue.get_nowait()
+        except queue.Empty:
+            self.after(200, self._poll_missing_check_queue)
+            return
+
+        self._missing_check_running = False
+        try:
+            self.missing_check_button.state(["!disabled"])
+        except Exception:
+            logging.debug("欠損チェックボタンの有効化に失敗しました", exc_info=True)
+
+        success = bool(result.get("success"))
+        error = result.get("error")
+        csv_path = result.get("csv_path")
+
+        if success and csv_path:
             self._show_stale_asof_warning(csv_path)
-            open_file(csv_path)
+            try:
+                open_file(csv_path)
+            except Exception as exc:
+                logging.warning("欠損チェックCSVの自動オープンに失敗しました", exc_info=True)
+                messagebox.showwarning(
+                    "ファイルオープン失敗",
+                    f"欠損チェックCSVを開けませんでした。\n{exc}",
+                )
             self._update_master_missing_check_status(csv_path)
-        except Exception as e:
-            logging.exception("欠損チェックに失敗しました")
-            messagebox.showerror("エラー", f"欠損チェックに失敗しました:\n{e}")
+            return
+
+        self._set_master_missing_check_status("欠損検査：失敗", "#C62828")
+        messagebox.showerror("エラー", f"欠損チェックに失敗しました:\n{error}")
+        _offer_open_logs_dir("欠損チェック失敗")
 
     def _on_run_missing_audit(self) -> None:
         hotel_tag = self.hotel_var.get().strip()
@@ -2549,6 +2933,7 @@ class BookingCurveApp(tk.Tk):
             "recent90w",
             "pace14",
             "pace14_market",
+            "pace14_weekshape_flow",
         ]
         general_settings = self._settings.get("general") or {}
         default_model = "recent90w"
@@ -2606,7 +2991,7 @@ class BookingCurveApp(tk.Tk):
 
         # 予測キャップ / 稼働率キャパ
         # 現在選択されているホテルのキャパを取得
-        current_hotel = self.hotel_var.get().strip() or DEFAULT_HOTEL
+        current_hotel = self.hotel_var.get().strip() or _get_default_hotel()
         fc_cap, pax_cap, occ_cap = self._get_daily_caps_for_hotel(current_hotel)
 
         phase_frame = ttk.LabelFrame(right_row, text="フェーズ補正（売上）")
@@ -2998,7 +3383,7 @@ class BookingCurveApp(tk.Tk):
         if popup is None or not popup.winfo_exists():
             return
 
-        hotel = (self.df_hotel_var.get() or "").strip() or DEFAULT_HOTEL
+        hotel = (self.df_hotel_var.get() or "").strip() or _get_default_hotel()
         month = (self.df_month_var.get() or "").strip()
         asof = (self.df_asof_var.get() or "").strip()
         model = (self.df_model_var.get() or "").strip()
@@ -3845,7 +4230,7 @@ class BookingCurveApp(tk.Tk):
     def _refresh_phase_overrides_ui(self) -> None:
         if not hasattr(self, "df_phase_entries"):
             return
-        hotel = (self.df_hotel_var.get() or "").strip() or DEFAULT_HOTEL
+        hotel = (self.df_hotel_var.get() or "").strip() or _get_default_hotel()
         base_month = (self.df_month_var.get() or "").strip()
         months = self._get_phase_months(base_month)
 
@@ -3876,7 +4261,7 @@ class BookingCurveApp(tk.Tk):
     def _on_phase_clip_changed(self, event=None) -> None:
         if self._phase_override_loading:
             return
-        hotel = (self.df_hotel_var.get() or "").strip() or DEFAULT_HOTEL
+        hotel = (self.df_hotel_var.get() or "").strip() or _get_default_hotel()
         selected = self.df_phase_clip_var.get()
         clip_pct = self._parse_phase_clip_pct(selected)
         if clip_pct is None:
@@ -3888,7 +4273,7 @@ class BookingCurveApp(tk.Tk):
     def _on_phase_override_changed(self, event=None) -> None:
         if self._phase_override_loading:
             return
-        hotel = (self.df_hotel_var.get() or "").strip() or DEFAULT_HOTEL
+        hotel = (self.df_hotel_var.get() or "").strip() or _get_default_hotel()
         hotel_overrides = self._phase_overrides.setdefault(hotel, {})
 
         for entry in getattr(self, "df_phase_entries", []):
@@ -3906,7 +4291,7 @@ class BookingCurveApp(tk.Tk):
         write_phase_overrides(self._phase_overrides)
 
     def _update_df_best_model_label(self) -> None:
-        hotel = (self.df_hotel_var.get() or "").strip() or DEFAULT_HOTEL
+        hotel = (self.df_hotel_var.get() or "").strip() or _get_default_hotel()
         month = (self.df_month_var.get() or "").strip()
 
         if len(month) != 6 or not month.isdigit():
@@ -3955,7 +4340,7 @@ class BookingCurveApp(tk.Tk):
         self._update_bc_best_model_label()
 
     def _update_bc_best_model_label(self) -> None:
-        hotel = (self.bc_hotel_var.get() or "").strip() or DEFAULT_HOTEL
+        hotel = (self.bc_hotel_var.get() or "").strip() or _get_default_hotel()
         month = (self.bc_month_var.get() or "").strip()
 
         if len(month) != 6 or not month.isdigit():
@@ -4370,6 +4755,15 @@ class BookingCurveApp(tk.Tk):
             messagebox.showerror("エラー", f"CSV出力に失敗しました:\n{e}")
             return
 
+        try:
+            open_file(out_path)
+        except Exception as exc:
+            logging.warning("日別フォーキャストCSVの自動オープンに失敗しました", exc_info=True)
+            messagebox.showwarning(
+                "ファイルオープン失敗",
+                f"CSVを保存しましたが自動で開けませんでした。\n{exc}",
+            )
+
         messagebox.showinfo("保存完了", f"CSV を保存しました:\n{out_path}")
 
     def _get_last_month_int(self) -> int:
@@ -4468,7 +4862,7 @@ class BookingCurveApp(tk.Tk):
 
         hotel = (self.me_hotel_var.get() or "").strip()
         if not hotel:
-            hotel = DEFAULT_HOTEL
+            hotel = _get_default_hotel()
 
         start = (self.me_from_var.get() or "").strip()
         end = (self.me_to_var.get() or "").strip()
@@ -4503,7 +4897,7 @@ class BookingCurveApp(tk.Tk):
 
         try:
             if getattr(self, "asof_hotel_var", None) is not None:
-                asof_hotel = (self.asof_hotel_var.get() or "").strip() or DEFAULT_HOTEL
+                asof_hotel = (self.asof_hotel_var.get() or "").strip() or _get_default_hotel()
                 if asof_hotel == hotel:
                     self._on_load_asof_eval()
         except Exception:
@@ -4527,7 +4921,7 @@ class BookingCurveApp(tk.Tk):
         )
 
     def _on_load_model_eval(self) -> None:
-        hotel = (self.me_hotel_var.get() or "").strip() or DEFAULT_HOTEL
+        hotel = (self.me_hotel_var.get() or "").strip() or _get_default_hotel()
         try:
             df = get_model_evaluation_table(hotel)
         except FileNotFoundError:
@@ -4776,7 +5170,7 @@ class BookingCurveApp(tk.Tk):
         """
 
         try:
-            hotel = self.asof_hotel_var.get().strip() or DEFAULT_HOTEL
+            hotel = self.asof_hotel_var.get().strip() or _get_default_hotel()
             from_ym = self.asof_from_ym_var.get().strip() or None
             to_ym = self.asof_to_ym_var.get().strip() or None
 
@@ -5097,7 +5491,7 @@ class BookingCurveApp(tk.Tk):
             side=tk.LEFT,
             pady=(UI_GRID_PADY + 1, UI_GRID_PADY),
         )
-        model_values = ["recent90", "recent90w", "pace14", "pace14_market"]
+        model_values = ["recent90", "recent90w", "pace14", "pace14_market", "pace14_weekshape_flow"]
         general_settings = self._settings.get("general") or {}
         default_model = "recent90w"
         saved_model = general_settings.get("last_bc_model")
@@ -5153,7 +5547,7 @@ class BookingCurveApp(tk.Tk):
         self.bc_fill_missing_chk.pack(side=tk.LEFT, padx=UI_GRID_PADX, pady=(UI_GRID_PADY + 1, UI_GRID_PADY))
 
         # 現在選択されているホテルのキャパを取得
-        current_hotel = self.hotel_var.get().strip() or DEFAULT_HOTEL
+        current_hotel = self.hotel_var.get().strip() or _get_default_hotel()
         fc_cap, _, _ = self._get_daily_caps_for_hotel(current_hotel)
         self.bc_forecast_cap_var = tk.StringVar(value=str(fc_cap))
 
@@ -5499,6 +5893,51 @@ class BookingCurveApp(tk.Tk):
             except Exception:
                 logging.warning("欠損検査ステータスの更新に失敗しました", exc_info=True)
 
+        if success and snapshots_updated:
+            hotel_tag = self.hotel_var.get().strip()
+
+            def _run_base_small_learning() -> None:
+                try:
+                    result = train_base_small_weekshape_for_gui(
+                        hotel_tag,
+                        window_months=3,
+                        sample_stride_days=7,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logging.exception("base-small weekshape learning failed")
+                    err_msg = str(exc)
+                    self.after(
+                        0,
+                        lambda err_msg=err_msg: messagebox.showwarning(
+                            "学習警告",
+                            f"base-small週次学習に失敗しました（非致命）:\n{err_msg}",
+                        ),
+                    )
+                    return
+
+                if isinstance(result, dict) and not result.get("ok", True):
+                    reason = result.get("reason", "unknown")
+                    self.after(
+                        0,
+                        lambda: messagebox.showwarning(
+                            "学習警告",
+                            f"base-small週次学習を実行できませんでした（非致命）:\n{reason}",
+                        ),
+                    )
+                    return
+
+                skipped = bool(result.get("skipped")) if isinstance(result, dict) else False
+
+                def _notify() -> None:
+                    msg = "base-small週次学習: 既に最新のためスキップ" if skipped else "base-small週次学習: 完了"
+                    self.lt_data_status_var.set(msg)
+                    self.after(3000, lambda: self.lt_data_status_var.set(""))
+
+                self.after(0, _notify)
+
+            if hotel_tag:
+                threading.Thread(target=_run_base_small_learning, daemon=True).start()
+
         if success:
             messagebox.showinfo(
                 "LT_DATA生成",
@@ -5516,19 +5955,37 @@ class BookingCurveApp(tk.Tk):
             return
 
         hotel_tag = self.bc_hotel_var.get()
-        base_ym = self.bc_month_var.get().strip()
 
-        if len(base_ym) != 6 or not base_ym.isdigit():
-            messagebox.showerror("LT_DATA生成エラー", "対象月は 6桁の数字 (YYYYMM) で入力してください。")
+        latest_str = (self.bc_latest_asof_var.get() or "").strip()
+        latest_ts = None
+        if latest_str and latest_str not in ("なし", "(未取得)"):
+            parsed = pd.to_datetime(latest_str, errors="coerce")
+            if not pd.isna(parsed):
+                latest_ts = parsed
+
+        if latest_ts is None:
+            fallback_str = (self.bc_asof_var.get() or "").strip()
+            if fallback_str:
+                parsed = pd.to_datetime(fallback_str, errors="coerce")
+                if not pd.isna(parsed):
+                    latest_ts = parsed
+
+        if latest_ts is None:
+            messagebox.showerror(
+                "LT_DATA生成エラー",
+                "最新ASOFが取得できません。ASOFの日付(YYYY-MM-DD)を確認してください。",
+            )
             return
 
-        try:
-            base_period = pd.Period(f"{base_ym[:4]}-{base_ym[4:]}", freq="M")
-        except Exception:
-            messagebox.showerror("LT_DATA生成エラー", "対象月は 6桁の数字 (YYYYMM) で入力してください。")
-            return
-
-        target_months = [(base_period + i).strftime("%Y%m") for i in range(4)]
+        latest_ts = pd.Timestamp(latest_ts).normalize()
+        base_period = pd.Period(latest_ts, freq="M")
+        start_period = base_period - 1
+        end_ts_by_days = latest_ts + pd.Timedelta(days=120)
+        end_period_by_days = pd.Period(end_ts_by_days, freq="M")
+        end_period_by_fixed = base_period + 4
+        end_period = max(end_period_by_days, end_period_by_fixed)
+        periods = pd.period_range(start=start_period, end=end_period, freq="M")
+        target_months = [p.strftime("%Y%m") for p in periods]
 
         confirm = messagebox.askokcancel(
             "LT_DATA生成確認",
@@ -5546,11 +6003,7 @@ class BookingCurveApp(tk.Tk):
             )
             return
 
-        success_message = (
-            "LT_DATA CSV の生成が完了しました。\n"
-            "対象月: {months}\n"
-            "必要に応じて「最新に反映」ボタンで ASOF を更新してください。"
-        )
+        success_message = "LT_DATA CSV の生成が完了しました。\n対象月: {months}\n必要に応じて「最新に反映」ボタンで ASOF を更新してください。"
 
         def _prepare() -> dict[str, object]:
             result: dict[str, object] = {
@@ -5559,10 +6012,10 @@ class BookingCurveApp(tk.Tk):
                 "missing_summary": None,
             }
             if update_snapshots and lt_source == "daily_snapshots":
-                plan = build_range_rebuild_plan_for_gui(
+                plan = build_range_rebuild_plan_for_gui_with_stay_months(
                     hotel_tag,
+                    stay_months=target_months,
                     buffer_days=30,
-                    lookahead_days=120,
                 )
                 missing_summary = self._compute_missing_summary_for_range_rebuild(
                     hotel_tag,

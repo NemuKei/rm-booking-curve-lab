@@ -15,7 +15,7 @@
 
 ## 1. 目的
 
-1. 各モデル（`avg`, `recent90`, `recent90_adj`, `recent90w`, `recent90w_adj`）が  
+1. 各モデル（`avg`, `recent90`, `recent90_adj`, `recent90w`, `recent90w_adj`, `pace14`, `pace14_market`, `pace14_weekshape_flow`）が
    **どの程度の誤差で月次室数を予測しているか** を定量化する。
 2. ASOF 別（`M-2_END`, `M-1_END`, `M10`, `M20`）の「読め具合」を比較し、
    **悲観 / 基準 / 楽観シナリオ** の根拠とする。
@@ -34,7 +34,7 @@
 
 - ホテル：`hotel_tag`
 - 宿泊月：`target_month`（例：`202512`）
-- モデル：`model`（`avg`, `recent90`, `recent90_adj`, `recent90w`, `recent90w_adj`）
+- モデル：`model`（`avg`, `recent90`, `recent90_adj`, `recent90w`, `recent90w_adj`, `pace14`, `pace14_market`, `pace14_weekshape_flow`）
 - ASOF：`asof`（日付そのもの、および `asof_type`）
 
 の組み合わせごとに、**宿泊月トータルの室数誤差**を計算する。
@@ -238,7 +238,7 @@
   - `target_month` … 宿泊月（例：`202512`）
   - `asof_date` … ASOF 日付（`YYYY-MM-DD`）
   - `asof_type` … `M-2_END`, `M-1_END`, `M10`, `M20` など
-  - `model` … `avg`, `recent90`, `recent90_adj`, `recent90w`, `recent90w_adj`
+  - `model` … `avg`, `recent90`, `recent90_adj`, `recent90w`, `recent90w_adj`, `pace14`, `pace14_market`, `pace14_weekshape_flow`
   - `actual_total_rooms` … 宿泊月トータル実績室数
   - `forecast_total_rooms` … 宿泊月トータル予測室数
   - `error` … `forecast_total_rooms - actual_total_rooms`

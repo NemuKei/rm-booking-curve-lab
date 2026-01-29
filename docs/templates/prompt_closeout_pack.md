@@ -53,13 +53,14 @@
 # 出力（厳守）
 以下の順番で、**3成果物をそれぞれ“完成品”として**出力する。
 （前置き・解説・余談は不要）
+Markdownのコードブロック形式（コピー可能な枠内）で分けて出力すること。
 
 ---
 
 ## A) 引き継ぎ（正本）
 - `docs/templates/handover_body.md` の **見出し順・項目構造に完全準拠**して作成する
 - 先頭行は必ずこれ：
-  - `Proposed file path: docs/handovers/YYYY-MM-DD_HHMM_<branch>_<scope>.md`
+  - `Proposed file path: docs/handovers/YYYY-MM-DD_HHMM_<type>_<scope>__handover.md`
 - 以降は **handover_body.md のテンプレを埋めた本文のみ**を出力する
 - 「決定事項」は *仕様* ではない（仕様の唯一の正は spec_* と AGENTS.md）。ここは“合意ログ”として要点のみ。
 
@@ -68,7 +69,7 @@
 ## B) Thread Log（1本）
 - `docs/templates/prompt_thread_log_generate.md` の **出力フォーマットに完全準拠**して作成する
 - 先頭に必ず以下を含める：
-  - `Proposed file path: docs/thread_logs/YYYY-MM-DD_HHMM_<branch>_<scope>.md`
+  - `Proposed file path: docs/thread_logs/YYYY-MM-DD_HHMM_<type>_<scope>__thread_log.md`
 - 本文の見出し構成は、テンプレ内の「Thread Log 本文フォーマット（この順序で出力）」に完全準拠
 
 ---

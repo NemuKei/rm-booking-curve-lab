@@ -1,0 +1,53 @@
+diff --git a/.editorconfig b/.editorconfig
+new file mode 100644
+index 0000000..6f1b0a1
+--- /dev/null
++++ b/.editorconfig
+@@ -0,0 +1,19 @@
++root = true
++
++[*]
++charset = utf-8
++end_of_line = lf
++insert_final_newline = true
++trim_trailing_whitespace = true
++indent_style = space
++indent_size = 4
++
++[*.md]
++trim_trailing_whitespace = true
++
++[*.yml]
++indent_size = 2
++
++[*.yaml]
++indent_size = 2
+diff --git a/.gitattributes b/.gitattributes
+new file mode 100644
+index 0000000..2c9a9c1
+--- /dev/null
++++ b/.gitattributes
+@@ -0,0 +1,13 @@
++# Normalize text files to LF by default (cross-platform safety)
++* text=auto eol=lf
++
++# Windows scripts (if any) can keep CRLF
++*.bat text eol=crlf
++*.cmd text eol=crlf
++
++# Binary files (do not normalize)
++*.png binary
++*.ico binary
++*.zip binary
+diff --git a/.vscode/settings.json b/.vscode/settings.json
+new file mode 100644
+index 0000000..9d0b2fd
+--- /dev/null
++++ b/.vscode/settings.json
+@@ -0,0 +1,7 @@
++{
++  "files.eol": "\n",
++  "files.insertFinalNewline": true,
++  "files.trimTrailingWhitespace": true,
++  "editor.formatOnSave": false
++}

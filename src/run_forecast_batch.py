@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import logging
 from datetime import date, timedelta
 from pathlib import Path
@@ -7,12 +8,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from booking_curve.config import OUTPUT_DIR
+from booking_curve.config import HOTEL_CONFIG, OUTPUT_DIR
 from booking_curve.forecast_simple import (
     compute_market_pace_7d,
     forecast_final_from_avg,
     forecast_final_from_pace14,
     forecast_final_from_pace14_market,
+    forecast_final_from_pace14_weekshape_flow,
     forecast_month_from_recent90,
     moving_average_3months,
     moving_average_recent_90days,
@@ -23,7 +25,6 @@ from booking_curve.plot_booking_curve import filter_by_weekday
 logger = logging.getLogger(__name__)
 
 # ===== 設定ここから =====
-HOTEL_TAG = "daikokucho"
 
 # 評価したい宿泊月 (YYYYMM)。必要に応じて増減可。
 TARGET_MONTHS = [
@@ -700,8 +701,22 @@ def _merge_pace14_details(out_df: pd.DataFrame, detail_df: pd.DataFrame, *, pref
         "pf_clipped": f"{prefix}_pf",
         "is_spike": f"{prefix}_spike",
         "market_pace_7d": "market_pace_7d",
+        "market_pace_eff": "market_pace_eff",
         "market_beta": "market_beta",
+        "market_factor_raw": "market_factor_raw",
         "market_factor": "market_factor",
+        "week_iso_id": "week_iso_id",
+        "week_group": "week_group",
+        "weekshape_factor": "weekshape_factor",
+        "weekshape_n_events": "weekshape_n_events",
+        "weekshape_sum_base": "weekshape_sum_base",
+        "weekshape_factor_raw": "weekshape_factor_raw",
+        "weekshape_gated": "weekshape_gated",
+        "base_small_rescue_applied": "base_small_rescue_applied",
+        "base_small_rescue_mode": "base_small_rescue_mode",
+        "base_small_rescue_cap_ratio": "base_small_rescue_cap_ratio",
+        "base_small_rescue_pickup": "base_small_rescue_pickup",
+        "base_small_rescue_reason": "base_small_rescue_reason",
     }
     for col, renamed in rename_map.items():
         if col in detail_df.columns:
@@ -748,9 +763,9 @@ def _log_no_forecasts(
 def run_avg_forecast(
     target_month: str,
     as_of_date: str,
+    hotel_tag: str,
     capacity: float | None = None,
     pax_capacity: float | None = None,
-    hotel_tag: str = HOTEL_TAG,
     phase_factor: float | None = None,
     phase_clip_pct: float | None = None,
 ) -> None:
@@ -892,9 +907,9 @@ def run_avg_forecast(
 def run_recent90_forecast(
     target_month: str,
     as_of_date: str,
+    hotel_tag: str,
     capacity: float | None = None,
     pax_capacity: float | None = None,
-    hotel_tag: str = HOTEL_TAG,
     phase_factor: float | None = None,
     phase_clip_pct: float | None = None,
 ) -> None:
@@ -1059,9 +1074,9 @@ def run_recent90_forecast(
 def run_recent90_weighted_forecast(
     target_month: str,
     as_of: str,
+    hotel_tag: str,
     capacity: float | None = None,
     pax_capacity: float | None = None,
-    hotel_tag: str = HOTEL_TAG,
     phase_factor: float | None = None,
     phase_clip_pct: float | None = None,
 ) -> None:
@@ -1231,9 +1246,9 @@ def run_recent90_weighted_forecast(
 def run_pace14_forecast(
     target_month: str,
     as_of_date: str,
+    hotel_tag: str,
     capacity: float | None = None,
     pax_capacity: float | None = None,
-    hotel_tag: str = HOTEL_TAG,
     phase_factor: float | None = None,
     phase_clip_pct: float | None = None,
 ) -> None:
@@ -1399,9 +1414,9 @@ def run_pace14_forecast(
 def run_pace14_market_forecast(
     target_month: str,
     as_of_date: str,
+    hotel_tag: str,
     capacity: float | None = None,
     pax_capacity: float | None = None,
-    hotel_tag: str = HOTEL_TAG,
     phase_factor: float | None = None,
     phase_clip_pct: float | None = None,
 ) -> None:
@@ -1597,24 +1612,224 @@ def run_pace14_market_forecast(
     logger.info("[OK] Forecast exported to %s", out_path)
 
 
+def run_pace14_weekshape_flow_forecast(
+    target_month: str,
+    as_of_date: str,
+    hotel_tag: str,
+    capacity: float | None = None,
+    pax_capacity: float | None = None,
+    phase_factor: float | None = None,
+    phase_clip_pct: float | None = None,
+) -> None:
+    """pace14_weekshape_flowモデルで target_month を as_of_date 時点で予測し、CSVを出力する。"""
+    if _should_skip_forecast(target_month, as_of_date):
+        return
+    cap = _resolve_capacity(capacity)
+
+    as_of_ts = pd.to_datetime(as_of_date)
+    if pax_capacity is None:
+        pax_capacity = infer_pax_capacity_p99(hotel_tag, as_of_ts)
+    history_months = get_history_months_around_asof(
+        as_of_ts=as_of_ts,
+        months_back=4,
+        months_forward=4,
+    )
+
+    history_raw = _load_history_raw(history_months, hotel_tag, value_type="rooms")
+    history_raw_pax = _load_history_raw(history_months, hotel_tag, value_type="pax")
+
+    if not history_raw:
+        logger.info("[pace14_weekshape_flow] No history LT_DATA for as_of=%s", as_of_date)
+
+    df_target = load_lt_csv(target_month, hotel_tag=hotel_tag, value_type="rooms")
+    df_target_pax: pd.DataFrame | None
+    df_target_revenue: pd.DataFrame | None
+    try:
+        df_target_pax = load_lt_csv(target_month, hotel_tag=hotel_tag, value_type="pax")
+    except FileNotFoundError:
+        df_target_pax = None
+    try:
+        df_target_revenue = load_lt_csv(target_month, hotel_tag=hotel_tag, value_type="revenue")
+    except FileNotFoundError:
+        df_target_revenue = None
+
+    all_forecasts: dict[pd.Timestamp, float] = {}
+    all_forecasts_pax: dict[pd.Timestamp, float] = {}
+    detail_df: pd.DataFrame | None = None
+    baseline_curves: dict[int, pd.Series] = {}
+    history_by_weekday: dict[int, pd.DataFrame] = {}
+    baseline_curves_pax: dict[int, pd.Series] = {}
+    history_by_weekday_pax: dict[int, pd.DataFrame] = {}
+    pax_cap_for_forecast = _resolve_pax_capacity_for_forecast(pax_capacity)
+    base_small_rescue_params: dict[str, object] | None = None
+    rescue_cfg = HOTEL_CONFIG.get(hotel_tag, {}).get("base_small_rescue", {})
+    if not isinstance(rescue_cfg, dict):
+        rescue_cfg = {}
+    learned_params = HOTEL_CONFIG.get(hotel_tag, {}).get("learned_params", {})
+    if not isinstance(learned_params, dict):
+        learned_params = {}
+    learned_rescue = learned_params.get("base_small_rescue", {})
+    if not isinstance(learned_rescue, dict):
+        learned_rescue = {}
+    learned_weekshape = learned_rescue.get("weekshape", {})
+    if not isinstance(learned_weekshape, dict):
+        learned_weekshape = {}
+    if learned_weekshape:
+        base_small_rescue_params = {
+            "rescue_cfg": rescue_cfg,
+            "learned_weekshape": learned_weekshape,
+        }
+
+    for weekday in range(7):
+        history_dfs = []
+        for df_m in history_raw.values():
+            df_m_wd = filter_by_weekday(df_m, weekday=weekday)
+            if not df_m_wd.empty:
+                history_dfs.append(df_m_wd)
+
+        if not history_dfs:
+            continue
+
+        history_all = pd.concat(history_dfs, axis=0)
+        history_all.index = pd.to_datetime(history_all.index)
+
+        avg_curve = moving_average_recent_90days(
+            lt_df=history_all,
+            as_of_date=as_of_ts,
+            lt_min=LT_MIN,
+            lt_max=LT_MAX,
+        )
+
+        baseline_curves[weekday] = avg_curve
+        history_by_weekday[weekday] = history_all
+
+        if df_target_pax is not None:
+            history_dfs_pax = []
+            for df_m in history_raw_pax.values():
+                df_m_wd = filter_by_weekday(df_m, weekday=weekday)
+                if not df_m_wd.empty:
+                    history_dfs_pax.append(df_m_wd)
+
+            if not history_dfs_pax:
+                continue
+
+            history_all_pax = pd.concat(history_dfs_pax, axis=0)
+            history_all_pax.index = pd.to_datetime(history_all_pax.index)
+
+            avg_curve_pax = moving_average_recent_90days(
+                lt_df=history_all_pax,
+                as_of_date=as_of_ts,
+                lt_min=LT_MIN,
+                lt_max=LT_MAX,
+            )
+
+            baseline_curves_pax[weekday] = avg_curve_pax
+            history_by_weekday_pax[weekday] = history_all_pax
+
+    if baseline_curves and history_by_weekday:
+        fc_series, detail_df = forecast_final_from_pace14_weekshape_flow(
+            lt_df=df_target,
+            baseline_curves_by_weekday=baseline_curves,
+            history_by_weekday=history_by_weekday,
+            as_of_date=as_of_ts,
+            capacity=cap,
+            hotel_tag=hotel_tag,
+            base_small_rescue_params=base_small_rescue_params,
+            lt_min=0,
+            lt_max=LT_MAX,
+        )
+        for stay_date, value in fc_series.items():
+            all_forecasts[stay_date] = value
+
+    if df_target_pax is not None and baseline_curves_pax and history_by_weekday_pax:
+        fc_series_pax, _ = forecast_final_from_pace14_weekshape_flow(
+            lt_df=df_target_pax,
+            baseline_curves_by_weekday=baseline_curves_pax,
+            history_by_weekday=history_by_weekday_pax,
+            as_of_date=as_of_ts,
+            capacity=pax_cap_for_forecast,
+            hotel_tag=hotel_tag,
+            base_small_rescue_params=None,
+            lt_min=0,
+            lt_max=LT_MAX,
+        )
+        for stay_date, value in fc_series_pax.items():
+            all_forecasts_pax[stay_date] = value
+
+    if not all_forecasts:
+        _log_no_forecasts(
+            target_month=target_month,
+            as_of_date=as_of_date,
+            hotel_tag=hotel_tag,
+            value_type="rooms",
+            df_target=df_target,
+            df_target_pax=df_target_pax,
+            history_raw=history_raw,
+            history_raw_pax=history_raw_pax,
+            all_forecasts=all_forecasts,
+            all_forecasts_pax=all_forecasts_pax,
+        )
+
+    out_df = _prepare_output(df_target, all_forecasts, as_of_ts)
+    if detail_df is not None and not detail_df.empty:
+        out_df = _merge_pace14_details(out_df, detail_df, prefix="pace14")
+    if df_target_pax is not None:
+        out_df = _merge_pax_forecast_direct(
+            out_df=out_df,
+            df_target_pax=df_target_pax,
+            all_forecasts_pax=all_forecasts_pax,
+            as_of_ts=as_of_ts,
+            pax_capacity=pax_capacity,
+        )
+    if df_target_revenue is not None:
+        out_df = _append_revenue_columns(
+            out_df,
+            df_rooms=df_target,
+            df_revenue=df_target_revenue,
+            as_of_ts=as_of_ts,
+            phase_factor=phase_factor,
+            phase_clip_pct=phase_clip_pct,
+        )
+
+    asof_tag = as_of_date.replace("-", "")
+    out_name = f"forecast_pace14_weekshape_flow_{target_month}_{hotel_tag}_asof_{asof_tag}.csv"
+    out_path = Path(OUTPUT_DIR) / out_name
+
+    out_df.to_csv(out_path, index=True)
+    logger.info("[OK] Forecast exported to %s", out_path)
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Batch forecast runner")
+    parser.add_argument("--hotel", required=True, help="Hotel tag (e.g., hotel_001)")
+    args = parser.parse_args()
+
+    hotel_tag = str(args.hotel).strip()
+    if not hotel_tag:
+        raise ValueError("hotel_tag is required. Pass --hotel (e.g., hotel_001).")
+    if hotel_tag not in HOTEL_CONFIG:
+        raise ValueError(f"Unknown hotel_tag: {hotel_tag!r}. Update hotels.json and retry.")
+
     for target_month in TARGET_MONTHS:
         asof_list = get_asof_dates_for_month(target_month)
         for as_of in asof_list:
             logger.info("[avg]       target=%s as_of=%s", target_month, as_of)
-            run_avg_forecast(target_month, as_of)
+            run_avg_forecast(target_month, as_of, hotel_tag=hotel_tag)
 
             logger.info("[recent90]  target=%s as_of=%s", target_month, as_of)
-            run_recent90_forecast(target_month, as_of)
+            run_recent90_forecast(target_month, as_of, hotel_tag=hotel_tag)
 
             logger.info("[recent90w] target=%s as_of=%s", target_month, as_of)
-            run_recent90_weighted_forecast(target_month, as_of)
+            run_recent90_weighted_forecast(target_month, as_of, hotel_tag=hotel_tag)
 
             logger.info("[pace14]   target=%s as_of=%s", target_month, as_of)
-            run_pace14_forecast(target_month, as_of)
+            run_pace14_forecast(target_month, as_of, hotel_tag=hotel_tag)
 
             logger.info("[pace14m]  target=%s as_of=%s", target_month, as_of)
-            run_pace14_market_forecast(target_month, as_of)
+            run_pace14_market_forecast(target_month, as_of, hotel_tag=hotel_tag)
+
+            logger.info("[pace14wf] target=%s as_of=%s", target_month, as_of)
+            run_pace14_weekshape_flow_forecast(target_month, as_of, hotel_tag=hotel_tag)
 
     logger.info("=== batch forecast finished ===")
 

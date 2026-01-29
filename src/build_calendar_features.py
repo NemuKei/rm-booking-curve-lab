@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import date
+import argparse
+from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -13,7 +14,6 @@ except ImportError:
     jpholiday = None
 
 # ===== 設定ここから =====
-HOTEL_TAG = "daikokucho"
 
 # カレンダーを作りたい日付範囲
 # ※必要に応じてユーザーが変更できるようにハードコードでOK。
@@ -73,11 +73,7 @@ def build_calendar_df(start: date, end: date) -> pd.DataFrame:
     df["holiday_block_id"] = block_ids
 
     # 各ブロックの長さを計算
-    block_len = (
-        df.groupby("holiday_block_id")["date"]
-        .transform("count")
-        .where(df["holiday_block_id"].notna(), other=0)
-    )
+    block_len = df.groupby("holiday_block_id")["date"].transform("count").where(df["holiday_block_id"].notna(), other=0)
     df["holiday_block_len"] = block_len.astype(int)
 
     # ブロック内での位置(single/first/middle/last)
@@ -110,9 +106,7 @@ def build_calendar_df(start: date, end: date) -> pd.DataFrame:
     df["holiday_position"] = positions
 
     # 3連休以上の中日
-    df["is_long_holiday_middle"] = (df["holiday_block_len"] >= 3) & (
-        df["holiday_position"] == "middle"
-    )
+    df["is_long_holiday_middle"] = (df["holiday_block_len"] >= 3) & (df["holiday_position"] == "middle")
 
     return df
 
@@ -122,7 +116,7 @@ def build_calendar_for_hotel(hotel_tag: str, start_date: date, end_date: date) -
     指定ホテル・期間のカレンダーデータを生成し、CSV に保存する。
 
     Args:
-        hotel_tag: ホテル識別子 (例: "daikokucho", "kansai")
+        hotel_tag: ?????? (?: "hotel_001", "hotel_002")
         start_date: 生成開始日
         end_date: 生成終了日
 
@@ -137,9 +131,69 @@ def build_calendar_for_hotel(hotel_tag: str, start_date: date, end_date: date) -
     return out_path
 
 
+def ensure_calendar_for_dates(
+    hotel_tag: str,
+    dates: pd.DatetimeIndex,
+    *,
+    min_span_days: int = 365,
+) -> Path:
+    """
+    calendar_features_{hotel_tag}.csv が存在しない/範囲不足の場合に自動生成する。
+    """
+    out_path = Path(OUTPUT_DIR) / f"calendar_features_{hotel_tag}.csv"
+
+    dates = pd.to_datetime(pd.Index(dates), errors="coerce")
+    dates = dates[~pd.isna(dates)]
+    if dates.empty:
+        if out_path.exists():
+            return out_path
+        today = date.today()
+        return build_calendar_for_hotel(
+            hotel_tag=hotel_tag,
+            start_date=today,
+            end_date=today + timedelta(days=min_span_days),
+        )
+
+    needed_start = dates.min().normalize().date()
+    needed_end = dates.max().normalize().date()
+
+    existing_ok = False
+    if out_path.exists():
+        try:
+            df = pd.read_csv(out_path, parse_dates=["date"])
+            if not df.empty and "date" in df.columns:
+                min_dt = pd.to_datetime(df["date"]).min()
+                max_dt = pd.to_datetime(df["date"]).max()
+                if not pd.isna(min_dt) and not pd.isna(max_dt):
+                    existing_ok = (min_dt.date() <= needed_start) and (max_dt.date() >= needed_end)
+        except Exception:
+            existing_ok = False
+
+    if existing_ok:
+        return out_path
+
+    start = needed_start
+    end = needed_end
+    if (end - start).days < min_span_days:
+        end = start + timedelta(days=min_span_days)
+
+    return build_calendar_for_hotel(
+        hotel_tag=hotel_tag,
+        start_date=start,
+        end_date=end,
+    )
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Build calendar feature CSV.")
+    parser.add_argument("--hotel", required=True, help="Hotel tag (e.g., hotel_001)")
+    args = parser.parse_args()
+
+    hotel_tag = str(args.hotel).strip()
+    if not hotel_tag:
+        raise ValueError("hotel_tag is required. Pass --hotel (e.g., hotel_001).")
     out_path = build_calendar_for_hotel(
-        hotel_tag=HOTEL_TAG,
+        hotel_tag=hotel_tag,
         start_date=START_DATE,
         end_date=END_DATE,
     )

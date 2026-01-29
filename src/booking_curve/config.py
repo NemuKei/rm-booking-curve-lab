@@ -434,8 +434,8 @@ def _load_hotels_json() -> dict[str, Any]:
     except OSError as exc:  # pragma: no cover - I/O error boundary
         raise RuntimeError(f"Failed to read hotel config at {HOTEL_CONFIG_PATH}: {exc}") from exc
 
-    if not isinstance(raw, dict) or not raw:
-        raise ValueError(f"hotels.json must contain a non-empty object: {HOTEL_CONFIG_PATH}")
+    if not isinstance(raw, dict):
+        raise ValueError(f"hotels.json must contain a JSON object: {HOTEL_CONFIG_PATH}")
 
     return raw
 
@@ -482,6 +482,9 @@ def load_hotel_config() -> Dict[str, Dict[str, Any]]:
     raw = _load_hotels_json()
     raw = _apply_local_raw_root_overrides(raw)
 
+    if not raw:
+        return {}
+
     validated: Dict[str, Dict[str, Any]] = {}
     for hotel_id, hotel_cfg in raw.items():
         validated[hotel_id] = _validate_hotel_config(hotel_id, hotel_cfg)
@@ -498,6 +501,14 @@ def get_hotel_rounding_units(hotel_id: str) -> dict[str, int]:
         return dict(DEFAULT_ROUNDING_UNITS)
 
 
+def get_hotel_base_small_rescue_cfg(hotel_id: str) -> dict[str, object]:
+    cfg = HOTEL_CONFIG.get(hotel_id, {})
+    rescue_cfg = cfg.get("base_small_rescue")
+    if not isinstance(rescue_cfg, dict):
+        return {}
+    return dict(rescue_cfg)
+
+
 def reload_hotel_config_inplace() -> Dict[str, Dict[str, Any]]:
     """Reload hotels.json and update HOTEL_CONFIG in place.
 
@@ -508,6 +519,21 @@ def reload_hotel_config_inplace() -> Dict[str, Dict[str, Any]]:
     HOTEL_CONFIG.clear()
     HOTEL_CONFIG.update(updated)
     return HOTEL_CONFIG
+
+
+def add_hotel_config(hotel_id: str, hotel_cfg: dict[str, Any]) -> None:
+    """Add a new hotel config entry to hotels.json and update HOTEL_CONFIG."""
+    if not hotel_id:
+        raise ValueError("hotel_id cannot be blank")
+
+    raw = _load_hotels_json()
+    if hotel_id in raw:
+        raise ValueError(f"hotel_id already exists: {hotel_id}")
+
+    raw[hotel_id] = hotel_cfg
+    _write_hotels_json(raw)
+
+    HOTEL_CONFIG[hotel_id] = _validate_hotel_config(hotel_id, hotel_cfg)
 
 
 def pop_runtime_init_errors() -> list[str]:
@@ -552,6 +578,64 @@ def update_hotel_rounding_units(hotel_id: str, rounding_units: dict[str, int]) -
     _write_hotels_json(raw)
 
     HOTEL_CONFIG[hotel_id] = _validate_hotel_config(hotel_id, updated_cfg)
+
+
+def update_hotel_base_small_rescue_cfg(hotel_id: str, rescue_cfg: dict[str, object]) -> None:
+    if not isinstance(rescue_cfg, dict):
+        raise TypeError("rescue_cfg must be a dict")
+
+    raw = _load_hotels_json()
+    if hotel_id not in raw:
+        raise ValueError(f"Unknown hotel_id: {hotel_id}")
+
+    hotel_cfg = raw[hotel_id]
+    if not isinstance(hotel_cfg, dict):
+        raise TypeError(f"{hotel_id}: hotel config must be a JSON object")
+
+    existing = hotel_cfg.get("base_small_rescue")
+    if existing is None or not isinstance(existing, dict):
+        existing = {}
+
+    merged = dict(existing)
+    merged.update(rescue_cfg)
+    updated_cfg = dict(hotel_cfg)
+    updated_cfg["base_small_rescue"] = merged
+    raw[hotel_id] = updated_cfg
+    _write_hotels_json(raw)
+
+    HOTEL_CONFIG[hotel_id] = _validate_hotel_config(hotel_id, updated_cfg)
+
+
+def update_hotel_learned_params(hotel_id: str, learned_params: dict[str, object]) -> None:
+    if not isinstance(learned_params, dict):
+        raise TypeError("learned_params must be a dict")
+
+    raw = _load_hotels_json()
+    if hotel_id not in raw:
+        raise ValueError(f"Unknown hotel_id: {hotel_id}")
+
+    hotel_cfg = raw[hotel_id]
+    if not isinstance(hotel_cfg, dict):
+        raise TypeError(f"{hotel_id}: hotel config must be a JSON object")
+
+    existing = hotel_cfg.get("learned_params")
+    if existing is None or not isinstance(existing, dict):
+        existing = {}
+
+    merged = dict(existing)
+    merged.update(learned_params)
+    updated_cfg = dict(hotel_cfg)
+    updated_cfg["learned_params"] = merged
+    raw[hotel_id] = updated_cfg
+    _write_hotels_json(raw)
+
+    if hotel_id in HOTEL_CONFIG:
+        current = HOTEL_CONFIG[hotel_id]
+        current_existing = current.get("learned_params")
+        if current_existing is None or not isinstance(current_existing, dict):
+            current_existing = {}
+        current_existing.update(learned_params)
+        current["learned_params"] = current_existing
 
 
 def clear_local_override_raw_root_dir(hotel_id: str) -> None:

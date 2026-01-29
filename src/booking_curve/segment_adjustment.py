@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 
 from booking_curve.config import OUTPUT_DIR
+from build_calendar_features import ensure_calendar_for_dates
 
 logger = logging.getLogger(__name__)
 _CALENDAR_WARNED = False
@@ -25,20 +26,41 @@ def _warn_calendar_missing(reason: str, hotel_tag: str, path: Path) -> None:
     _CALENDAR_WARNED = True
 
 
-def _load_calendar(hotel_tag: str) -> pd.DataFrame:
+def _load_calendar(
+    hotel_tag: str,
+    dates: pd.DatetimeIndex | None = None,
+) -> pd.DataFrame:
     """
     calendar_features_{hotel_tag}.csv を読み込んで返す。
     date 列を DatetimeIndex にして返す。
     """
+    if dates is not None:
+        ensure_calendar_for_dates(hotel_tag, dates)
     path = Path(OUTPUT_DIR) / f"calendar_features_{hotel_tag}.csv"
     try:
         cal = pd.read_csv(path)
     except FileNotFoundError:
-        _warn_calendar_missing("file_not_found", hotel_tag, path)
-        return pd.DataFrame(index=pd.DatetimeIndex([]))
+        if dates is not None:
+            ensure_calendar_for_dates(hotel_tag, dates)
+            try:
+                cal = pd.read_csv(path)
+            except Exception:
+                _warn_calendar_missing("file_not_found", hotel_tag, path)
+                return pd.DataFrame(index=pd.DatetimeIndex([]))
+        else:
+            _warn_calendar_missing("file_not_found", hotel_tag, path)
+            return pd.DataFrame(index=pd.DatetimeIndex([]))
     except pd.errors.EmptyDataError:
-        _warn_calendar_missing("empty_file", hotel_tag, path)
-        return pd.DataFrame(index=pd.DatetimeIndex([]))
+        if dates is not None:
+            ensure_calendar_for_dates(hotel_tag, dates)
+            try:
+                cal = pd.read_csv(path)
+            except Exception:
+                _warn_calendar_missing("empty_file", hotel_tag, path)
+                return pd.DataFrame(index=pd.DatetimeIndex([]))
+        else:
+            _warn_calendar_missing("empty_file", hotel_tag, path)
+            return pd.DataFrame(index=pd.DatetimeIndex([]))
     cal["date"] = pd.to_datetime(cal["date"])
     cal = cal.set_index("date")
     return cal
@@ -67,10 +89,10 @@ def apply_segment_adjustment(forecast_df: pd.DataFrame, hotel_tag: str) -> pd.Da
     if "projected_rooms" not in forecast_df.columns:
         raise ValueError("forecast_df に 'projected_rooms' 列が必要です。")
 
-    cal = _load_calendar(hotel_tag)
-
     df = forecast_df.copy()
     df.index = pd.to_datetime(df.index)
+
+    cal = _load_calendar(hotel_tag, dates=df.index)
 
     df = df.join(cal, how="left")
 

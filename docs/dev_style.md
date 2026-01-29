@@ -147,7 +147,7 @@
 - 次スレ冒頭で Docs Gate が Yes の場合、docs更新は `docs/templates/prompt_docs_update.md` を唯一の手順として行う。
 
 #### 引き継ぎ（ファイル化が標準）
-- 引き継ぎ本文は `docs/handovers/YYYY-MM-DD_HHMM_<branch>_<scope>.md` として保存し、ZIPに同梱する。
+- 引き継ぎ本文は `docs/handovers/YYYY-MM-DD_HHMM_<type>_<scope>__handover.md` として保存し、ZIPに同梱する。
 - 次スレ冒頭は「アンカーZIP添付＋ handoverファイルパス指定」だけを書き、全文貼りは原則しない（トークン節約と参照齟齬防止）。
 
 ### 7-3. スレッド終了時のログ作成（必須・5分ゲート）
@@ -157,7 +157,7 @@
 
 #### 生成する成果物
 - Thread Log（スレッド単位・少し詳細・append-only）
-  - 保存先：`docs/thread_logs/YYYY-MM-DD_HHMM_<branch>_<short>.md`
+  - 保存先：`docs/thread_logs/YYYY-MM-DD_HHMM_<type>_<scope>__thread_log.md`
 - Decision Log（横断・決定だけ）
   - 保存先：`docs/decision_log.md`
 

@@ -2,7 +2,7 @@
 直近数ヶ月分の LT_DATA CSV をまとめて出力するスクリプト。
 
 GUI からは run_build_lt_for_gui(hotel_tag, target_months) を呼び出す。
-CLI 実行時は HOTELS_CONFIG の先頭に定義された hotel_tag（現在は daikokucho）を処理する。
+CLI ???? --hotel ? hotel_tag ??????????
 """
 
 import argparse
@@ -20,8 +20,6 @@ from booking_curve.lt_builder import (
     build_lt_data_from_daily_snapshots_for_month,
     extract_asof_dates_from_timeseries,
 )
-
-DEFAULT_HOTEL_TAG = next(iter(HOTEL_CONFIG.keys()))
 
 # LT_DATA を出したい宿泊月（シート名）リスト（CLI デフォルト）
 TARGET_MONTHS = [
@@ -93,16 +91,12 @@ def build_monthly_curve_from_timeseries(df_ts: pd.DataFrame, max_lt: int) -> pd.
     return df_out
 
 
-def build_monthly_curve_from_daily_snapshots(
-    hotel_id: str, target_month: str, output_dir: Path, max_lt: int = MAX_LT
-) -> pd.DataFrame:
+def build_monthly_curve_from_daily_snapshots(hotel_id: str, target_month: str, output_dir: Path, max_lt: int = MAX_LT) -> pd.DataFrame:
     """
     daily snapshots 由来の月次カーブを ASOF ベースで集計し、LT 軸に変換する。
     """
 
-    df_month = read_daily_snapshots_for_month(
-        hotel_id=hotel_id, target_month=target_month, output_dir=output_dir
-    )
+    df_month = read_daily_snapshots_for_month(hotel_id=hotel_id, target_month=target_month, output_dir=output_dir)
 
     if df_month is None or df_month.empty:
         return pd.DataFrame(columns=["lt", "rooms_total"])
@@ -130,13 +124,7 @@ def build_monthly_curve_from_daily_snapshots(
     if df_monthly.empty:
         return pd.DataFrame(columns=["lt", "rooms_total"])
 
-    df_monthly = (
-        df_monthly.groupby("lt")["rooms_total"]
-        .sum()
-        .reset_index()
-        .sort_values("lt")
-        .reset_index(drop=True)
-    )
+    df_monthly = df_monthly.groupby("lt")["rooms_total"].sum().reset_index().sort_values("lt").reset_index(drop=True)
 
     df_monthly["lt"] = df_monthly["lt"].astype(int)
     return df_monthly
@@ -301,6 +289,11 @@ def run_build_lt_for_gui(
 def main():
     parser = argparse.ArgumentParser(description="LT_DATA CSV batch generator")
     parser.add_argument(
+        "--hotel",
+        required=True,
+        help="Hotel tag (e.g., hotel_001)",
+    )
+    parser.add_argument(
         "--source",
         choices=["timeseries", "daily_snapshots"],
         default="daily_snapshots",
@@ -308,11 +301,13 @@ def main():
     )
     args = parser.parse_args()
 
-    hotel_tag = DEFAULT_HOTEL_TAG
+    hotel_tag = str(args.hotel).strip()
+    if not hotel_tag:
+        raise ValueError("hotel_tag is required. Pass --hotel (e.g., hotel_001).")
     source = args.source
     cfg = HOTEL_CONFIG.get(hotel_tag)
     if cfg is None:
-        raise KeyError(f"Unknown hotel_tag: {hotel_tag!r}")
+        raise ValueError(f"Unknown hotel_tag: {hotel_tag!r}. Update hotels.json and retry.")
     display_name = cfg.get("display_name", hotel_tag)
 
     excel_path = None

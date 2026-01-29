@@ -30,7 +30,7 @@
 
 ## 出力（厳守）
 ### 1) Proposed file path（必須・1行）
-- `Proposed file path: docs/thread_logs/YYYY-MM-DD_HHMM_<branch>_<scope>.md`
+- `Proposed file path: docs/thread_logs/YYYY-MM-DD_HHMM_<type>_<scope>__thread_log.md`
 
 命名ルール：
 - YYYY-MM-DD は Thread Log の作成日
@@ -80,7 +80,3 @@
 ## References
 - 参照ファイル（パス＋一言理由）
   - `docs/spec_*.md` / `AGENTS.md` / 該当コード / ログ など
-
-## Questions (if any)
-- 不足情報がある場合のみ。最大5つ。
-- Yes/No か短文で答えられる形を優先。

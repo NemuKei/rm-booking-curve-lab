@@ -73,11 +73,7 @@ def build_calendar_df(start: date, end: date) -> pd.DataFrame:
     df["holiday_block_id"] = block_ids
 
     # 各ブロックの長さを計算
-    block_len = (
-        df.groupby("holiday_block_id")["date"]
-        .transform("count")
-        .where(df["holiday_block_id"].notna(), other=0)
-    )
+    block_len = df.groupby("holiday_block_id")["date"].transform("count").where(df["holiday_block_id"].notna(), other=0)
     df["holiday_block_len"] = block_len.astype(int)
 
     # ブロック内での位置(single/first/middle/last)
@@ -110,9 +106,7 @@ def build_calendar_df(start: date, end: date) -> pd.DataFrame:
     df["holiday_position"] = positions
 
     # 3連休以上の中日
-    df["is_long_holiday_middle"] = (df["holiday_block_len"] >= 3) & (
-        df["holiday_position"] == "middle"
-    )
+    df["is_long_holiday_middle"] = (df["holiday_block_len"] >= 3) & (df["holiday_position"] == "middle")
 
     return df
 

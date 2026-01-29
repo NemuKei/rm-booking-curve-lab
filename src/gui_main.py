@@ -1785,19 +1785,13 @@ class BookingCurveApp(tk.Tk):
 
         row = 0
         ttk.Label(frame, text="hotel_id:").grid(row=row, column=0, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY)
-        ttk.Entry(frame, textvariable=hotel_id_var, width=24).grid(
-            row=row, column=1, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY
-        )
+        ttk.Entry(frame, textvariable=hotel_id_var, width=24).grid(row=row, column=1, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY)
         row += 1
-        ttk.Label(frame, text="英数字 + _- のみ", foreground="#555555").grid(
-            row=row, column=1, sticky="w", padx=UI_GRID_PADX, pady=(0, UI_GRID_PADY)
-        )
+        ttk.Label(frame, text="英数字 + _- のみ", foreground="#555555").grid(row=row, column=1, sticky="w", padx=UI_GRID_PADX, pady=(0, UI_GRID_PADY))
 
         row += 1
         ttk.Label(frame, text="display_name:").grid(row=row, column=0, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY)
-        ttk.Entry(frame, textvariable=display_name_var, width=30).grid(
-            row=row, column=1, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY
-        )
+        ttk.Entry(frame, textvariable=display_name_var, width=30).grid(row=row, column=1, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY)
         row += 1
         ttk.Label(frame, text="空欄の場合は hotel_id を使用", foreground="#555555").grid(
             row=row, column=1, sticky="w", padx=UI_GRID_PADX, pady=(0, UI_GRID_PADY)
@@ -1805,9 +1799,7 @@ class BookingCurveApp(tk.Tk):
 
         row += 1
         ttk.Label(frame, text="capacity:").grid(row=row, column=0, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY)
-        ttk.Entry(frame, textvariable=capacity_var, width=10).grid(
-            row=row, column=1, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY
-        )
+        ttk.Entry(frame, textvariable=capacity_var, width=10).grid(row=row, column=1, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY)
         row += 1
         ttk.Label(
             frame,
@@ -1827,12 +1819,8 @@ class BookingCurveApp(tk.Tk):
 
         row += 1
         ttk.Label(frame, text="raw_root_dir:").grid(row=row, column=0, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY)
-        ttk.Entry(frame, textvariable=raw_root_dir_var, width=40).grid(
-            row=row, column=1, sticky="we", padx=UI_GRID_PADX, pady=UI_GRID_PADY
-        )
-        ttk.Button(frame, text="参照...", command=_on_browse).grid(
-            row=row, column=2, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY
-        )
+        ttk.Entry(frame, textvariable=raw_root_dir_var, width=40).grid(row=row, column=1, sticky="we", padx=UI_GRID_PADX, pady=UI_GRID_PADY)
+        ttk.Button(frame, text="参照...", command=_on_browse).grid(row=row, column=2, sticky="w", padx=UI_GRID_PADX, pady=UI_GRID_PADY)
 
         row += 1
         ttk.Checkbutton(frame, text="サブフォルダも検索する", variable=include_subfolders_var).grid(

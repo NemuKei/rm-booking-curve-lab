@@ -14,7 +14,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(REPO_ROOT / "src"))
 
@@ -213,9 +212,7 @@ def main() -> None:
         print("Detail rows missing lt_now; cannot filter market band.")
         return
 
-    band = detail_all[
-        (detail_all["lt_now"] >= MARKET_PACE_LT_MIN) & (detail_all["lt_now"] <= MARKET_PACE_LT_MAX)
-    ].copy()
+    band = detail_all[(detail_all["lt_now"] >= MARKET_PACE_LT_MIN) & (detail_all["lt_now"] <= MARKET_PACE_LT_MAX)].copy()
     print(f"\n=== MARKET BAND rows === {len(band)}")
 
     if "delta_market" in band.columns:

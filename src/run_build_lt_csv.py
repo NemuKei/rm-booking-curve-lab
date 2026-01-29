@@ -21,7 +21,6 @@ from booking_curve.lt_builder import (
     extract_asof_dates_from_timeseries,
 )
 
-
 # LT_DATA を出したい宿泊月（シート名）リスト（CLI デフォルト）
 TARGET_MONTHS = [
     "202511",
@@ -92,16 +91,12 @@ def build_monthly_curve_from_timeseries(df_ts: pd.DataFrame, max_lt: int) -> pd.
     return df_out
 
 
-def build_monthly_curve_from_daily_snapshots(
-    hotel_id: str, target_month: str, output_dir: Path, max_lt: int = MAX_LT
-) -> pd.DataFrame:
+def build_monthly_curve_from_daily_snapshots(hotel_id: str, target_month: str, output_dir: Path, max_lt: int = MAX_LT) -> pd.DataFrame:
     """
     daily snapshots 由来の月次カーブを ASOF ベースで集計し、LT 軸に変換する。
     """
 
-    df_month = read_daily_snapshots_for_month(
-        hotel_id=hotel_id, target_month=target_month, output_dir=output_dir
-    )
+    df_month = read_daily_snapshots_for_month(hotel_id=hotel_id, target_month=target_month, output_dir=output_dir)
 
     if df_month is None or df_month.empty:
         return pd.DataFrame(columns=["lt", "rooms_total"])
@@ -129,13 +124,7 @@ def build_monthly_curve_from_daily_snapshots(
     if df_monthly.empty:
         return pd.DataFrame(columns=["lt", "rooms_total"])
 
-    df_monthly = (
-        df_monthly.groupby("lt")["rooms_total"]
-        .sum()
-        .reset_index()
-        .sort_values("lt")
-        .reset_index(drop=True)
-    )
+    df_monthly = df_monthly.groupby("lt")["rooms_total"].sum().reset_index().sort_values("lt").reset_index(drop=True)
 
     df_monthly["lt"] = df_monthly["lt"].astype(int)
     return df_monthly

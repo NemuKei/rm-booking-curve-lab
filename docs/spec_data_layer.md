@@ -113,6 +113,11 @@ daily snapshots は **「唯一の正」** のレイヤーであり、LT_DATA / 
 - 注意：
   - daily snapshots 自体は **欠損（NaN）を保持**する（補完はビュー/評価レイヤーで行う）
   - upsert の「対象範囲の定義」は、GUI・CLI で統一する
+  - RANGE_REBUILD（範囲限定更新）の stay_months（対象宿泊月）は、運用上の安全側として以下を既定とする：
+    - asof_max（観測された最新ASOF）から **+120日先** がかかる月まで（両端含む）
+    - さらに **前月を常に含める**（月初の揺れ吸収）
+    - GUIの「LT_DATA(4ヶ月)」実行では、上記に加えて **当月から数えて翌4ヶ月先まで** を最低保証する
+      - 例：end_month = max( asof_max+120日で算出した月, asof_month + 4 )
 
 #### (C) GUI からの再生成（LT生成時の連動）
 GUI では、LT_DATA 生成時に daily snapshots を更新できるオプションを持つ（チェックボックス等）。
@@ -137,6 +142,22 @@ GUI では、LT_DATA 生成時に daily snapshots を更新できるオプショ
   - 欠損時はファイル名の `YYYYMMDD` から推定
 
 このアダプタ層は「PMS ごとの差異を吸収し、daily snapshots 仕様に揃える」役割を持ちます。
+
+RAW（PMS生Excel）を *どの範囲から、どのキーで* 取り込むかを決めるために、入力ファイル台帳（inventory）を生成する。
+
+### 1-6. raw_inventory（入力ファイル台帳）
+
+GUI / CLI の daily snapshots 生成は、まず「入力として見えているRAWファイル一覧（台帳）」を構築する。
+この台帳は `src/booking_curve/raw_inventory.py` が担当する。
+
+- 探索対象：`raw_root_dir` 配下の `*.xls*`（`~$` 一時ファイルは除外）
+- `include_subfolders=True` の場合、サブフォルダも再帰探索する
+- キー：`(target_month, asof_ymd)`（両方ともファイル名から抽出）
+- 未来ASOF（`asof_date > today`）は台帳から除外する
+- 重複キー検知時の扱い：
+  - **STOPしない**（運用継続を優先）
+  - **後勝ち**で 1件に解決し、warning を残す
+    - 既定のtie-break：`mtime` が新しい方 → 同一なら `path` の辞書順
 
 ---
 

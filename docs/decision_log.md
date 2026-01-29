@@ -153,7 +153,8 @@
   * docs/spec_models.md: （入力整合がモデル前提である旨の導線）
   * docs/spec_data_layer.md: （raw配置ルール、探索範囲、重複扱い、拡張子方針を追記）
   * docs/spec_evaluation.md: （影響小／注記レベル）
-* Status: 未反映
+* Status: 方針変更（D-20260129-XXXで上書き）
+* Note: 重複キーは STOP せず、後勝ち（tie-break: mtime→path）で 1件に解決して運用継続。
 
 ## D-20251224-001 欠損検知は ops/audit の2モードで固定する
 
@@ -1143,6 +1144,40 @@
   * 次スレP0で「後半に作られた運用docsの精査」を必須タスクとして実行する方針もセットで合意。
 
 ---
+
+## D-20260129-XXX raw_inventory の重複キーはSTOPせず後勝ちで解決する（tie-break: mtime→path）
+
+* Decision:
+
+  * raw_inventory（RAW入力ファイル台帳）のキー `(target_month, asof_date)` が重複した場合は、**エラー停止しない**。
+  * **後勝ちで1ファイルを採用**し、採用/破棄したパスをWARNINGログに出して運用継続する。
+  * 後勝ちのtie-break は **mtime が新しい方**、同一なら **path の辞書順** とする（実装：`_resolve_duplicate_path`）。
+* Why:
+
+  * 現場運用での二重保存・拡張子違い等で STOP すると復旧コストが大きいため。リスクは WARNING で可視化し、運用継続を優先する。
+* Spec link:
+
+  * docs/spec_data_layer.md: raw_inventory（入力ファイル台帳）
+  * docs/spec_overview.md: データ取り込みの運用ポリシー（必要なら追記）
+* Status: 実装反映済（docs反映中）
+
+---
+
+## D-20260129-XXX GUIの「LT_DATA(4ヶ月)」は +120日先に加えて翌4ヶ月先までを最低保証する
+
+* Decision:
+
+  * RANGE_REBUILDの stay_months は `asof_max +120日先` がかかる月まで（両端含む）＋前月を含める（既存決定の踏襲）。
+  * そのうえで GUI の「LT_DATA(4ヶ月)」実行では、運用安全のため **当月から数えて翌4ヶ月先まで** を最低保証する。
+    * 例：`end_month = max(month_by_120days, asof_month + 4)`
+* Why:
+
+  * 「120日先」に月跨ぎが乗らないケースでも、運用で必要な先月（翌月群）が取り込まれない事故を避けるため。
+* Spec link:
+
+  * docs/spec_data_layer.md: 部分生成（Partial rebuild / Upsert）
+  * docs/decision_log.md: D-20251226-001（asof_max起点+120日先＋前月含む）
+* Status: 実装反映済（docs反映中）
 
 ## D-20260121-002 引継書は docs/handovers の単体ファイルで成立させ、連結作業を廃止
 

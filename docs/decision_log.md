@@ -1145,7 +1145,7 @@
 
 ---
 
-## D-20260129-XXX raw_inventory の重複キーはSTOPせず後勝ちで解決する（tie-break: mtime→path）
+## D-20260129-003 raw_inventory の重複キーはSTOPせず後勝ちで解決する（tie-break: mtime→path）
 
 * Decision:
 
@@ -1163,7 +1163,7 @@
 
 ---
 
-## D-20260129-XXX GUIの「LT_DATA(4ヶ月)」は +120日先に加えて翌4ヶ月先までを最低保証する
+## D-20260129-004 GUIの「LT_DATA(4ヶ月)」は +120日先に加えて翌4ヶ月先までを最低保証する
 
 * Decision:
 

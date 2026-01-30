@@ -495,6 +495,7 @@ class BookingCurveApp(tk.Tk):
         self._refresh_master_rounding_units()
         self._update_master_rounding_units_state()
         self._refresh_master_base_small_rescue()
+        self._refresh_output_dir_label()
 
         try:
             clear_evaluation_detail_cache()
@@ -1859,6 +1860,7 @@ class BookingCurveApp(tk.Tk):
         self._refresh_master_base_small_rescue()
         self._refresh_master_raw_root_dir()
         self._update_master_missing_check_status()
+        self._refresh_output_dir_label()
 
     def _on_global_hotel_changed(self, *args) -> None:
         """
@@ -1877,6 +1879,7 @@ class BookingCurveApp(tk.Tk):
         self._refresh_master_base_small_rescue()
         self._refresh_master_raw_root_dir()
         self._update_master_missing_check_status()
+        self._refresh_output_dir_label()
 
         if hasattr(self, "df_hotel_var"):
             fc_cap, pax_cap, occ_cap = self._get_daily_caps_for_hotel(hotel_tag)

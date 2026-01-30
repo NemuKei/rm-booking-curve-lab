@@ -1618,7 +1618,7 @@ A-019
   * 年度サンプルが少ない状況でp10–p90は安定しにくく、abs guardの副作用で12→1付近の帯が不自然に暴れるため。
 * Spec link:
 
-  * なし（spec未記載：追記候補は docs/spec_models.md / docs/spec_evaluation.md）
+  * docs/spec_overview.md: 「### 2-2. データソースと中間生成物 > (6) TopDown RevPAR 参考レンジ（GUI）」
 * Status: 実装反映済
 
 ---
@@ -1633,7 +1633,8 @@ A-019
   * output直下に新旧ファイルが混在し、運用上の誤認・比較ミスが起きやすいため。
 * Spec link:
 
-  * なし（spec未記載：追記候補は docs/spec_data_layer.md）
+  * docs/spec_data_layer.md: 「## 1. daily snapshots」「## 2. LT_DATA」「## 3. 評価用データ」「## 4. 運用・監査（欠損レポート）」
+  * docs/spec_overview.md: 「### 2-2. データソースと中間生成物」
 * Status: 実装反映済
 
 ---

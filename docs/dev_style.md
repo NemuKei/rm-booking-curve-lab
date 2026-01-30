@@ -146,6 +146,14 @@
 - 共有ファイルは **make_release_zip.py で作成したアンカーZIPを唯一の正** とし、手作業での個別ファイル添付は原則しない。
 - 次スレ冒頭で Docs Gate が Yes の場合、docs更新は `docs/templates/prompt_docs_update.md` を唯一の手順として行う。
 
+#### docs更新の実務（出力形式）
+- 既定は `prompt_docs_update.md` の Mode-A（全文出力）。
+- ただし「差分だけを正確に当てたい」「レビューを楽にしたい」場合は Mode-B（unified diff）を使ってよい。
+- Mode-B は **機械適用（git apply / apply_patch）前提**で、変更ブレを減らすための運用。
+- 注意：`AGENTS.md` の通り docs は原則「人間＋ChatGPT」が編集する。
+  - Codex を使う場合は「diffをそのまま適用する（追加提案なし）」の **明示指示**がある時のみ “適用係” として利用する。
+  - 適用後は必ず人間が差分レビューしてからマージする。
+
 #### 引き継ぎ（ファイル化が標準）
 - 引き継ぎ本文は `docs/handovers/YYYY-MM-DD_HHMM_<type>_<scope>__handover.md` として保存し、ZIPに同梱する。
 - 次スレ冒頭は「アンカーZIP添付＋ handoverファイルパス指定」だけを書き、全文貼りは原則しない（トークン節約と参照齟齬防止）。

@@ -66,7 +66,8 @@ hotels.json が欠けている／必須キー不足の場合は 安全側に STO
 
 PMS 生データを正規化し、ホテル共通で扱える形として定義する「唯一の正」のデータレイヤーです。
 
-- ファイル例：`output/daily_snapshots_daikokucho.csv`
+- ファイル例：`output/<hotel_id>/daily_snapshots.csv`
+  - 例：`output/daikokucho/daily_snapshots.csv`
 - 主なカラム：
   - `hotel_id`（例：`daikokucho`）
   - `as_of_date`（取得日、`YYYY-MM-DD`）
@@ -79,7 +80,8 @@ PMS 生データを正規化し、ホテル共通で扱える形として定義�
 
 #### (3) LT データ（LT_DATA CSV）
 
-- ファイル例：`output/lt_data_YYYYMM_<hotel>.csv`
+- ファイル例：`output/<hotel_id>/lt_data_YYYYMM.csv`
+  - 例：`output/daikokucho/lt_data_202512.csv`
 - 内容：宿泊月 × LT（-1 = ACT, 0〜max_lt）の **Rooms 数推移**
 - 生成元：
   - 現行：PMS 時系列オンハンド Excel
@@ -88,16 +90,27 @@ PMS 生データを正規化し、ホテル共通で扱える形として定義�
 
 #### (4) 月次ブッキングカーブ CSV（monthly_curve）
 
-- ファイル例：`output/monthly_curve_YYYYMM_<hotel>.csv`
+- ファイル例：`output/<hotel_id>/monthly_curve_YYYYMM.csv`
+  - 例：`output/daikokucho/monthly_curve_202512.csv`
 - 内容：ASOF × 宿泊月の「月次合計 Rooms vs LT カーブ」
 - v0.6.3 以降、**時系列 OH データの列合計から直接集計**する方式に刷新済み。
 - GUI の「月次カーブ」タブは、この CSV を優先的に読み込みます。
 
 #### (5) モデル評価・フォーキャスト CSV
 
-- `evaluation_<hotel>_*.csv`：モデル評価結果（MAE / MAPE / Bias / RMSE / MPE など）
-- `forecast_*.csv`：日別フォーキャスト結果（OCC / ADR / RevPAR 等）
+- `output/<hotel_id>/evaluation_detail.csv` / `output/<hotel_id>/evaluation_multi.csv`：モデル評価結果（MAE/MAPE/Bias/RMSE/MPE など）
+- `output/<hotel_id>/forecast_*.csv`：日別フォーキャスト結果（OCC/ADR/RevPAR 等）
 - これらは GUI の「モデル評価」タブ・「日別フォーキャスト」タブで利用されます。
+
+#### (6) TopDown RevPAR 参考レンジ（GUI）
+
+GUI の「日別フォーキャスト（Revenue Forecast）」には、TopDown RevPAR の
+**参考レンジ**（A/C）を表示する。
+
+- A/C は「参照年→対象年」の **delta（差分）** を集め、MAD（中央値絶対偏差）で外れ値を除外した上で
+  min/max を包絡したレンジ（= 実現し得る傾きレンジ）として定義する。
+- 表示は **A:min/A:max**・**C:min/C:max** の形式とし、分位点（p10/p90）と誤解される表記は避ける。
+- 内部のキー名（band_p10/band_p90 等）は互換性のため当面維持するが、意味は min/max レンジである。
 
 ---
 

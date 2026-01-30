@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 def _load_lt_data_csv(hotel_tag: str, yyyymm: str) -> pd.DataFrame:
     """Load LT_DATA CSV for a single hotel/month (rooms)."""
 
-    csv_path = config.OUTPUT_DIR / f"lt_data_{yyyymm}_{hotel_tag}.csv"
+    csv_path = config.get_hotel_output_dir(hotel_tag) / f"lt_data_{yyyymm}.csv"
     if not csv_path.exists():
         raise FileNotFoundError(f"LT_DATA csv not found: {csv_path}")
 

@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from booking_curve.config import HOTEL_CONFIG, OUTPUT_DIR
+from booking_curve.config import HOTEL_CONFIG, get_hotel_output_dir
 from booking_curve.forecast_simple import (
     compute_market_pace_7d,
     forecast_final_from_avg,
@@ -177,15 +177,16 @@ def _resolve_lt_csv_path(month: str, hotel_tag: str, value_type: str) -> Path:
 
     candidates = []
     if value_type == "rooms":
-        candidates.append(f"lt_data_rooms_{month}_{hotel_tag}.csv")
-        candidates.append(f"lt_data_{month}_{hotel_tag}.csv")
+        candidates.append(f"lt_data_rooms_{month}.csv")
+        candidates.append(f"lt_data_{month}.csv")
     elif value_type == "pax":
-        candidates.append(f"lt_data_pax_{month}_{hotel_tag}.csv")
+        candidates.append(f"lt_data_pax_{month}.csv")
     elif value_type == "revenue":
-        candidates.append(f"lt_data_revenue_{month}_{hotel_tag}.csv")
+        candidates.append(f"lt_data_revenue_{month}.csv")
 
+    base_dir = get_hotel_output_dir(hotel_tag)
     for name in candidates:
-        path = Path(OUTPUT_DIR) / name
+        path = base_dir / name
         if path.exists():
             return path
 
@@ -771,7 +772,7 @@ def run_avg_forecast(
 ) -> None:
     """
     avgモデル(3ヶ月平均)で target_month を as_of_date 時点で予測し、
-    run_forecast_from_avg.py と同じ形式の CSV を OUTPUT_DIR に出力する。
+    run_forecast_from_avg.py と同じ形式の CSV をホテル別出力フォルダに出力する。
     """
     if _should_skip_forecast(target_month, as_of_date):
         return
@@ -897,8 +898,8 @@ def run_avg_forecast(
         )
 
     asof_tag = as_of_date.replace("-", "")
-    out_name = f"forecast_{target_month}_{hotel_tag}_asof_{asof_tag}.csv"
-    out_path = Path(OUTPUT_DIR) / out_name
+    out_name = f"forecast_{target_month}_asof_{asof_tag}.csv"
+    out_path = get_hotel_output_dir(hotel_tag) / out_name
 
     out_df.to_csv(out_path, index=True)
     logger.info("[OK] Forecast exported to %s", out_path)
@@ -915,7 +916,7 @@ def run_recent90_forecast(
 ) -> None:
     """
     recent90モデル(観測日から遡る90日平均)で target_month を as_of_date 時点で予測し、
-    run_forecast_from_recent90.py と同じ形式の CSV を OUTPUT_DIR に出力する。
+    run_forecast_from_recent90.py と同じ形式の CSV をホテル別出力フォルダに出力する。
     """
     if _should_skip_forecast(target_month, as_of_date):
         return
@@ -1064,8 +1065,8 @@ def run_recent90_forecast(
         )
 
     asof_tag = as_of_date.replace("-", "")
-    out_name = f"forecast_recent90_{target_month}_{hotel_tag}_asof_{asof_tag}.csv"
-    out_path = Path(OUTPUT_DIR) / out_name
+    out_name = f"forecast_recent90_{target_month}_asof_{asof_tag}.csv"
+    out_path = get_hotel_output_dir(hotel_tag) / out_name
 
     out_df.to_csv(out_path, index=True)
     logger.info("[OK] Forecast exported to %s", out_path)
@@ -1085,7 +1086,7 @@ def run_recent90_weighted_forecast(
     target_month の予測CSVを出力する。
 
     出力ファイル名:
-      forecast_recent90w_{target_month}_{hotel_tag}_asof_{as_of}.csv
+      forecast_recent90w_{target_month}_asof_{as_of}.csv
     """
     if _should_skip_forecast(target_month, as_of):
         return
@@ -1237,8 +1238,8 @@ def run_recent90_weighted_forecast(
             phase_clip_pct=phase_clip_pct,
         )
 
-    out_name = f"forecast_recent90w_{target_month}_{hotel_tag}_asof_{as_of}.csv"
-    out_path = Path(OUTPUT_DIR) / out_name
+    out_name = f"forecast_recent90w_{target_month}_asof_{as_of}.csv"
+    out_path = get_hotel_output_dir(hotel_tag) / out_name
     out_df.to_csv(out_path, index=True)
     logger.info("[recent90_weighted][OK] %s", out_path)
 
@@ -1404,8 +1405,8 @@ def run_pace14_forecast(
         )
 
     asof_tag = as_of_date.replace("-", "")
-    out_name = f"forecast_pace14_{target_month}_{hotel_tag}_asof_{asof_tag}.csv"
-    out_path = Path(OUTPUT_DIR) / out_name
+    out_name = f"forecast_pace14_{target_month}_asof_{asof_tag}.csv"
+    out_path = get_hotel_output_dir(hotel_tag) / out_name
 
     out_df.to_csv(out_path, index=True)
     logger.info("[OK] Forecast exported to %s", out_path)
@@ -1605,8 +1606,8 @@ def run_pace14_market_forecast(
         )
 
     asof_tag = as_of_date.replace("-", "")
-    out_name = f"forecast_pace14_market_{target_month}_{hotel_tag}_asof_{asof_tag}.csv"
-    out_path = Path(OUTPUT_DIR) / out_name
+    out_name = f"forecast_pace14_market_{target_month}_asof_{asof_tag}.csv"
+    out_path = get_hotel_output_dir(hotel_tag) / out_name
 
     out_df.to_csv(out_path, index=True)
     logger.info("[OK] Forecast exported to %s", out_path)
@@ -1792,8 +1793,8 @@ def run_pace14_weekshape_flow_forecast(
         )
 
     asof_tag = as_of_date.replace("-", "")
-    out_name = f"forecast_pace14_weekshape_flow_{target_month}_{hotel_tag}_asof_{asof_tag}.csv"
-    out_path = Path(OUTPUT_DIR) / out_name
+    out_name = f"forecast_pace14_weekshape_flow_{target_month}_asof_{asof_tag}.csv"
+    out_path = get_hotel_output_dir(hotel_tag) / out_name
 
     out_df.to_csv(out_path, index=True)
     logger.info("[OK] Forecast exported to %s", out_path)

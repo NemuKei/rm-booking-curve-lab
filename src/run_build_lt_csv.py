@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from booking_curve.config import DATA_DIR, HOTEL_CONFIG, OUTPUT_DIR
+from booking_curve.config import DATA_DIR, HOTEL_CONFIG, archive_output_legacy, get_hotel_output_dir, get_output_root
 from booking_curve.daily_snapshots import read_daily_snapshots_for_month
 from booking_curve.data_loader import load_time_series_excel
 from booking_curve.lt_builder import (
@@ -170,8 +170,9 @@ def build_lt_for_month(sheet_name: str, hotel_tag: str, excel_path: Path) -> lis
     asof_dates = extract_asof_dates_from_timeseries(df_ts)
     lt_df = build_lt_data(df_ts, max_lt=MAX_LT)
 
-    out_name = f"lt_data_{sheet_name}_{hotel_tag}.csv"
-    out_path = OUTPUT_DIR / out_name
+    out_dir = get_hotel_output_dir(hotel_tag)
+    out_name = f"lt_data_{sheet_name}.csv"
+    out_path = out_dir / out_name
 
     lt_df.to_csv(out_path, index=True)
     print(f"[OK] 出力: {out_path}")
@@ -184,8 +185,8 @@ def build_lt_for_month(sheet_name: str, hotel_tag: str, excel_path: Path) -> lis
         if monthly_df.empty:
             print(f"[WARN] 月次カーブ用データが取得できませんでした: {sheet_name}")
         else:
-            monthly_out_name = f"monthly_curve_{sheet_name}_{hotel_tag}.csv"
-            monthly_out_path = OUTPUT_DIR / monthly_out_name
+            monthly_out_name = f"monthly_curve_{sheet_name}.csv"
+            monthly_out_path = out_dir / monthly_out_name
             monthly_df.to_csv(monthly_out_path, index=False)
             print(f"[OK] 月次カーブ出力: {monthly_out_path}")
 
@@ -232,15 +233,16 @@ def run_build_lt_for_gui(
             all_asof_dates.extend(pd.Timestamp(d).normalize() for d in month_asofs)
         elif source == "daily_snapshots":
             print(f"[daily_snapshots] building LT_DATA for {hotel_tag} {ym}")
+            out_dir = get_hotel_output_dir(hotel_tag)
             lt_rooms = build_lt_data_from_daily_snapshots_for_month(
                 hotel_id=hotel_tag,
                 target_month=ym,
                 value_col="rooms_oh",
                 max_lt=MAX_LT,
-                output_dir=OUTPUT_DIR,
-                output_name=f"lt_data_rooms_{ym}_{hotel_tag}.csv",
+                output_dir=out_dir,
+                output_name=f"lt_data_rooms_{ym}.csv",
             )
-            legacy_out_path = OUTPUT_DIR / f"lt_data_{ym}_{hotel_tag}.csv"
+            legacy_out_path = out_dir / f"lt_data_{ym}.csv"
             lt_rooms.to_csv(legacy_out_path, index_label="stay_date", encoding="utf-8-sig")
             print(f"[OK] 出力: {legacy_out_path}")
 
@@ -249,29 +251,29 @@ def run_build_lt_for_gui(
                 target_month=ym,
                 value_col="pax_oh",
                 max_lt=MAX_LT,
-                output_dir=OUTPUT_DIR,
-                output_name=f"lt_data_pax_{ym}_{hotel_tag}.csv",
+                output_dir=out_dir,
+                output_name=f"lt_data_pax_{ym}.csv",
             )
             build_lt_data_from_daily_snapshots_for_month(
                 hotel_id=hotel_tag,
                 target_month=ym,
                 value_col="revenue_oh",
                 max_lt=MAX_LT,
-                output_dir=OUTPUT_DIR,
-                output_name=f"lt_data_revenue_{ym}_{hotel_tag}.csv",
+                output_dir=out_dir,
+                output_name=f"lt_data_revenue_{ym}.csv",
             )
 
             monthly_df = build_monthly_curve_from_daily_snapshots(
                 hotel_id=hotel_tag,
                 target_month=ym,
-                output_dir=OUTPUT_DIR,
+                output_dir=out_dir,
                 max_lt=MAX_LT,
             )
 
             if monthly_df.empty:
                 print(f"[WARN] 月次カーブ用データが取得できませんでした: {ym}")
             else:
-                mc_path = OUTPUT_DIR / f"monthly_curve_{ym}_{hotel_tag}.csv"
+                mc_path = out_dir / f"monthly_curve_{ym}.csv"
                 monthly_df.to_csv(mc_path, index=False, encoding="utf-8-sig")
                 print(f"[OK] 月次カーブ出力: {mc_path}")
         else:
@@ -286,7 +288,8 @@ def run_build_lt_for_gui(
 
     asof_list = sorted({d.normalize() for d in all_asof_dates})
     df_asof = pd.DataFrame({"as_of_date": asof_list})
-    asof_path = OUTPUT_DIR / f"asof_dates_{hotel_tag}.csv"
+    out_dir = get_hotel_output_dir(hotel_tag)
+    asof_path = out_dir / "asof_dates.csv"
     df_asof.to_csv(asof_path, index=False)
     print(f"[OK] 取得日一覧: {asof_path}")
 
@@ -303,6 +306,11 @@ def main():
         choices=["timeseries", "daily_snapshots"],
         default="daily_snapshots",
         help="LT_DATA build source (default: daily_snapshots)",
+    )
+    parser.add_argument(
+        "--reset-output",
+        action="store_true",
+        help="Archive existing output/* into output/_legacy_YYYYMMDD_HHMM before writing new files",
     )
     args = parser.parse_args()
 
@@ -326,6 +334,9 @@ def main():
         print(f"対象ホテル: {display_name} ({hotel_tag}) / ファイル: {excel_path.name}")
     print(f"対象月シート: {', '.join(TARGET_MONTHS)}")
     print("")
+
+    if args.reset_output:
+        archive_output_legacy(get_output_root())
 
     run_build_lt_for_gui(
         hotel_tag=hotel_tag,

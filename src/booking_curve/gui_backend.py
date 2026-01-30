@@ -15,7 +15,7 @@ import run_forecast_batch
 from booking_curve import learning_base_small, monthly_rounding
 from booking_curve.config import (
     HOTEL_CONFIG,
-    OUTPUT_DIR,
+    get_hotel_output_dir,
     get_hotel_rounding_units,
     update_hotel_learned_params,
 )
@@ -119,7 +119,7 @@ def build_calendar_for_gui(hotel_tag: str) -> str:
 
 def get_calendar_coverage(hotel_tag: str) -> Dict[str, Optional[str]]:
     """
-    calendar_features_<hotel_tag>.csv の日付範囲を返すヘルパー。
+    calendar_features.csv の日付範囲を返すヘルパー。
 
     戻り値:
         {
@@ -130,7 +130,7 @@ def get_calendar_coverage(hotel_tag: str) -> Dict[str, Optional[str]]:
     ファイルが存在しない、もしくは内容が不正な場合は両方とも None を返す。
     """
 
-    csv_path = OUTPUT_DIR / f"calendar_features_{hotel_tag}.csv"
+    csv_path = get_hotel_output_dir(hotel_tag) / "calendar_features.csv"
     if not csv_path.exists():
         return {"min_date": None, "max_date": None}
 
@@ -158,7 +158,7 @@ def get_calendar_coverage(hotel_tag: str) -> Dict[str, Optional[str]]:
 def _get_evaluation_detail_df(hotel_tag: str, *, force_reload: bool = False) -> pd.DataFrame:
     cached = _EVALUATION_DETAIL_CACHE.get(hotel_tag)
 
-    csv_path = OUTPUT_DIR / f"evaluation_{hotel_tag}_detail.csv"
+    csv_path = get_hotel_output_dir(hotel_tag) / "evaluation_detail.csv"
     if not csv_path.exists():
         raise FileNotFoundError(f"evaluation detail csv not found: {csv_path}")
 
@@ -370,9 +370,9 @@ def build_range_rebuild_plan_for_gui_with_stay_months(
 
 
 def get_latest_asof_for_hotel(hotel_tag: str) -> Optional[str]:
-    """ホテル別の最新 ASOF 日付を asof_dates_<hotel_tag>.csv から取得する。"""
+    """ホテル別の最新 ASOF 日付を asof_dates.csv から取得する。"""
 
-    csv_path = OUTPUT_DIR / f"asof_dates_{hotel_tag}.csv"
+    csv_path = get_hotel_output_dir(hotel_tag) / "asof_dates.csv"
     if not csv_path.exists():
         return None
 
@@ -576,7 +576,7 @@ def train_base_small_weekshape_for_gui(
 def _load_lt_data(hotel_tag: str, target_month: str) -> pd.DataFrame:
     """LT_DATA CSV を読み込み、stay_date を DatetimeIndex に揃える。"""
 
-    csv_path = OUTPUT_DIR / f"lt_data_{target_month}_{hotel_tag}.csv"
+    csv_path = get_hotel_output_dir(hotel_tag) / f"lt_data_{target_month}.csv"
     if not csv_path.exists():
         raise FileNotFoundError(f"LT_DATA csv not found: {csv_path}")
 
@@ -607,7 +607,7 @@ def _load_lt_data(hotel_tag: str, target_month: str) -> pd.DataFrame:
 
 def _get_latest_asof_from_lt(hotel_tag: str, target_month: str) -> Optional[str]:
     """
-    asof_dates_xxx.csv が無い場合用のフォールバック。
+    asof_dates.csv が無い場合用のフォールバック。
     LT_DATA から「今日以前に存在する ASOF 日付」の最大値を推定して返す。
     """
     try:
@@ -651,7 +651,7 @@ def get_latest_asof_for_month(hotel_tag: str, target_month: str) -> Optional[str
     指定ホテル・指定宿泊月の「最新ASOF」を返す。
 
     優先順位:
-    1. output/asof_dates_{hotel_tag}.csv の as_of_date 最大値
+    1. output/<hotel_id>/asof_dates.csv の as_of_date 最大値
     2. asof_dates が無い場合は、LT_DATA からのフォールバック推定
     """
     latest_asof = get_latest_asof_for_hotel(hotel_tag)
@@ -946,14 +946,14 @@ def get_monthly_curve_data(
     """月次ブッキングカーブ画面向けに、月次カーブ用の DataFrame を返す。
 
     優先順位:
-    1. monthly_curve_{target_month}_{hotel_tag}.csv が存在すればそれを読み込む。
-    2. 無ければ daily_snapshots_{hotel_tag}.csv から monthly_curve を生成して保存し、そのデータを返す。
+    1. monthly_curve_{target_month}.csv が存在すればそれを読み込む。
+    2. 無ければ daily_snapshots.csv から monthly_curve を生成して保存し、そのデータを返す。
 
     daily_snapshots / monthly_curve が無い、もしくは生成結果が空の場合は ValueError または FileNotFoundError を送出する。
     as_of_date 引数が与えられた場合は、その日付以前の daily_snapshots にトリミングして集計する。
     """
 
-    csv_path = OUTPUT_DIR / f"monthly_curve_{target_month}_{hotel_tag}.csv"
+    csv_path = get_hotel_output_dir(hotel_tag) / f"monthly_curve_{target_month}.csv"
     cutoff_ts = pd.to_datetime(as_of_date).normalize() if as_of_date else None
 
     if csv_path.exists():
@@ -989,19 +989,23 @@ def _build_monthly_curve_from_daily_snapshots(
     target_month: str,
     cutoff_ts: pd.Timestamp | None,
 ) -> pd.DataFrame:
-    csv_path = OUTPUT_DIR / f"daily_snapshots_{hotel_tag}.csv"
+    csv_path = get_hotel_output_dir(hotel_tag) / "daily_snapshots.csv"
     if not csv_path.exists():
-        raise ValueError(f"daily_snapshots_{hotel_tag}.csv が存在しないため monthly_curve を生成できません。")
+        raise ValueError("daily_snapshots.csv が存在しないため monthly_curve を生成できません。")
 
     try:
-        df_month = read_daily_snapshots_for_month(hotel_id=hotel_tag, target_month=target_month, output_dir=OUTPUT_DIR)
+        df_month = read_daily_snapshots_for_month(
+            hotel_id=hotel_tag,
+            target_month=target_month,
+            output_dir=get_hotel_output_dir(hotel_tag),
+        )
     except Exception as exc:
-        raise ValueError(f"daily_snapshots_{hotel_tag}.csv の読み込みに失敗しました: {exc}") from exc
+        raise ValueError(f"daily_snapshots.csv の読み込みに失敗しました: {exc}") from exc
 
     required_cols = {"stay_date", "as_of_date", "rooms_oh"}
     missing = required_cols.difference(df_month.columns)
     if missing:
-        raise ValueError(f"daily_snapshots_{hotel_tag}.csv に必須列が不足しています: {sorted(missing)}")
+        raise ValueError(f"daily_snapshots.csv に必須列が不足しています: {sorted(missing)}")
 
     df_month = df_month.copy()
     df_month["stay_date"] = pd.to_datetime(df_month["stay_date"], errors="coerce").dt.normalize()
@@ -1009,7 +1013,7 @@ def _build_monthly_curve_from_daily_snapshots(
     df_month["rooms_oh"] = pd.to_numeric(df_month["rooms_oh"], errors="coerce")
     df_month = df_month.dropna(subset=["stay_date", "as_of_date"])
     if df_month.empty:
-        raise ValueError(f"daily_snapshots_{hotel_tag}.csv に対象月 {target_month} のデータが見つかりません。")
+        raise ValueError(f"daily_snapshots.csv に対象月 {target_month} のデータが見つかりません。")
 
     if cutoff_ts is not None:
         df_month = df_month[df_month["as_of_date"] <= cutoff_ts]
@@ -1319,8 +1323,8 @@ def _check_forecast_csv_complete_for_month(
     prefix, _ = _get_forecast_csv_prefix(gui_model)
     asof_ts = pd.to_datetime(as_of_date)
     asof_tag = asof_ts.strftime("%Y%m%d")
-    csv_name = f"{prefix}_{target_month}_{hotel_tag}_asof_{asof_tag}.csv"
-    csv_path = OUTPUT_DIR / csv_name
+    csv_name = f"{prefix}_{target_month}_asof_{asof_tag}.csv"
+    csv_path = get_hotel_output_dir(hotel_tag) / csv_name
     if not csv_path.exists():
         return False, "CSV not found"
 
@@ -1373,8 +1377,8 @@ def _get_projected_monthly_revpar(
     prefix, _ = _get_forecast_csv_prefix(gui_model)
     asof_ts = pd.to_datetime(as_of_date)
     asof_tag = asof_ts.strftime("%Y%m%d")
-    csv_name = f"{prefix}_{target_month}_{hotel_tag}_asof_{asof_tag}.csv"
-    csv_path = OUTPUT_DIR / csv_name
+    csv_name = f"{prefix}_{target_month}_asof_{asof_tag}.csv"
+    csv_path = get_hotel_output_dir(hotel_tag) / csv_name
     if not csv_path.exists():
         if missing_ok:
             return None, f"CSV not found: {csv_path}"
@@ -2101,8 +2105,8 @@ def get_daily_forecast_table(
     asof_ts = asof_ts_raw.normalize()
     asof_tag = asof_ts_raw.strftime("%Y%m%d")
 
-    csv_name = f"{prefix}_{target_month}_{hotel_tag}_asof_{asof_tag}.csv"
-    csv_path = OUTPUT_DIR / csv_name
+    csv_name = f"{prefix}_{target_month}_asof_{asof_tag}.csv"
+    csv_path = get_hotel_output_dir(hotel_tag) / csv_name
     snap_all = read_daily_snapshots_for_month(hotel_id=hotel_tag, target_month=target_month)
     if not csv_path.exists():
         period = pd.Period(target_month, freq="M")
@@ -2604,13 +2608,13 @@ def get_model_evaluation_table(hotel_tag: str) -> pd.DataFrame:
 
     備考:
     - run_evaluate_forecasts.py が出力する
-        evaluation_{hotel_tag}_multi.csv   : 月次サマリ
-        evaluation_{hotel_tag}_detail.csv  : ASOF明細
+        evaluation_multi.csv   : 月次サマリ
+        evaluation_detail.csv  : ASOF明細
       を利用する。
     """
 
-    summary_path = OUTPUT_DIR / f"evaluation_{hotel_tag}_multi.csv"
-    detail_path = OUTPUT_DIR / f"evaluation_{hotel_tag}_detail.csv"
+    summary_path = get_hotel_output_dir(hotel_tag) / "evaluation_multi.csv"
+    detail_path = get_hotel_output_dir(hotel_tag) / "evaluation_detail.csv"
 
     if not summary_path.exists():
         raise FileNotFoundError(f"evaluation summary csv not found: {summary_path}")
@@ -2911,7 +2915,7 @@ def get_eval_overview_by_asof(
     """
     モデル×ASOFタイプ別の期間トータル評価指標を返す。
 
-    - 入力: evaluation_{hotel_tag}_detail.csv
+    - 入力: evaluation_detail.csv
     - 期間フィルタ:
         * from_ym, to_ym は "YYYYMM" 形式の文字列または None。
         * target_month を int 化して between でフィルタする。
@@ -2977,7 +2981,7 @@ def get_eval_monthly_by_asof(
     """
     月別×ASOF×モデルの評価ログを返す（1行=1 target_month×asof_type×model）。
 
-    - 入力: evaluation_{hotel_tag}_detail.csv
+    - 入力: evaluation_detail.csv
     - 期間フィルタ:
         from_ym/to_ym は get_eval_overview_by_asof と同じ。
     - asof_types フィルタ:
@@ -3033,7 +3037,7 @@ def run_build_lt_data_for_gui(
 
 
 def get_all_target_months_for_lt_from_daily_snapshots(hotel_tag: str) -> list[str]:
-    months = list_stay_months_from_daily_snapshots(hotel_tag, output_dir=OUTPUT_DIR)
+    months = list_stay_months_from_daily_snapshots(hotel_tag, output_dir=get_hotel_output_dir(hotel_tag))
     if not months:
         raise ValueError("daily snapshots が存在しないため全期間LT_DATAを生成できません")
     return months
@@ -3092,7 +3096,7 @@ def run_daily_snapshots_for_gui(
     asof_min = None
     plan: dict[str, object] = {"mode": mode_normalized}
     if mode_normalized == "FAST":
-        latest_asof = get_latest_asof_date(hotel_tag, output_dir=OUTPUT_DIR)
+        latest_asof = get_latest_asof_date(hotel_tag, output_dir=get_hotel_output_dir(hotel_tag))
         asof_min = _calculate_asof_min(latest_asof, buffer_days)
         plan["asof_min"] = asof_min
     elif mode_normalized == "RANGE_REBUILD":
@@ -3122,7 +3126,7 @@ def run_daily_snapshots_for_gui(
                 asof_min=asof_min,
                 asof_max=None,
                 layout=layout,
-                output_dir=OUTPUT_DIR,
+                output_dir=get_hotel_output_dir(hotel_tag),
                 glob=glob_pattern,
                 recursive=recursive,
             )
@@ -3132,7 +3136,7 @@ def run_daily_snapshots_for_gui(
                 hotel_id=hotel_tag,
                 target_months=validated_target_months or [],
                 layout=layout,
-                output_dir=OUTPUT_DIR,
+                output_dir=get_hotel_output_dir(hotel_tag),
                 glob=glob_pattern,
                 recursive=recursive,
             )
@@ -3141,7 +3145,7 @@ def run_daily_snapshots_for_gui(
                 input_dir=raw_inventory.raw_root_dir,
                 hotel_id=hotel_tag,
                 layout=layout,
-                output_dir=OUTPUT_DIR,
+                output_dir=get_hotel_output_dir(hotel_tag),
                 glob=glob_pattern,
                 recursive=recursive,
             )
@@ -3155,11 +3159,11 @@ def run_daily_snapshots_for_gui(
                 stay_min=plan["stay_min"],
                 stay_max=plan["stay_max"],
                 layout=layout,
-                output_dir=OUTPUT_DIR,
+                output_dir=get_hotel_output_dir(hotel_tag),
                 glob=glob_pattern,
                 recursive=recursive,
             )
-            rebuild_asof_dates_from_daily_snapshots(hotel_tag, output_dir=OUTPUT_DIR)
+            rebuild_asof_dates_from_daily_snapshots(hotel_tag, output_dir=get_hotel_output_dir(hotel_tag))
     except Exception:
         logging.exception("Failed to build daily snapshots for GUI: hotel_tag=%s", hotel_tag)
         raise
@@ -3198,7 +3202,7 @@ def run_missing_report(hotel_tag: str, *, mode: str = "ops") -> Path:
         asof_window_days=180,
         lt_days=120,
         forward_months=3,
-        output_dir=OUTPUT_DIR,
+        output_dir=get_hotel_output_dir(hotel_tag),
     )
 
 
@@ -3260,7 +3264,7 @@ def run_import_missing_only(hotel_tag: str) -> dict[str, object]:
         hotel_id=hotel_tag,
         pairs=missing_pairs,
         layout=layout,
-        output_dir=OUTPUT_DIR,
+        output_dir=get_hotel_output_dir(hotel_tag),
         glob=glob_pattern,
     )
     result.update(build_result)

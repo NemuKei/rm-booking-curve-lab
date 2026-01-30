@@ -6,7 +6,7 @@ from typing import Optional
 
 import pandas as pd
 
-from booking_curve.config import OUTPUT_DIR
+from booking_curve.config import get_hotel_output_dir
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +82,18 @@ def _write_asof_dates_csv(path: Path, asof_list: list[pd.Timestamp]) -> None:
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     series.to_csv(tmp_path, index=False)
     tmp_path.replace(path)
+
+
+def _resolve_hotel_output_dir(hotel_id: str, output_dir: Optional[Path]) -> Path:
+    if output_dir is None:
+        return get_hotel_output_dir(hotel_id)
+    base_dir = Path(output_dir)
+    if base_dir.name == hotel_id:
+        base_dir.mkdir(parents=True, exist_ok=True)
+        return base_dir
+    hotel_dir = base_dir / hotel_id
+    hotel_dir.mkdir(parents=True, exist_ok=True)
+    return hotel_dir
 
 
 def normalize_daily_snapshots_df(
@@ -245,15 +257,15 @@ def upsert_daily_snapshots_range(
 def get_daily_snapshots_path(hotel_id: str) -> Path:
     if not hotel_id:
         raise ValueError("hotel_id must be a non-empty string")
-    return OUTPUT_DIR / f"daily_snapshots_{hotel_id}.csv"
+    return get_hotel_output_dir(hotel_id) / "daily_snapshots.csv"
 
 
 def get_latest_asof_date(hotel_id: str, output_dir: Optional[Path] = None) -> pd.Timestamp | None:
     if not hotel_id:
         raise ValueError("hotel_id must be a non-empty string")
 
-    base_dir = OUTPUT_DIR if output_dir is None else Path(output_dir)
-    asof_path = base_dir / f"asof_dates_{hotel_id}.csv"
+    base_dir = _resolve_hotel_output_dir(hotel_id, output_dir)
+    asof_path = base_dir / "asof_dates.csv"
     try:
         asof_series = _read_asof_dates_csv(asof_path)
         latest = asof_series.max()
@@ -262,7 +274,7 @@ def get_latest_asof_date(hotel_id: str, output_dir: Optional[Path] = None) -> pd
     except Exception:
         logger.warning("Failed to read asof_dates CSV for hotel %s", hotel_id)
 
-    csv_path = base_dir / f"daily_snapshots_{hotel_id}.csv"
+    csv_path = base_dir / "daily_snapshots.csv"
     if not csv_path.exists():
         return None
 
@@ -278,8 +290,8 @@ def list_stay_months_from_daily_snapshots(hotel_id: str, output_dir: Optional[Pa
     if not hotel_id:
         raise ValueError("hotel_id must be a non-empty string")
 
-    base_dir = OUTPUT_DIR if output_dir is None else Path(output_dir)
-    csv_path = base_dir / f"daily_snapshots_{hotel_id}.csv"
+    base_dir = _resolve_hotel_output_dir(hotel_id, output_dir)
+    csv_path = base_dir / "daily_snapshots.csv"
 
     if not csv_path.exists():
         return []
@@ -335,8 +347,8 @@ def upsert_asof_dates_index(
     if not hotel_id:
         raise ValueError("hotel_id must be a non-empty string")
 
-    base_dir = OUTPUT_DIR if output_dir is None else Path(output_dir)
-    asof_path = base_dir / f"asof_dates_{hotel_id}.csv"
+    base_dir = _resolve_hotel_output_dir(hotel_id, output_dir)
+    asof_path = base_dir / "asof_dates.csv"
 
     new_asof_series = pd.to_datetime(df_new.get("as_of_date"), errors="coerce")
     new_asof_series = new_asof_series.dropna().dt.normalize().drop_duplicates().sort_values()
@@ -353,8 +365,8 @@ def rebuild_asof_dates_from_daily_snapshots(hotel_id: str, output_dir: Optional[
     if not hotel_id:
         raise ValueError("hotel_id must be a non-empty string")
 
-    base_dir = OUTPUT_DIR if output_dir is None else Path(output_dir)
-    daily_path = base_dir / f"daily_snapshots_{hotel_id}.csv"
+    base_dir = _resolve_hotel_output_dir(hotel_id, output_dir)
+    daily_path = base_dir / "daily_snapshots.csv"
 
     if not daily_path.exists():
         logger.info("daily snapshots CSV not found for hotel %s: %s", hotel_id, daily_path)
@@ -364,7 +376,7 @@ def rebuild_asof_dates_from_daily_snapshots(hotel_id: str, output_dir: Optional[
     asof_series = pd.to_datetime(df.get("as_of_date"), errors="coerce")
     asof_list = asof_series.dropna().dt.normalize().drop_duplicates().sort_values().tolist() if not asof_series.empty else []
 
-    asof_path = base_dir / f"asof_dates_{hotel_id}.csv"
+    asof_path = base_dir / "asof_dates.csv"
     _write_asof_dates_csv(asof_path, asof_list)
     logger.info("Rebuilt asof_dates CSV from daily snapshots: %s", asof_path)
     return asof_path
@@ -375,8 +387,8 @@ def append_daily_snapshots_by_hotel(
     hotel_id: str,
     output_dir: Optional[Path] = None,
 ) -> Path:
-    base_dir = OUTPUT_DIR if output_dir is None else Path(output_dir)
-    path = base_dir / f"daily_snapshots_{hotel_id}.csv"
+    base_dir = _resolve_hotel_output_dir(hotel_id, output_dir)
+    path = base_dir / "daily_snapshots.csv"
     df_new_with_hotel = normalize_daily_snapshots_df(df_new, hotel_id=hotel_id)
     result_path = append_daily_snapshots(path, df_new_with_hotel)
     upsert_asof_dates_index(hotel_id, df_new_with_hotel, output_dir=base_dir)
@@ -392,8 +404,8 @@ def upsert_daily_snapshots_range_by_hotel(
     stay_max: "pd.Timestamp | str | None" = None,
     output_dir: Optional[Path] = None,
 ) -> Path:
-    base_dir = OUTPUT_DIR if output_dir is None else Path(output_dir)
-    path = base_dir / f"daily_snapshots_{hotel_id}.csv"
+    base_dir = _resolve_hotel_output_dir(hotel_id, output_dir)
+    path = base_dir / "daily_snapshots.csv"
     df_new_with_hotel = normalize_daily_snapshots_df(df_new, hotel_id=hotel_id)
     result_path = upsert_daily_snapshots_range(
         path,
@@ -414,8 +426,8 @@ def read_daily_snapshots(
     if not hotel_id:
         raise ValueError("hotel_id must be a non-empty string")
 
-    base_dir = OUTPUT_DIR if output_dir is None else Path(output_dir)
-    path = base_dir / f"daily_snapshots_{hotel_id}.csv"
+    base_dir = _resolve_hotel_output_dir(hotel_id, output_dir)
+    path = base_dir / "daily_snapshots.csv"
     return read_daily_snapshots_csv(path)
 
 

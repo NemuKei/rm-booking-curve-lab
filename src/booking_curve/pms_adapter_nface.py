@@ -9,7 +9,7 @@ from typing import Literal, Optional
 
 import pandas as pd
 
-from booking_curve.config import OUTPUT_DIR
+from booking_curve.config import get_hotel_output_dir
 from booking_curve.daily_snapshots import (
     append_daily_snapshots_by_hotel,
     normalize_daily_snapshots_df,
@@ -31,6 +31,18 @@ WEEKDAY_SPACER_INLINE_RATIO = 0.6
 WEEKDAY_IN_DATE_ROW_SHIFTED_RATIO = 0.6
 WEEKDAY_ABOVE_DATE_ROW_INLINE_RATIO = 0.6
 INLINE_CONSECUTIVE_RATIO = 0.8
+
+
+def _resolve_hotel_output_dir(hotel_id: str, output_dir: Optional[Path]) -> Path:
+    if output_dir is None:
+        return get_hotel_output_dir(hotel_id)
+    base_dir = Path(output_dir)
+    if base_dir.name == hotel_id:
+        base_dir.mkdir(parents=True, exist_ok=True)
+        return base_dir
+    hotel_dir = base_dir / hotel_id
+    hotel_dir.mkdir(parents=True, exist_ok=True)
+    return hotel_dir
 
 
 def _parse_date_cell(value: object) -> pd.Timestamp | None:
@@ -289,8 +301,8 @@ def _write_raw_parse_failures(
     hotel_id: str,
     output_dir: Optional[Path],
 ) -> Path:
-    base_dir = Path(output_dir) if output_dir is not None else OUTPUT_DIR
-    output_path = base_dir / f"raw_parse_failures_{hotel_id}.csv"
+    base_dir = _resolve_hotel_output_dir(hotel_id, output_dir)
+    output_path = base_dir / "raw_parse_failures.csv"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df = pd.DataFrame(
         failures,
@@ -662,7 +674,7 @@ def parse_nface_file(
     df_norm = normalize_daily_snapshots_df(df, hotel_id=hotel_id, as_of_date=as_of_date)
 
     if save:
-        base_dir = Path(output_dir) if output_dir is not None else OUTPUT_DIR
+        base_dir = _resolve_hotel_output_dir(hotel_id, output_dir)
         output_path = append_daily_snapshots_by_hotel(df_norm, hotel_id, output_dir=base_dir)
         logger.info("%s: 標準CSVに追記しました -> %s", path, output_path)
 
@@ -739,7 +751,7 @@ def build_daily_snapshots_for_pairs(
     processed_pairs = 0
     skipped_missing_raw_pairs = 0
     updated_pairs: list[dict[str, object]] = []
-    base_dir = Path(output_dir) if output_dir is not None else OUTPUT_DIR
+    base_dir = _resolve_hotel_output_dir(hotel_id, output_dir)
 
     for target_month, asof_date in sorted(target_keys):
         raw_path = raw_map.get((target_month, asof_date))
@@ -880,7 +892,7 @@ def build_daily_snapshots_fast(
         return
 
     df_new = pd.concat(df_list, ignore_index=True)
-    base_dir = Path(output_dir) if output_dir is not None else OUTPUT_DIR
+    base_dir = _resolve_hotel_output_dir(hotel_id, output_dir)
     output_path = append_daily_snapshots_by_hotel(df_new, hotel_id, output_dir=base_dir)
     logger.info("%s: FASTモードで %s 件のファイルを処理しました -> %s", input_path, len(df_list), output_path)
     _write_raw_parse_failures(failures, hotel_id=hotel_id, output_dir=output_dir)
@@ -956,7 +968,7 @@ def build_daily_snapshots_full_months(
         return
 
     df_new = pd.concat(df_list, ignore_index=True)
-    base_dir = Path(output_dir) if output_dir is not None else OUTPUT_DIR
+    base_dir = _resolve_hotel_output_dir(hotel_id, output_dir)
     output_path = append_daily_snapshots_by_hotel(df_new, hotel_id, output_dir=base_dir)
     logger.info("%s: FULL_MONTHSモードで %s 件のファイルを処理しました -> %s", input_path, len(df_list), output_path)
     _write_raw_parse_failures(failures, hotel_id=hotel_id, output_dir=output_dir)
@@ -1025,7 +1037,7 @@ def build_daily_snapshots_full_all(
         return
 
     df_new = pd.concat(df_list, ignore_index=True)
-    base_dir = Path(output_dir) if output_dir is not None else OUTPUT_DIR
+    base_dir = _resolve_hotel_output_dir(hotel_id, output_dir)
     output_path = append_daily_snapshots_by_hotel(df_new, hotel_id, output_dir=base_dir)
     logger.info("%s: FULL_ALLモードで %s 件のファイルを処理しました -> %s", input_path, len(df_list), output_path)
     _write_raw_parse_failures(failures, hotel_id=hotel_id, output_dir=output_dir)
@@ -1149,7 +1161,7 @@ def build_daily_snapshots_from_folder_partial(
         asof_max=asof_max_ts,
         stay_min=stay_min_ts,
         stay_max=stay_max_ts,
-        output_dir=Path(output_dir) if output_dir is not None else OUTPUT_DIR,
+        output_dir=_resolve_hotel_output_dir(hotel_id, output_dir),
     )
     logger.info("%s: %s 件のファイルから部分更新を実施しました -> %s", input_path, len(df_list), output_path)
     _write_raw_parse_failures(failures, hotel_id=hotel_id, output_dir=output_dir)

@@ -265,16 +265,19 @@ def build_lt_data_from_daily_snapshots_for_month(
         return lt_table
 
     if output_dir is None:
-        from booking_curve.config import OUTPUT_DIR
+        from booking_curve.config import get_hotel_output_dir
 
-        output_path = Path(OUTPUT_DIR)
+        output_path = get_hotel_output_dir(hotel_id)
     else:
         output_path = Path(output_dir)
+        if output_path.name != hotel_id:
+            output_path = output_path / hotel_id
+        output_path.mkdir(parents=True, exist_ok=True)
 
     if write_csv:
         output_path.mkdir(parents=True, exist_ok=True)
         if output_name is None:
-            output_name = f"lt_data_{target_month}_{hotel_id}.csv"
+            output_name = f"lt_data_{target_month}.csv"
         csv_path = output_path / output_name
         lt_table.to_csv(csv_path, index_label="stay_date")
         print(f"[lt_builder] LT table saved to {csv_path}")

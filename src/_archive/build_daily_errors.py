@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from booking_curve.config import OUTPUT_DIR
+from booking_curve.config import get_hotel_output_dir
 
 # ===== 設定ここから =====
 HOTEL_TAG = "daikokucho"
@@ -51,10 +51,10 @@ TARGET_MONTHS = [
 
 def load_calendar() -> pd.DataFrame:
     """
-    calendar_features_{HOTEL_TAG}.csv を読み込んで返す。
+    calendar_features.csv を読み込んで返す。
     date列を Datetime に変換し、インデックスを date にする。
     """
-    path = Path(OUTPUT_DIR) / f"calendar_features_{HOTEL_TAG}.csv"
+    path = get_hotel_output_dir(HOTEL_TAG) / "calendar_features.csv"
     df = pd.read_csv(path)
     df["date"] = pd.to_datetime(df["date"])
     df.set_index("date", inplace=True)
@@ -63,15 +63,15 @@ def load_calendar() -> pd.DataFrame:
 
 def find_forecast_files() -> list[tuple[str, str, str, Path]]:
     """
-    OUTPUT_DIR から forecast CSV を探し、
+    ホテル別出力フォルダから forecast CSV を探し、
     (target_month, model_name, as_of, path) のタプルリストを返す。
     """
-    out_dir = Path(OUTPUT_DIR)
+    out_dir = get_hotel_output_dir(HOTEL_TAG)
     results: list[tuple[str, str, str, Path]] = []
 
     for model_name, prefix in MODEL_DEFS.items():
         for target_month in TARGET_MONTHS:
-            pattern = f"{prefix}_{target_month}_{HOTEL_TAG}_asof_"
+            pattern = f"{prefix}_{target_month}_asof_"
             for p in out_dir.glob(f"{pattern}*.csv"):
                 name = p.name
                 try:
@@ -223,7 +223,7 @@ def main() -> None:
     cols_order = [c for c in cols_order if c in df_merged.columns]
     df_merged = df_merged[cols_order]
 
-    out_path = Path(OUTPUT_DIR) / f"daily_errors_{HOTEL_TAG}.csv"
+    out_path = get_hotel_output_dir(HOTEL_TAG) / "daily_errors.csv"
     df_merged.to_csv(out_path, index=False)
 
     print(f"[OK] 日別誤差テーブルを出力しました: {out_path}")

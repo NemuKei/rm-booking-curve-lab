@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from booking_curve.config import OUTPUT_DIR
+from booking_curve.config import get_hotel_output_dir
 from booking_curve.forecast_simple import (
     forecast_final_from_avg,
     moving_average_3months,
@@ -26,8 +26,8 @@ CAPACITY = 168.0
 # =========================
 def load_lt_csv(month: str) -> pd.DataFrame:
     """Load LT data CSV for the specified month."""
-    file_name = f"lt_data_{month}_{HOTEL_TAG}.csv"
-    file_path = Path(OUTPUT_DIR) / file_name
+    file_name = f"lt_data_{month}.csv"
+    file_path = get_hotel_output_dir(HOTEL_TAG) / file_name
     return pd.read_csv(file_path, index_col=0)
 
 
@@ -108,8 +108,8 @@ def main() -> None:
     out_df["projected_rooms"] = projected
 
     asof_tag = AS_OF_DATE.replace("-", "")
-    out_name = f"forecast_{TARGET_MONTH}_{HOTEL_TAG}_asof_{asof_tag}.csv"
-    out_path = Path(OUTPUT_DIR) / out_name
+    out_name = f"forecast_{TARGET_MONTH}_asof_{asof_tag}.csv"
+    out_path = get_hotel_output_dir(HOTEL_TAG) / out_name
 
     out_df.to_csv(out_path, index=True)
     print(f"[OK] Forecast exported to {out_path}")

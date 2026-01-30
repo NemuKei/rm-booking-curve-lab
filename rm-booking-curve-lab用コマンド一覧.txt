@@ -38,6 +38,7 @@ python -m pip install \
 
 python -m pip install tkcalendar
 
+pip install -r requirements.txt
 
 スレッド引き継ぎ用（最小）：
 python make_release_zip.py --profile handover

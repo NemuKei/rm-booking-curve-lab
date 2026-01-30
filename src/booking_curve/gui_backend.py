@@ -1810,7 +1810,7 @@ def build_topdown_revpar_panel(
             step = int(target_period.ordinal - anchor_period_latest.ordinal)
             if step <= 0:
                 continue
-            ratios = []
+            deltas = []
             for fy in reference_years:
                 year_anchor_ref = fy if month_num_anchor >= fiscal_year_start_month else fy + 1
                 anchor_ref_period = pd.Period(f"{year_anchor_ref}{month_num_anchor:02d}", freq="M")
@@ -1823,22 +1823,22 @@ def build_topdown_revpar_panel(
                 target_ref_float = float(target_ref_val)
                 if not np.isfinite(anchor_ref_float) or not np.isfinite(target_ref_float):
                     continue
-                if anchor_ref_float < RATIO_DENOM_EPS:
-                    continue
-                ratio = target_ref_float / anchor_ref_float
-                ratio = min(max(ratio, RATIO_CLIP_MIN), RATIO_CLIP_MAX)
-                ratios.append(ratio)
-            if len(ratios) >= MIN_RATIO_SAMPLES:
-                p10_ratio = float(np.percentile(ratios, 10))
-                p90_ratio = float(np.percentile(ratios, 90))
-                last_ratio_band_a = (p10_ratio, p90_ratio)
+                deltas.append(target_ref_float - anchor_ref_float)
+            if len(deltas) >= MIN_RATIO_SAMPLES:
+                p10_delta = float(np.percentile(deltas, 10))
+                p90_delta = float(np.percentile(deltas, 90))
+                if p10_delta > p90_delta:
+                    p10_delta, p90_delta = p90_delta, p10_delta
+                last_ratio_band_a = (p10_delta, p90_delta)
             elif last_ratio_band_a is not None:
-                p10_ratio, p90_ratio = last_ratio_band_a
+                p10_delta, p90_delta = last_ratio_band_a
                 ratio_fallback_months_a.add(month_str)
             else:
                 continue
-            band_low = anchor_value * p10_ratio
-            band_high = anchor_value * p90_ratio
+            band_low = anchor_value + p10_delta
+            band_high = anchor_value + p90_delta
+            if band_low > band_high:
+                band_low, band_high = band_high, band_low
             band_low, band_high, clamped = _apply_abs_band_guard(month_str, band_low, band_high)
             if clamped:
                 abs_clamped_months_a.add(month_str)
@@ -1908,7 +1908,7 @@ def build_topdown_revpar_panel(
         step = int(target_period.ordinal - anchor_period_candidate.ordinal)
         if step <= 0:
             continue
-        ratios = []
+        deltas = []
         month_num_anchor = anchor_period_candidate.month
         for fy in reference_years:
             year_anchor_ref = fy if month_num_anchor >= fiscal_year_start_month else fy + 1
@@ -1922,24 +1922,24 @@ def build_topdown_revpar_panel(
             target_ref_float = float(target_ref_val)
             if not np.isfinite(anchor_ref_float) or not np.isfinite(target_ref_float):
                 continue
-            if anchor_ref_float < RATIO_DENOM_EPS:
-                continue
-            ratio = target_ref_float / anchor_ref_float
-            ratio = min(max(ratio, RATIO_CLIP_MIN), RATIO_CLIP_MAX)
-            ratios.append(ratio)
-        if len(ratios) >= MIN_RATIO_SAMPLES:
-            p10_ratio = float(np.percentile(ratios, 10))
-            p90_ratio = float(np.percentile(ratios, 90))
-            last_ratio_band = (p10_ratio, p90_ratio)
+            deltas.append(target_ref_float - anchor_ref_float)
+        if len(deltas) >= MIN_RATIO_SAMPLES:
+            p10_delta = float(np.percentile(deltas, 10))
+            p90_delta = float(np.percentile(deltas, 90))
+            if p10_delta > p90_delta:
+                p10_delta, p90_delta = p90_delta, p10_delta
+            last_ratio_band = (p10_delta, p90_delta)
         elif last_ratio_band is not None:
-            p10_ratio, p90_ratio = last_ratio_band
+            p10_delta, p90_delta = last_ratio_band
             ratio_fallback_months.add(month_str)
         else:
-            p10_ratio = 1.0
-            p90_ratio = 1.0
+            p10_delta = 0.0
+            p90_delta = 0.0
             ratio_fallback_months.add(month_str)
-        band_low = anchor_value_prev * p10_ratio
-        band_high = anchor_value_prev * p90_ratio
+        band_low = anchor_value_prev + p10_delta
+        band_high = anchor_value_prev + p90_delta
+        if band_low > band_high:
+            band_low, band_high = band_high, band_low
         band_low, band_high, clamped = _apply_abs_band_guard(month_str, band_low, band_high)
         if clamped:
             abs_clamped_months_c.add(month_str)

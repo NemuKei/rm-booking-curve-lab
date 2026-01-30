@@ -3297,14 +3297,14 @@ class BookingCurveApp(tk.Tk):
         self._topdown_show_band_latest_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             right_controls,
-            text="p10–p90帯(A): 直近着地月アンカー",
+            text="参考レンジ(A): 直近着地月アンカー",
             variable=self._topdown_show_band_latest_var,
             command=self._rerender_topdown_if_panel_exists,
         ).grid(row=1, column=0, sticky="e")
         self._topdown_show_band_prev_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             right_controls,
-            text="p10–p90帯(C): 前月アンカー",
+            text="参考レンジ(C): 前月アンカー",
             variable=self._topdown_show_band_prev_var,
             command=self._rerender_topdown_if_panel_exists,
         ).grid(row=2, column=0, sticky="e")
@@ -3331,10 +3331,10 @@ class BookingCurveApp(tk.Tk):
         ttk.Label(
             left_controls,
             text=(
-                "p10–p90帯(A): 直近着地月を基準に、過去年(表示年度)の"
-                "月次比率分布(10–90%)を掛けた参考レンジ。"
-                "p10–p90帯(C): 前月→当月の比率分布を使う前月アンカー帯。"
-                "⚠は FcRevPAR が帯の範囲外 (A/C別) を示す。"
+                "参考レンジ(A): 直近着地月を基準に、過去年(表示年度)の"
+                "月次差分分布から算出した参考レンジ（MADで外れ値除外、min–max）。"
+                "参考レンジ(C): 前月→当月の差分分布を使う前月アンカー版。"
+                "⚠は FcRevPAR がレンジの範囲外 (A/C別) を示す。"
             ),
             wraplength=700,
             justify="left",
@@ -3368,7 +3368,7 @@ class BookingCurveApp(tk.Tk):
         self._topdown_canvas = FigureCanvasTkAgg(self._topdown_fig, master=fig_frame)
         self._topdown_canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew")
 
-        diag_frame = ttk.LabelFrame(popup, text="Forecast RevPAR と p10–p90 比較 (A/C)")
+        diag_frame = ttk.LabelFrame(popup, text="Forecast RevPAR と 参考レンジ 比較 (A/C)")
         diag_frame.grid(row=3, column=0, sticky="nsew", padx=8, pady=(0, 8))
         diag_frame.rowconfigure(0, weight=1)
         diag_frame.columnconfigure(0, weight=1)
@@ -3771,14 +3771,14 @@ class BookingCurveApp(tk.Tk):
             _plot_band(
                 list(band_p10),
                 list(band_p90),
-                label="p10–p90(直近着地)",
+                label="参考レンジ(A:直近着地)",
                 alpha=0.18,
                 apply_anchor_mask=True,
             )
 
         if show_band_prev:
             if isinstance(band_prev_segments, list) and band_prev_segments:
-                band_label = "p10–p90(前月アンカー)"
+                band_label = "参考レンジ(C:前月アンカー)"
                 for segment in band_prev_segments:
                     if not isinstance(segment, dict):
                         continue
@@ -3820,7 +3820,7 @@ class BookingCurveApp(tk.Tk):
                 _plot_band(
                     list(band_p10_prev_anchor),
                     list(band_p90_prev_anchor),
-                    label="p10–p90(前月アンカー)",
+                    label="参考レンジ(C:前月アンカー)",
                     alpha=0.12,
                     color="tab:orange",
                 )
@@ -3931,10 +3931,10 @@ class BookingCurveApp(tk.Tk):
             header_items.extend([f"{'bADR':>8}", f"{'bOcc%':>7}"])
         header_items.extend(
             [
-                f"{'A:p10':>10}",
-                f"{'A:p90':>10}",
-                f"{'C:p10':>10}",
-                f"{'C:p90':>10}",
+                f"{'A:min':>10}",
+                f"{'A:max':>10}",
+                f"{'C:min':>10}",
+                f"{'C:max':>10}",
                 "notes",
             ],
         )

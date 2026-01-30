@@ -1577,6 +1577,10 @@ def build_topdown_revpar_panel(
     if show_years is None:
         show_years = list(range(current_fy - 5, current_fy + 1))
 
+    RATIO_DENOM_EPS = 100.0
+    RATIO_CLIP_MIN = 0.3
+    RATIO_CLIP_MAX = 3.0
+
     months_order = [(fiscal_year_start_month + offset - 1) % 12 + 1 for offset in range(12)]
     fiscal_month_labels = [f"{month}月" for month in months_order]
     fiscal_month_strs = [f"{current_fy if month >= fiscal_year_start_month else current_fy + 1}{month:02d}" for month in months_order]
@@ -1767,9 +1771,17 @@ def build_topdown_revpar_panel(
                 target_ref_period = anchor_ref_period + step
                 anchor_ref_val = revpar_by_period.get(anchor_ref_period)
                 target_ref_val = revpar_by_period.get(target_ref_period)
-                if anchor_ref_val in (None, 0) or target_ref_val is None:
+                if anchor_ref_val is None or target_ref_val is None:
                     continue
-                ratios.append(float(target_ref_val) / float(anchor_ref_val))
+                anchor_ref_float = float(anchor_ref_val)
+                target_ref_float = float(target_ref_val)
+                if not np.isfinite(anchor_ref_float) or not np.isfinite(target_ref_float):
+                    continue
+                if anchor_ref_float < RATIO_DENOM_EPS:
+                    continue
+                ratio = target_ref_float / anchor_ref_float
+                ratio = min(max(ratio, RATIO_CLIP_MIN), RATIO_CLIP_MAX)
+                ratios.append(ratio)
             if not ratios:
                 continue
             p10_ratio = float(np.percentile(ratios, 10))
@@ -1849,9 +1861,17 @@ def build_topdown_revpar_panel(
             target_ref_period = anchor_ref_period + step
             anchor_ref_val = revpar_by_period.get(anchor_ref_period)
             target_ref_val = revpar_by_period.get(target_ref_period)
-            if anchor_ref_val in (None, 0) or target_ref_val is None:
+            if anchor_ref_val is None or target_ref_val is None:
                 continue
-            ratios.append(float(target_ref_val) / float(anchor_ref_val))
+            anchor_ref_float = float(anchor_ref_val)
+            target_ref_float = float(target_ref_val)
+            if not np.isfinite(anchor_ref_float) or not np.isfinite(target_ref_float):
+                continue
+            if anchor_ref_float < RATIO_DENOM_EPS:
+                continue
+            ratio = target_ref_float / anchor_ref_float
+            ratio = min(max(ratio, RATIO_CLIP_MIN), RATIO_CLIP_MAX)
+            ratios.append(ratio)
         if len(ratios) >= min_ratio_samples:
             p10_ratio = float(np.percentile(ratios, 10))
             p90_ratio = float(np.percentile(ratios, 90))

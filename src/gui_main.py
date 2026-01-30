@@ -1689,6 +1689,7 @@ class BookingCurveApp(tk.Tk):
         self._refresh_master_raw_root_dir()
         self._update_master_missing_check_status()
         self._refresh_output_dir_label()
+        self._refresh_output_dir_label()
 
     def _open_hotel_wizard(self, mode: str = "add", must_create: bool = False) -> None:
         if self._hotel_wizard_open:
@@ -3213,13 +3214,14 @@ class BookingCurveApp(tk.Tk):
     def _ensure_topdown_year_options(self, fiscal_year: int) -> None:
         years = list(range(fiscal_year - 5, fiscal_year + 1))
         year_vars = getattr(self, "_topdown_year_vars", {})
-        if list(year_vars.keys()) == years:
-            return
-
-        self._topdown_year_vars = {year: tk.BooleanVar(value=True) for year in years}
         frame = getattr(self, "_topdown_year_frame", None)
         if frame is None:
             return
+        same_years = list(year_vars.keys()) == years
+        if same_years and frame.winfo_children():
+            return
+
+        self._topdown_year_vars = {year: tk.BooleanVar(value=True) for year in years}
         for child in frame.winfo_children():
             child.destroy()
         for idx, year in enumerate(years):

@@ -64,6 +64,8 @@ EXCLUDE_GLOBS = [
     "*.zip",
     "*.7z",
     "packages/**",
+    "assets/icon/_archive/**",
+    "assets/**/_archive/**",
 ]
 
 DANGEROUS_HINTS = [

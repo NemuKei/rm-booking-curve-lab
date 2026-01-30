@@ -117,7 +117,7 @@ def read_daily_snapshots_csv(path: Path) -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame(columns=STANDARD_COLUMNS)
 
-    df = pd.read_csv(path)
+    df = pd.read_csv(path, low_memory=False)
     if "stay_date" in df.columns:
         df["stay_date"] = pd.to_datetime(df["stay_date"], errors="coerce")
     if "as_of_date" in df.columns:

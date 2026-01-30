@@ -104,6 +104,7 @@ def build_monthly_curve_from_daily_snapshots(hotel_id: str, target_month: str, o
     df_month = df_month.copy()
     df_month["stay_date"] = pd.to_datetime(df_month["stay_date"], errors="coerce").dt.normalize()
     df_month["as_of_date"] = pd.to_datetime(df_month["as_of_date"], errors="coerce").dt.normalize()
+    # Defensive: legacy/mixed-type daily_snapshots CSV may exist; enforce numeric before aggregation.
     rooms_cleaned = df_month["rooms_oh"].astype(str).str.replace(",", "", regex=False).str.strip()
     rooms_lowered = rooms_cleaned.str.lower()
     rooms_cleaned = rooms_cleaned.mask(rooms_lowered.isin({"", "nan", "none", "<na>"}), pd.NA)

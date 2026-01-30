@@ -18,6 +18,7 @@ STANDARD_COLUMNS = [
     "pax_oh",
     "revenue_oh",
 ]
+NUMERIC_COLUMNS = ["rooms_oh", "pax_oh", "revenue_oh"]
 
 
 def _ensure_standard_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -27,6 +28,38 @@ def _ensure_standard_columns(df: pd.DataFrame) -> pd.DataFrame:
             df_copy[column] = pd.NA
     remaining_columns = [column for column in df_copy.columns if column not in STANDARD_COLUMNS]
     return df_copy[STANDARD_COLUMNS + remaining_columns]
+
+
+def _coerce_numeric_columns(df: pd.DataFrame) -> pd.DataFrame:
+    df_copy = df.copy()
+    for column in NUMERIC_COLUMNS:
+        if column not in df_copy.columns:
+            continue
+
+        series = df_copy[column]
+        if pd.api.types.is_object_dtype(series) or pd.api.types.is_string_dtype(series):
+            cleaned = series.astype(str).str.replace(",", "", regex=False).str.strip()
+            lowered = cleaned.str.lower()
+            cleaned = cleaned.mask(lowered.isin({"", "nan", "none", "<na>"}), pd.NA)
+            numeric = pd.to_numeric(cleaned, errors="coerce")
+            bad_mask = cleaned.notna() & numeric.isna()
+        else:
+            numeric = pd.to_numeric(series, errors="coerce")
+            bad_mask = series.notna() & numeric.isna()
+
+        if bad_mask.any():
+            bad_values = series[bad_mask].dropna().unique().tolist()
+            sample = bad_values[:5]
+            logger.warning(
+                "Coerced daily snapshots column %s: %s non-empty values became NaN (sample=%s)",
+                column,
+                int(bad_mask.sum()),
+                sample,
+            )
+
+        df_copy[column] = numeric
+
+    return df_copy
 
 
 def _read_asof_dates_csv(path: Path) -> pd.Series:
@@ -74,6 +107,8 @@ def normalize_daily_snapshots_df(
     if "as_of_date" in df_normalized.columns:
         df_normalized["as_of_date"] = pd.to_datetime(df_normalized["as_of_date"], errors="coerce")
 
+    df_normalized = _coerce_numeric_columns(df_normalized)
+
     df_normalized.index.name = None
     return df_normalized
 
@@ -87,7 +122,8 @@ def read_daily_snapshots_csv(path: Path) -> pd.DataFrame:
         df["stay_date"] = pd.to_datetime(df["stay_date"], errors="coerce")
     if "as_of_date" in df.columns:
         df["as_of_date"] = pd.to_datetime(df["as_of_date"], errors="coerce")
-    return _ensure_standard_columns(df)
+    df = _ensure_standard_columns(df)
+    return _coerce_numeric_columns(df)
 
 
 def _format_dates_for_csv(df: pd.DataFrame) -> pd.DataFrame:

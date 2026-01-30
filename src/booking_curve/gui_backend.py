@@ -1577,11 +1577,7 @@ def build_topdown_revpar_panel(
     if show_years is None:
         show_years = list(range(current_fy - 5, current_fy + 1))
 
-    RATIO_DENOM_EPS = 100.0
-    RATIO_CLIP_MIN = 0.5
-    RATIO_CLIP_MAX = 2.0
-    MIN_RATIO_SAMPLES = 3
-    MIN_ABS_SAMPLES = 3
+    MIN_MAD_SAMPLES = 5
 
     months_order = [(fiscal_year_start_month + offset - 1) % 12 + 1 for offset in range(12)]
     fiscal_month_labels = [f"{month}月" for month in months_order]
@@ -1738,51 +1734,29 @@ def build_topdown_revpar_panel(
     band_p90_prev_anchor: list[float | None] = [None] * 12
     band_by_month_prev_anchor: dict[str, tuple[float, float]] = {}
     reference_years = [fy for fy in show_years if fy != current_fy]
-    abs_band_by_index: dict[int, tuple[float, float]] = {}
-    if reference_years:
-        for idx in range(12):
-            values: list[float] = []
-            for fy in reference_years:
-                value = month_revpar_map.get((fy, idx))
-                if value is None:
-                    continue
-                value_float = float(value)
-                if not np.isfinite(value_float):
-                    continue
-                values.append(value_float)
-            if len(values) >= MIN_ABS_SAMPLES:
-                abs_p10 = float(np.percentile(values, 10))
-                abs_p90 = float(np.percentile(values, 90))
-                if abs_p10 > abs_p90:
-                    abs_p10, abs_p90 = abs_p90, abs_p10
-                abs_band_by_index[idx] = (abs_p10, abs_p90)
 
-    def _apply_abs_band_guard(month_str: str, low: float, high: float) -> tuple[float, float, bool]:
-        try:
-            month_num = pd.Period(month_str, freq="M").month
-        except Exception:
-            return low, high, False
-        try:
-            fiscal_idx = months_order.index(month_num)
-        except ValueError:
-            return low, high, False
-        abs_band = abs_band_by_index.get(fiscal_idx)
-        if abs_band is None:
-            return low, high, False
-        abs_low, abs_high = abs_band
-        new_low = max(low, abs_low)
-        new_high = min(high, abs_high)
-        if new_low <= new_high:
-            return new_low, new_high, (new_low != low or new_high != high)
-        if abs_low <= abs_high:
-            return abs_low, abs_high, True
-        return low, high, False
+    def _filter_outliers_mad(values: list[float], z_thresh: float = 3.5) -> tuple[list[float], int]:
+        if len(values) < MIN_MAD_SAMPLES:
+            return values, 0
+        arr = np.asarray(values, dtype=float)
+        median = float(np.median(arr))
+        mad = float(np.median(np.abs(arr - median)))
+        if not np.isfinite(mad) or mad <= 1e-9:
+            return values, 0
+        robust_z = (arr - median) / (1.4826 * mad)
+        keep_mask = np.abs(robust_z) <= z_thresh
+        filtered = arr[keep_mask].tolist()
+        removed = len(arr) - len(filtered)
+        return filtered, removed
+
+    def _append_note(note_map: dict[str, list[str]], month_str: str, note: str) -> None:
+        note_map.setdefault(month_str, []).append(note)
 
     anchor_period_latest = pd.Period(anchor_month_end, freq="M") if anchor_month_end is not None else None
     anchor_month_str = anchor_period_latest.strftime("%Y%m") if anchor_period_latest is not None else None
     ratio_fallback_months_a: set[str] = set()
-    abs_clamped_months_a: set[str] = set()
-    abs_clamped_months_c: set[str] = set()
+    mad_notes_a: dict[str, list[str]] = {}
+    mad_notes_c: dict[str, list[str]] = {}
     if anchor_month_str is not None:
         band_month_candidates.add(anchor_month_str)
     if anchor_period_latest is not None and anchor_value is not None and anchor_idx is not None:
@@ -1810,7 +1784,7 @@ def build_topdown_revpar_panel(
             step = int(target_period.ordinal - anchor_period_latest.ordinal)
             if step <= 0:
                 continue
-            deltas = []
+            deltas_raw: list[float] = []
             for fy in reference_years:
                 year_anchor_ref = fy if month_num_anchor >= fiscal_year_start_month else fy + 1
                 anchor_ref_period = pd.Period(f"{year_anchor_ref}{month_num_anchor:02d}", freq="M")
@@ -1823,25 +1797,35 @@ def build_topdown_revpar_panel(
                 target_ref_float = float(target_ref_val)
                 if not np.isfinite(anchor_ref_float) or not np.isfinite(target_ref_float):
                     continue
-                deltas.append(target_ref_float - anchor_ref_float)
-            if len(deltas) >= MIN_RATIO_SAMPLES:
-                p10_delta = float(np.percentile(deltas, 10))
-                p90_delta = float(np.percentile(deltas, 90))
-                if p10_delta > p90_delta:
-                    p10_delta, p90_delta = p90_delta, p10_delta
-                last_ratio_band_a = (p10_delta, p90_delta)
+                deltas_raw.append(target_ref_float - anchor_ref_float)
+            n_raw = len(deltas_raw)
+            deltas_use = deltas_raw
+            removed = 0
+            if n_raw >= MIN_MAD_SAMPLES:
+                deltas_filtered, removed = _filter_outliers_mad(deltas_raw)
+                if len(deltas_filtered) >= 2:
+                    deltas_use = deltas_filtered
+                else:
+                    deltas_use = deltas_raw
+                    removed = 0
+                _append_note(mad_notes_a, month_str, f"(A:mad={len(deltas_use)}/{n_raw})")
+                if removed > 0:
+                    _append_note(mad_notes_a, month_str, f"(A:mad_rm={removed})")
+            else:
+                _append_note(mad_notes_a, month_str, "(A:mad=skip(n<5))")
+            if deltas_use:
+                delta_low = float(min(deltas_use))
+                delta_high = float(max(deltas_use))
+                last_ratio_band_a = (delta_low, delta_high)
             elif last_ratio_band_a is not None:
-                p10_delta, p90_delta = last_ratio_band_a
+                delta_low, delta_high = last_ratio_band_a
                 ratio_fallback_months_a.add(month_str)
             else:
                 continue
-            band_low = anchor_value + p10_delta
-            band_high = anchor_value + p90_delta
+            band_low = anchor_value + delta_low
+            band_high = anchor_value + delta_high
             if band_low > band_high:
                 band_low, band_high = band_high, band_low
-            band_low, band_high, clamped = _apply_abs_band_guard(month_str, band_low, band_high)
-            if clamped:
-                abs_clamped_months_a.add(month_str)
             band_by_month[month_str] = (band_low, band_high)
 
         for idx in range(12):
@@ -1908,7 +1892,7 @@ def build_topdown_revpar_panel(
         step = int(target_period.ordinal - anchor_period_candidate.ordinal)
         if step <= 0:
             continue
-        deltas = []
+        deltas_raw: list[float] = []
         month_num_anchor = anchor_period_candidate.month
         for fy in reference_years:
             year_anchor_ref = fy if month_num_anchor >= fiscal_year_start_month else fy + 1
@@ -1922,27 +1906,37 @@ def build_topdown_revpar_panel(
             target_ref_float = float(target_ref_val)
             if not np.isfinite(anchor_ref_float) or not np.isfinite(target_ref_float):
                 continue
-            deltas.append(target_ref_float - anchor_ref_float)
-        if len(deltas) >= MIN_RATIO_SAMPLES:
-            p10_delta = float(np.percentile(deltas, 10))
-            p90_delta = float(np.percentile(deltas, 90))
-            if p10_delta > p90_delta:
-                p10_delta, p90_delta = p90_delta, p10_delta
-            last_ratio_band = (p10_delta, p90_delta)
+            deltas_raw.append(target_ref_float - anchor_ref_float)
+        n_raw = len(deltas_raw)
+        deltas_use = deltas_raw
+        removed = 0
+        if n_raw >= MIN_MAD_SAMPLES:
+            deltas_filtered, removed = _filter_outliers_mad(deltas_raw)
+            if len(deltas_filtered) >= 2:
+                deltas_use = deltas_filtered
+            else:
+                deltas_use = deltas_raw
+                removed = 0
+            _append_note(mad_notes_c, month_str, f"(C:mad={len(deltas_use)}/{n_raw})")
+            if removed > 0:
+                _append_note(mad_notes_c, month_str, f"(C:mad_rm={removed})")
+        else:
+            _append_note(mad_notes_c, month_str, "(C:mad=skip(n<5))")
+        if deltas_use:
+            delta_low = float(min(deltas_use))
+            delta_high = float(max(deltas_use))
+            last_ratio_band = (delta_low, delta_high)
         elif last_ratio_band is not None:
-            p10_delta, p90_delta = last_ratio_band
+            delta_low, delta_high = last_ratio_band
             ratio_fallback_months.add(month_str)
         else:
-            p10_delta = 0.0
-            p90_delta = 0.0
+            delta_low = 0.0
+            delta_high = 0.0
             ratio_fallback_months.add(month_str)
-        band_low = anchor_value_prev + p10_delta
-        band_high = anchor_value_prev + p90_delta
+        band_low = anchor_value_prev + delta_low
+        band_high = anchor_value_prev + delta_high
         if band_low > band_high:
             band_low, band_high = band_high, band_low
-        band_low, band_high, clamped = _apply_abs_band_guard(month_str, band_low, band_high)
-        if clamped:
-            abs_clamped_months_c.add(month_str)
         band_by_month_prev_anchor[month_str] = (band_low, band_high)
 
     for idx in range(12):
@@ -2063,10 +2057,10 @@ def build_topdown_revpar_panel(
             notes.append("(A:ratio_fallback)")
         if month_str in ratio_fallback_months:
             notes.append("(C:ratio_fallback)")
-        if month_str in abs_clamped_months_a:
-            notes.append("(A:abs_clamped)")
-        if month_str in abs_clamped_months_c:
-            notes.append("(C:abs_clamped)")
+        for note in mad_notes_a.get(month_str, []):
+            notes.append(note)
+        for note in mad_notes_c.get(month_str, []):
+            notes.append(note)
         basis = forecast_basis_map.get(month_str, {})
         diagnostics.append(
             {

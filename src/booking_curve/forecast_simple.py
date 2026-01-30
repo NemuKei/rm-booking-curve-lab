@@ -15,6 +15,7 @@ import pandas as pd
 
 import build_calendar_features
 from booking_curve.segment_adjustment import apply_segment_adjustment
+
 PACE14_LOWER_LT_MIN = 7
 PACE14_UPPER_LT = 14
 PACE14_CLIP = (0.70, 1.30)

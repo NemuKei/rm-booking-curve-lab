@@ -5,7 +5,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from booking_curve.config import OUTPUT_DIR
+from booking_curve.config import get_hotel_output_dir
 
 # ===== 設定ここから =====
 HOTEL_TAG = "daikokucho"
@@ -75,8 +75,8 @@ def load_lt_data() -> pd.DataFrame:
     index: 宿泊日 (DatetimeIndex)
     columns: LT (int 変換可能な列のみを使う)
     """
-    file_name = f"lt_data_{TARGET_MONTH}_{HOTEL_TAG}.csv"
-    path = Path(OUTPUT_DIR) / file_name
+    file_name = f"lt_data_{TARGET_MONTH}.csv"
+    path = get_hotel_output_dir(HOTEL_TAG) / file_name
     df = pd.read_csv(path, index_col=0)
     df.index = pd.to_datetime(df.index)
 
@@ -214,8 +214,8 @@ def main() -> None:
 
     title = f"Monthly booking curve {TARGET_MONTH} ({wd_label})"
 
-    out_name = f"monthly_curve_{TARGET_MONTH}_{HOTEL_TAG}_{wd_label}.png"
-    out_path = Path(OUTPUT_DIR) / out_name
+    out_name = f"monthly_curve_{TARGET_MONTH}_{wd_label}.png"
+    out_path = get_hotel_output_dir(HOTEL_TAG) / out_name
 
     plot_monthly_curve(curve, title=title, output_path=out_path)
     print(f"[OK] 保存しました: {out_path}")

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from booking_curve.config import OUTPUT_DIR
+from booking_curve.config import get_hotel_output_dir
 
 # ===== 設定ここから =====
 HOTEL_TAG = "daikokucho"
@@ -48,20 +48,20 @@ MODEL_DEFS = {
 
 def find_forecast_files() -> list[tuple[str, str, str, Path]]:
     """
-    OUTPUT_DIR から対象月の forecast CSV を探し、
+    output/<hotel_id>/ から対象月の forecast CSV を探し、
     (target_month, model_name, as_of, path) のタプルのリストを返す。
 
     as_of は 'YYYYMMDD' 文字列とする。
     """
-    out_dir = Path(OUTPUT_DIR)
+    out_dir = get_hotel_output_dir(HOTEL_TAG)
     results: list[tuple[str, str, str, Path]] = []
 
     for model_name, prefix in MODEL_DEFS.items():
         for target_month in TARGET_MONTHS:
-            pattern = f"{prefix}_{target_month}_{HOTEL_TAG}_asof_"
+            pattern = f"{prefix}_{target_month}_asof_"
             for p in out_dir.glob(f"{pattern}*.csv"):
                 # ファイル名から as_of 部分を抽出
-                # 例: forecast_recent90_202506_daikokucho_asof_20250531.csv
+                # 例: forecast_recent90_202506_asof_20250531.csv
                 name = p.name
                 # "asof_" 以降の数字部分を切り出す
                 try:
@@ -134,8 +134,8 @@ def main() -> None:
     df_result.sort_values(by=["target_month", "model", "as_of"], inplace=True)
 
     # 出力
-    out_dir = Path(OUTPUT_DIR)
-    detail_name = f"evaluation_{HOTEL_TAG}_detail.csv"
+    out_dir = get_hotel_output_dir(HOTEL_TAG)
+    detail_name = "evaluation_detail.csv"
     detail_path = out_dir / detail_name
     df_result.to_csv(detail_path, index=False)
 
@@ -148,7 +148,7 @@ def main() -> None:
         .reset_index()
     )
 
-    summary_name = f"evaluation_{HOTEL_TAG}_multi.csv"
+    summary_name = "evaluation_multi.csv"
     summary_path = out_dir / summary_name
     df_summary.to_csv(summary_path, index=False)
 

@@ -10,7 +10,7 @@ from typing import Iterable
 
 import pandas as pd
 
-from booking_curve.config import HOTEL_CONFIG, OUTPUT_DIR
+from booking_curve.config import HOTEL_CONFIG, archive_output_legacy, get_logs_dir, get_output_root
 from booking_curve.daily_snapshots import (
     get_latest_asof_date,
     rebuild_asof_dates_from_daily_snapshots,
@@ -24,7 +24,7 @@ from booking_curve.pms_adapter_nface import (
 from booking_curve.raw_inventory import RawInventory, build_raw_inventory
 
 EXCEL_GLOB = "*.xls*"
-LOGS_DIR = OUTPUT_DIR / "logs"
+LOGS_DIR = get_logs_dir()
 DEFAULT_FULL_ALL_RATE = 0.5
 
 
@@ -314,11 +314,19 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Rebuild asof_dates CSV after processing each hotel",
     )
+    parser.add_argument(
+        "--reset-output",
+        action="store_true",
+        help="Archive existing output/* into output/_legacy_YYYYMMDD_HHMM before writing new files",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = _parse_args()
+
+    if args.reset_output:
+        archive_output_legacy(get_output_root())
 
     log_file: Path | None = None
     if args.mode == "FULL_ALL":

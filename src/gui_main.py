@@ -241,8 +241,10 @@ try:
         add_hotel_config,
         clear_local_override_raw_root_dir,
         get_hotel_base_small_rescue_cfg,
+        get_hotel_output_dir,
         get_hotel_rounding_units,
         get_local_overrides_path,
+        get_output_root,
         load_phase_overrides,
         pop_runtime_init_errors,
         reload_hotel_config_inplace,
@@ -278,7 +280,6 @@ except Exception as exc:
 try:
     from booking_curve.gui_backend import (
         HOTEL_CONFIG,
-        OUTPUT_DIR,
         build_calendar_for_gui,
         build_range_rebuild_plan_for_gui_with_stay_months,
         build_topdown_revpar_panel,
@@ -327,7 +328,7 @@ except Exception as exc:
 
 # デフォルトホテル (現状は大国町のみ想定)
 SETTINGS_FILE = LOCAL_OVERRIDES_DIR / "gui_settings.json"
-LEGACY_SETTINGS_FILE = OUTPUT_DIR / "gui_settings.json"
+LEGACY_SETTINGS_FILE = get_output_root() / "gui_settings.json"
 PHASE_OPTIONS = ["悪化", "中立", "回復"]
 PHASE_STRENGTH_OPTIONS = ["弱", "中", "強"]
 PHASE_STRENGTH_FACTORS = {"弱": 0.4, "中": 0.7, "強": 1.0}
@@ -448,8 +449,18 @@ class BookingCurveApp(tk.Tk):
     def _save_settings(self) -> None:
         self._save_settings_data(self._settings)
 
+    def _get_selected_output_dir(self, hotel_tag: str | None = None) -> Path:
+        selected = (hotel_tag or (self.hotel_var.get() if hasattr(self, "hotel_var") else "")).strip()
+        if selected and selected in HOTEL_CONFIG:
+            return get_hotel_output_dir(selected)
+        return get_output_root()
+
+    def _refresh_output_dir_label(self) -> None:
+        if hasattr(self, "output_dir_var"):
+            self.output_dir_var.set(f"出力フォルダ: {self._get_selected_output_dir()}")
+
     def _on_open_output_dir(self) -> None:
-        open_file(OUTPUT_DIR)
+        open_file(self._get_selected_output_dir())
 
     def _on_open_config_dir(self) -> None:
         open_file(CONFIG_DIR)
@@ -484,6 +495,7 @@ class BookingCurveApp(tk.Tk):
         self._refresh_master_rounding_units()
         self._update_master_rounding_units_state()
         self._refresh_master_base_small_rescue()
+        self._refresh_output_dir_label()
 
         try:
             clear_evaluation_detail_cache()
@@ -1557,9 +1569,10 @@ class BookingCurveApp(tk.Tk):
         output_frame = ttk.LabelFrame(frame, text="出力フォルダ")
         output_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, UI_SECTION_PADY))
 
+        self.output_dir_var = tk.StringVar(value=f"出力フォルダ: {self._get_selected_output_dir()}")
         ttk.Label(
             output_frame,
-            text=f"出力フォルダ: {OUTPUT_DIR}",
+            textvariable=self.output_dir_var,
             foreground="#555555",
             wraplength=800,
             justify="left",
@@ -1676,6 +1689,8 @@ class BookingCurveApp(tk.Tk):
         self._refresh_master_base_small_rescue()
         self._refresh_master_raw_root_dir()
         self._update_master_missing_check_status()
+        self._refresh_output_dir_label()
+        self._refresh_output_dir_label()
 
     def _open_hotel_wizard(self, mode: str = "add", must_create: bool = False) -> None:
         if self._hotel_wizard_open:
@@ -1845,6 +1860,7 @@ class BookingCurveApp(tk.Tk):
         self._refresh_master_base_small_rescue()
         self._refresh_master_raw_root_dir()
         self._update_master_missing_check_status()
+        self._refresh_output_dir_label()
 
     def _on_global_hotel_changed(self, *args) -> None:
         """
@@ -1863,6 +1879,7 @@ class BookingCurveApp(tk.Tk):
         self._refresh_master_base_small_rescue()
         self._refresh_master_raw_root_dir()
         self._update_master_missing_check_status()
+        self._refresh_output_dir_label()
 
         if hasattr(self, "df_hotel_var"):
             fc_cap, pax_cap, occ_cap = self._get_daily_caps_for_hotel(hotel_tag)
@@ -2174,7 +2191,7 @@ class BookingCurveApp(tk.Tk):
             target_path = Path(csv_path)
         else:
             hotel_tag = self.hotel_var.get().strip()
-            target_path = OUTPUT_DIR / f"missing_report_{hotel_tag}_ops.csv" if hotel_tag else None
+            target_path = get_hotel_output_dir(hotel_tag) / "missing_report_ops.csv" if hotel_tag else None
 
         if target_path is None or not target_path.exists():
             self._set_master_missing_check_status(default_text, default_color)
@@ -2202,7 +2219,7 @@ class BookingCurveApp(tk.Tk):
 
         text = f"欠損検査：最終実施 {last_run_text}（ERROR:{error_count} / WARN:{warn_count}）"
 
-        snapshots_path = OUTPUT_DIR / f"daily_snapshots_{hotel_tag}.csv" if hotel_tag else None
+        snapshots_path = get_hotel_output_dir(hotel_tag) / "daily_snapshots.csv" if hotel_tag else None
         needs_rerun = False
         if snapshots_path is not None and snapshots_path.exists():
             try:
@@ -2418,7 +2435,7 @@ class BookingCurveApp(tk.Tk):
             messagebox.showerror("エラー", "ホテルが選択されていません。")
             return
 
-        report_path = OUTPUT_DIR / f"missing_report_{hotel_tag}_ops.csv"
+        report_path = get_hotel_output_dir(hotel_tag) / "missing_report_ops.csv"
         if not report_path.exists():
             messagebox.showerror("エラー", "欠損レポートが見つかりません。先に欠損チェックを実行してください。")
             return
@@ -3200,13 +3217,14 @@ class BookingCurveApp(tk.Tk):
     def _ensure_topdown_year_options(self, fiscal_year: int) -> None:
         years = list(range(fiscal_year - 5, fiscal_year + 1))
         year_vars = getattr(self, "_topdown_year_vars", {})
-        if list(year_vars.keys()) == years:
-            return
-
-        self._topdown_year_vars = {year: tk.BooleanVar(value=True) for year in years}
         frame = getattr(self, "_topdown_year_frame", None)
         if frame is None:
             return
+        same_years = list(year_vars.keys()) == years
+        if same_years and frame.winfo_children():
+            return
+
+        self._topdown_year_vars = {year: tk.BooleanVar(value=True) for year in years}
         for child in frame.winfo_children():
             child.destroy()
         for idx, year in enumerate(years):
@@ -3279,14 +3297,14 @@ class BookingCurveApp(tk.Tk):
         self._topdown_show_band_latest_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             right_controls,
-            text="p10–p90帯(A): 直近着地月アンカー",
+            text="参考レンジ(A): 直近着地月アンカー",
             variable=self._topdown_show_band_latest_var,
             command=self._rerender_topdown_if_panel_exists,
         ).grid(row=1, column=0, sticky="e")
         self._topdown_show_band_prev_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             right_controls,
-            text="p10–p90帯(C): 前月アンカー",
+            text="参考レンジ(C): 前月アンカー",
             variable=self._topdown_show_band_prev_var,
             command=self._rerender_topdown_if_panel_exists,
         ).grid(row=2, column=0, sticky="e")
@@ -3313,10 +3331,10 @@ class BookingCurveApp(tk.Tk):
         ttk.Label(
             left_controls,
             text=(
-                "p10–p90帯(A): 直近着地月を基準に、過去年(表示年度)の"
-                "月次比率分布(10–90%)を掛けた参考レンジ。"
-                "p10–p90帯(C): 前月→当月の比率分布を使う前月アンカー帯。"
-                "⚠は FcRevPAR が帯の範囲外 (A/C別) を示す。"
+                "参考レンジ(A): 直近着地月を基準に、過去年(表示年度)の"
+                "月次差分分布から算出した参考レンジ（MADで外れ値除外、min–max）。"
+                "参考レンジ(C): 前月→当月の差分分布を使う前月アンカー版。"
+                "⚠は FcRevPAR がレンジの範囲外 (A/C別) を示す。"
             ),
             wraplength=700,
             justify="left",
@@ -3350,7 +3368,7 @@ class BookingCurveApp(tk.Tk):
         self._topdown_canvas = FigureCanvasTkAgg(self._topdown_fig, master=fig_frame)
         self._topdown_canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew")
 
-        diag_frame = ttk.LabelFrame(popup, text="Forecast RevPAR と p10–p90 比較 (A/C)")
+        diag_frame = ttk.LabelFrame(popup, text="Forecast RevPAR と 参考レンジ 比較 (A/C)")
         diag_frame.grid(row=3, column=0, sticky="nsew", padx=8, pady=(0, 8))
         diag_frame.rowconfigure(0, weight=1)
         diag_frame.columnconfigure(0, weight=1)
@@ -3753,14 +3771,14 @@ class BookingCurveApp(tk.Tk):
             _plot_band(
                 list(band_p10),
                 list(band_p90),
-                label="p10–p90(直近着地)",
+                label="参考レンジ(A:直近着地)",
                 alpha=0.18,
                 apply_anchor_mask=True,
             )
 
         if show_band_prev:
             if isinstance(band_prev_segments, list) and band_prev_segments:
-                band_label = "p10–p90(前月アンカー)"
+                band_label = "参考レンジ(C:前月アンカー)"
                 for segment in band_prev_segments:
                     if not isinstance(segment, dict):
                         continue
@@ -3802,7 +3820,7 @@ class BookingCurveApp(tk.Tk):
                 _plot_band(
                     list(band_p10_prev_anchor),
                     list(band_p90_prev_anchor),
-                    label="p10–p90(前月アンカー)",
+                    label="参考レンジ(C:前月アンカー)",
                     alpha=0.12,
                     color="tab:orange",
                 )
@@ -3913,10 +3931,10 @@ class BookingCurveApp(tk.Tk):
             header_items.extend([f"{'bADR':>8}", f"{'bOcc%':>7}"])
         header_items.extend(
             [
-                f"{'A:p10':>10}",
-                f"{'A:p90':>10}",
-                f"{'C:p10':>10}",
-                f"{'C:p90':>10}",
+                f"{'A:min':>10}",
+                f"{'A:max':>10}",
+                f"{'C:min':>10}",
+                f"{'C:max':>10}",
                 "notes",
             ],
         )
@@ -4746,8 +4764,8 @@ class BookingCurveApp(tk.Tk):
         df_export["round_unit_pax"] = rounding_units["pax"]
         df_export["round_unit_revenue"] = rounding_units["revenue"]
 
-        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        out_path = OUTPUT_DIR / f"daily_forecast_{hotel}_{month}_{model}_asof_{asof.replace('-', '')}.csv"
+        out_dir = get_hotel_output_dir(hotel)
+        out_path = out_dir / f"daily_forecast_{month}_{model}_asof_{asof.replace('-', '')}.csv"
 
         try:
             df_export.to_csv(out_path, index=False)
@@ -5042,9 +5060,9 @@ class BookingCurveApp(tk.Tk):
             to_ym = "ALL"
 
         try:
-            OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-            filename = f"model_eval_{hotel}_{from_ym}_{to_ym}.csv"
-            out_path = OUTPUT_DIR / filename
+            out_dir = get_hotel_output_dir(hotel)
+            filename = f"model_eval_{from_ym}_{to_ym}.csv"
+            out_path = out_dir / filename
             df.to_csv(out_path, index=False)
         except Exception as e:
             messagebox.showerror("エラー", f"CSV出力に失敗しました:\n{e}")
@@ -5319,9 +5337,9 @@ class BookingCurveApp(tk.Tk):
             asof_key = asof_key.replace("(", "_").replace(")", "_").replace(" ", "_")
 
         try:
-            OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-            filename = f"asof_overview_{hotel}_{from_ym}_{to_ym}_{asof_key}_{best_only}.csv"
-            out_path = OUTPUT_DIR / filename
+            out_dir = get_hotel_output_dir(hotel)
+            filename = f"asof_overview_{from_ym}_{to_ym}_{asof_key}_{best_only}.csv"
+            out_path = out_dir / filename
             df.to_csv(out_path, index=False)
         except Exception as e:
             messagebox.showerror("エラー", f"CSV出力に失敗しました:\n{e}")
@@ -5359,9 +5377,9 @@ class BookingCurveApp(tk.Tk):
             asof_key = asof_key.replace("(", "_").replace(")", "_").replace(" ", "_")
 
         try:
-            OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-            filename = f"asof_detail_{hotel}_{from_ym}_{to_ym}_{asof_key}_{best_only}.csv"
-            out_path = OUTPUT_DIR / filename
+            out_dir = get_hotel_output_dir(hotel)
+            filename = f"asof_detail_{from_ym}_{to_ym}_{asof_key}_{best_only}.csv"
+            out_path = out_dir / filename
             df.to_csv(out_path, index=False)
         except Exception as e:
             messagebox.showerror("エラー", f"CSV出力に失敗しました:\n{e}")
@@ -5669,9 +5687,9 @@ class BookingCurveApp(tk.Tk):
             messagebox.showerror("Error", f"AS OF の形式が不正です: {as_of_date}")
             return
 
-        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        filename = f"booking_curve_{hotel_tag}_{target_month}_wd{weekday_int}_{model}_asof_{asof_tag}.png"
-        out_path = OUTPUT_DIR / filename
+        out_dir = get_hotel_output_dir(hotel_tag)
+        filename = f"booking_curve_{target_month}_wd{weekday_int}_{model}_asof_{asof_tag}.png"
+        out_path = out_dir / filename
 
         try:
             self.bc_fig.savefig(out_path, dpi=150, bbox_inches="tight")
@@ -6678,9 +6696,9 @@ class BookingCurveApp(tk.Tk):
             messagebox.showerror("Error", f"対象月の形式が不正です: {target_month}")
             return
 
-        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        filename = f"monthly_curve_{hotel_tag}_{target_month}_all.png"
-        out_path = OUTPUT_DIR / filename
+        out_dir = get_hotel_output_dir(hotel_tag)
+        filename = f"monthly_curve_{target_month}_all.png"
+        out_path = out_dir / filename
 
         try:
             self.mc_fig.savefig(out_path, dpi=150, bbox_inches="tight")

@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 
-from booking_curve.config import OUTPUT_DIR
+from booking_curve.config import get_hotel_output_dir
 
 # ===== 設定ここから =====
 HOTEL_TAG = "daikokucho"
-DAILY_ERRORS_FILE = f"daily_errors_{HOTEL_TAG}.csv"
+DAILY_ERRORS_FILE = "daily_errors.csv"
 # 出力時のモデルの並び順
 MODEL_ORDER = ["avg", "recent90", "recent90_adj", "recent90w", "recent90w_adj"]
 # ===== 設定ここまで =====
@@ -17,10 +15,10 @@ MODEL_ORDER = ["avg", "recent90", "recent90_adj", "recent90w", "recent90w_adj"]
 
 def load_daily_errors() -> pd.DataFrame:
     """
-    日別誤差テーブル(daily_errors_{HOTEL_TAG}.csv)を読み込み、
+    日別誤差テーブル(daily_errors.csv)を読み込み、
     future部分（stay_date >= as_of）のみを返す。
     """
-    path = Path(OUTPUT_DIR) / DAILY_ERRORS_FILE
+    path = get_hotel_output_dir(HOTEL_TAG) / DAILY_ERRORS_FILE
     df = pd.read_csv(path, dtype={"as_of": str, "target_month": str})
 
     df["stay_date"] = pd.to_datetime(df["stay_date"])
@@ -160,12 +158,10 @@ def main() -> None:
     print(summary_bh.to_string(index=False, float_format=lambda x: f"{x:,.2f}"))
 
     # CSV 保存
-    out_dir = Path(OUTPUT_DIR)
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    summary_weekday.to_csv(out_dir / f"error_summary_weekday_{HOTEL_TAG}.csv", index=False)
-    summary_hpos.to_csv(out_dir / f"error_summary_holiday_position_{HOTEL_TAG}.csv", index=False)
-    summary_bh.to_csv(out_dir / f"error_summary_before_holiday_{HOTEL_TAG}.csv", index=False)
+    out_dir = get_hotel_output_dir(HOTEL_TAG)
+    summary_weekday.to_csv(out_dir / "error_summary_weekday.csv", index=False)
+    summary_hpos.to_csv(out_dir / "error_summary_holiday_position.csv", index=False)
+    summary_bh.to_csv(out_dir / "error_summary_before_holiday.csv", index=False)
 
     print("\n[OK] セグメント別誤差サマリーを出力しました。")
 

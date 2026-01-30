@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from booking_curve.config import HOTEL_CONFIG, OUTPUT_DIR
+from booking_curve.config import HOTEL_CONFIG, get_hotel_output_dir
 from booking_curve.forecast_simple import (
     compute_market_pace_7d,
     forecast_final_from_avg,
@@ -148,8 +148,8 @@ def _load_lt_data_csv(csv_path: Path, target_month: str, hotel_tag: str) -> pd.D
 
 
 def load_lt_csv(month: str, hotel_tag: str) -> pd.DataFrame:
-    file_name = f"lt_data_{month}_{hotel_tag}.csv"
-    file_path = Path(OUTPUT_DIR) / file_name
+    file_name = f"lt_data_{month}.csv"
+    file_path = get_hotel_output_dir(hotel_tag) / file_name
     try:
         return _load_lt_data_csv(file_path, target_month=month, hotel_tag=hotel_tag)
     except FileNotFoundError as exc:
@@ -432,7 +432,7 @@ def build_evaluation_detail(hotel_tag: str, target_months: list[str]) -> pd.Data
         month_period = pd.Period(target_month, freq="M")
         month_end = month_period.to_timestamp(how="end").date()
         is_landed_month = month_end < today
-        lt_csv_path = Path(OUTPUT_DIR) / f"lt_data_{target_month}_{hotel_tag}.csv"
+        lt_csv_path = get_hotel_output_dir(hotel_tag) / f"lt_data_{target_month}.csv"
         try:
             lt_df = _load_lt_data_csv(
                 lt_csv_path,
@@ -525,11 +525,11 @@ def run_full_evaluation_for_range(hotel_tag: str, target_months: list[str]) -> t
     """
 
     df_detail = build_evaluation_detail(hotel_tag=hotel_tag, target_months=target_months)
-    detail_path = Path(OUTPUT_DIR) / f"evaluation_{hotel_tag}_detail.csv"
+    detail_path = get_hotel_output_dir(hotel_tag) / "evaluation_detail.csv"
     df_detail.to_csv(detail_path, index=False)
 
     df_multi = build_evaluation_summary(df_detail)
-    summary_path = Path(OUTPUT_DIR) / f"evaluation_{hotel_tag}_multi.csv"
+    summary_path = get_hotel_output_dir(hotel_tag) / "evaluation_multi.csv"
     df_multi.to_csv(summary_path, index=False)
 
     return df_detail, df_multi, detail_path, summary_path

@@ -5,6 +5,7 @@ import logging
 import os
 import shutil
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 
@@ -80,6 +81,56 @@ HOTEL_CONFIG_PATH = CONFIG_DIR / "hotels.json"
 
 for directory in (APP_BASE_DIR, OUTPUT_DIR, LOGS_DIR, ACK_DIR, CONFIG_DIR, LOCAL_OVERRIDES_DIR):
     directory.mkdir(parents=True, exist_ok=True)
+
+
+def get_output_root() -> Path:
+    output_root = OUTPUT_DIR
+    output_root.mkdir(parents=True, exist_ok=True)
+    return output_root
+
+
+def get_logs_dir() -> Path:
+    logs_dir = OUTPUT_DIR / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    return logs_dir
+
+
+def get_hotel_output_dir(hotel_id: str) -> Path:
+    if not hotel_id:
+        raise ValueError("hotel_id must be a non-empty string")
+    hotel_dir = OUTPUT_DIR / hotel_id
+    hotel_dir.mkdir(parents=True, exist_ok=True)
+    return hotel_dir
+
+
+def archive_output_legacy(output_root: Path) -> None:
+    output_root = Path(output_root)
+    if not output_root.exists():
+        return
+
+    legacy_candidates = [
+        entry
+        for entry in output_root.iterdir()
+        if entry.name != "logs" and not entry.name.startswith("_legacy_")
+    ]
+    if not legacy_candidates:
+        return
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    legacy_dir = output_root / f"_legacy_{timestamp}"
+    legacy_dir.mkdir(parents=True, exist_ok=True)
+
+    for entry in legacy_candidates:
+        target = legacy_dir / entry.name
+        if target.exists():
+            suffix = 1
+            while True:
+                candidate = legacy_dir / f"{entry.name}__{suffix}"
+                if not candidate.exists():
+                    target = candidate
+                    break
+                suffix += 1
+        shutil.move(str(entry), str(target))
 
 
 REQUIRED_HOTEL_KEYS = (

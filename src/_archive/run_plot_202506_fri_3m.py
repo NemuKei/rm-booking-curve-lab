@@ -1,6 +1,6 @@
 import pandas as pd
 
-from booking_curve.config import OUTPUT_DIR
+from booking_curve.config import get_hotel_output_dir
 from booking_curve.forecast_simple import moving_average_3months
 from booking_curve.plot_booking_curve import (
     filter_by_weekday,
@@ -18,8 +18,8 @@ WEEKDAY = 4  # 0=月, 1=火, ..., 4=金, 5=土, 6=日
 
 
 def load_lt_csv(month: str) -> pd.DataFrame:
-    """output/ 下の lt_data_{month}_{HOTEL_TAG}.csv を読む。"""
-    csv_path = OUTPUT_DIR / f"lt_data_{month}_{HOTEL_TAG}.csv"
+    """output/<hotel_id>/ 下の lt_data_{month}.csv を読む。"""
+    csv_path = get_hotel_output_dir(HOTEL_TAG) / f"lt_data_{month}.csv"
     return pd.read_csv(csv_path, index_col=0)
 
 

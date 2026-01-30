@@ -1603,3 +1603,38 @@ A-019
   * docs/spec_models.md: 「### 3.2 recent90 / recent90_adj モデル」内の `apply_segment_adjustment(...)`（ホテル依存補正の入力契約を明文化対象）
 
 * Status: 実装反映済
+
+---
+
+## D-20260130-XXX TopDownRevPAR帯をdeltaレンジ（MAD外れ値除外＋min/max）に変更
+
+* Decision:
+
+  * TopDownRevPARのA/C帯は「比率や分位点」ではなく「過去年度の傾き（delta）の実現レンジ」を表現する。
+  * 年度サンプルが少ない前提で、n>=5 のときのみ MAD により明らかな外れ値を除外し、残りの min/max を帯として採用する（n<5はスキップ）。
+  * abs guard（絶対値クランプ）は撤去する。
+* Why:
+
+  * 年度サンプルが少ない状況でp10–p90は安定しにくく、abs guardの副作用で12→1付近の帯が不自然に暴れるため。
+* Spec link:
+
+  * docs/spec_overview.md: 「### 2-2. データソースと中間生成物 > (6) TopDown RevPAR 参考レンジ（GUI）」
+* Status: 実装反映済
+
+---
+
+## D-20260130-XXX output生成物をホテル別ディレクトリに整理
+
+* Decision:
+
+  * output配下の生成物はホテル別ディレクトリに分離し、複数ホテルの出力混在を避ける。
+* Why:
+
+  * output直下に新旧ファイルが混在し、運用上の誤認・比較ミスが起きやすいため。
+* Spec link:
+
+  * docs/spec_data_layer.md: 「## 1. daily snapshots」「## 2. LT_DATA」「## 3. 評価用データ」「## 4. 運用・監査（欠損レポート）」
+  * docs/spec_overview.md: 「### 2-2. データソースと中間生成物」
+* Status: 実装反映済
+
+---

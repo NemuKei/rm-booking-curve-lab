@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from booking_curve.config import HOTEL_CONFIG, OUTPUT_DIR
+from booking_curve.config import HOTEL_CONFIG, get_hotel_output_dir
 from booking_curve.daily_snapshots import (
     build_month_asof_index,
     get_daily_snapshots_path,
@@ -21,6 +21,18 @@ from booking_curve.raw_inventory import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_hotel_output_dir(hotel_id: str, output_dir: Path | str | None) -> Path:
+    if output_dir is None:
+        return get_hotel_output_dir(hotel_id)
+    base_dir = Path(output_dir)
+    if base_dir.name == hotel_id:
+        base_dir.mkdir(parents=True, exist_ok=True)
+        return base_dir
+    hotel_dir = base_dir / hotel_id
+    hotel_dir.mkdir(parents=True, exist_ok=True)
+    return hotel_dir
 
 
 def _require_hotel_config(hotel_id: str) -> dict[str, object]:
@@ -390,7 +402,7 @@ def _load_raw_parse_failures(output_dir: Path, hotel_id: str) -> list[dict[str, 
         "path",
         "severity",
     ]
-    path = output_dir / f"raw_parse_failures_{hotel_id}.csv"
+    path = output_dir / "raw_parse_failures.csv"
     if not path.exists():
         return []
 
@@ -436,7 +448,7 @@ def build_missing_report(
     asof_window_days: int = 180,
     lt_days: int = 120,
     forward_months: int = 3,
-    output_dir: Path | str = OUTPUT_DIR,
+    output_dir: Path | str | None = None,
 ) -> Path:
     """Generate missing report for raw PMS files and daily snapshots.
 
@@ -482,7 +494,7 @@ def build_missing_report(
             _build_ops_missing_records(raw_index, raw_root_dir, hotel_id, asof_window_days, forward_months),
         )
 
-    output_dir_path = Path(output_dir)
+    output_dir_path = _resolve_hotel_output_dir(hotel_id, output_dir)
     records.extend(_load_raw_parse_failures(output_dir_path, hotel_id))
 
     if not resolved_daily_path.exists():
@@ -507,7 +519,7 @@ def build_missing_report(
         records.extend(_build_act_missing_records(df_snapshots, hotel_id, resolved_daily_path, raw_index.pairs))
 
     mode_suffix = "audit" if mode_normalized == "audit" else "ops"
-    output_path = output_dir_path / f"missing_report_{hotel_id}_{mode_suffix}.csv"
+    output_path = output_dir_path / f"missing_report_{mode_suffix}.csv"
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     for rec in records:

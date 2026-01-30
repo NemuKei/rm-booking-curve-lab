@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from booking_curve.config import OUTPUT_DIR
+from booking_curve.config import get_hotel_output_dir
 
 try:
     import jpholiday
@@ -124,9 +124,8 @@ def build_calendar_for_hotel(hotel_tag: str, start_date: date, end_date: date) -
         生成された CSV ファイルのパス。
     """
     df = build_calendar_df(start_date, end_date)
-    out_dir = Path(OUTPUT_DIR)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"calendar_features_{hotel_tag}.csv"
+    out_dir = get_hotel_output_dir(hotel_tag)
+    out_path = out_dir / "calendar_features.csv"
     df.to_csv(out_path, index=False)
     return out_path
 
@@ -138,9 +137,9 @@ def ensure_calendar_for_dates(
     min_span_days: int = 365,
 ) -> Path:
     """
-    calendar_features_{hotel_tag}.csv が存在しない/範囲不足の場合に自動生成する。
+    calendar_features.csv が存在しない/範囲不足の場合に自動生成する。
     """
-    out_path = Path(OUTPUT_DIR) / f"calendar_features_{hotel_tag}.csv"
+    out_path = get_hotel_output_dir(hotel_tag) / "calendar_features.csv"
 
     dates = pd.to_datetime(pd.Index(dates), errors="coerce")
     dates = dates[~pd.isna(dates)]

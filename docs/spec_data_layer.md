@@ -23,7 +23,7 @@
 
 - 入力：PMS 生データ（現在は N@FACE 想定）
 - 中間：PMS アダプタ（例：`pms_adapter_nface.py`）
-- 出力：標準 CSV（`daily_snapshots_<hotel>.csv`）
+- 出力：標準 CSV（`output/<hotel_id>/daily_snapshots.csv`）
 - 利用先：
   - LT_DATA（宿泊日×LT）の生成（今後、このルートに寄せていく想定）
   - ADR / RevPAR 履歴、売上予測モデル
@@ -35,8 +35,8 @@
 
 ### 1-2. ファイル仕様
 
-- パス：`OUTPUT_DIR / f"daily_snapshots_{hotel_id}.csv"`
-  - 例：`output/daily_snapshots_daikokucho.csv`
+- パス：`get_hotel_output_dir(hotel_id) / "daily_snapshots.csv"`
+  - 例：`output/daikokucho/daily_snapshots.csv`
 - 管理単位：**hotel_id ごとに 1 ファイル**
 
 #### カラム定義
@@ -96,7 +96,7 @@ daily snapshots は **「唯一の正」** のレイヤーであり、LT_DATA / 
 
 #### (A) 全量再生成（Full rebuild）
 - 対象：指定ホテルの *元データ一式*（N@FACE 生データフォルダ）
-- 出力：`output/daily_snapshots_<hotel_id>.csv` を **原則として作り直す**
+- 出力：`output/<hotel_id>/daily_snapshots.csv` を **原則として作り直す**
 - 用途：
   - 初期導入（過去2〜3年分を一括投入）
   - 元データの構造変更や、変換ロジック（アダプタ）修正後の整合性取り直し
@@ -105,7 +105,7 @@ daily snapshots は **「唯一の正」** のレイヤーであり、LT_DATA / 
 - 対象：指定ホテルの *元データの一部*（例：直近の ASOF のみ / 直近数ヶ月のみ）
 - 目的：週次運用などで、データ量増加による処理時間の悪化を避ける
 - 方式（推奨）：
-  1. 既存 `daily_snapshots_<hotel_id>.csv` を読み込む
+  1. 既存 `output/<hotel_id>/daily_snapshots.csv` を読み込む
   2. 「今回再生成する対象範囲（例：as_of_date の範囲）」に該当する行を既存CSVから除外
   3. 元データから対象範囲だけ再生成して append
   4. `(hotel_id, as_of_date, stay_date)` をキーに `drop_duplicates(keep="last")` 等で重複排除
@@ -177,20 +177,20 @@ LT_DATA は、**宿泊日 × LT（Lead Time）** のブッキングカーブを�
 1. **PMS 時系列 Excel → LT_DATA（従来ルート / legacy）**
 2. **daily snapshots → LT_DATA（新ルート / 推奨）**
 
-どちらのルートも、最終的には同じフォーマットの `lt_data_YYYYMM_<hotel>.csv` を出力する。  
+どちらのルートも、最終的には同じフォーマットの `lt_data_<YYYYMM>.csv` を出力する。  
 今後は daily snapshots ルートを標準とし、時系列 Excel ルートは互換性維持と比較用に残す方針。
 
 LT_DATA の出力ファイルは、互換性維持と多指標対応のため以下の扱いとする。
 
 ### 互換ファイル（従来名）
-- `lt_data_YYYYMM_<hotel>.csv`
+- `lt_data_<YYYYMM>.csv`
   - rooms を出力する（従来運用・既存コードとの互換のため）
 
 ### 指標別ファイル（追加）
-- `lt_data_rooms_YYYYMM_<hotel>.csv`
-- `lt_data_pax_YYYYMM_<hotel>.csv`
-- `lt_data_revenue_YYYYMM_<hotel>.csv`
-- 互換性：rooms については旧命名 `lt_data_YYYYMM_<hotel>.csv` も読み込み対象とし、roomsファイルとして扱う。
+- `lt_data_rooms_<YYYYMM>.csv`
+- `lt_data_pax_<YYYYMM>.csv`
+- `lt_data_revenue_<YYYYMM>.csv`
+- 互換性：rooms の既定出力は `lt_data_<YYYYMM>.csv` とする（従来互換）。
 
 いずれもテーブル構造（行=stay_date、列=LT）は同一で、セル値の意味（value_type）のみが異なる。
 
@@ -202,8 +202,8 @@ LT_DATA の出力ファイルは、互換性維持と多指標対応のため以
 
 ### 2-2. LT_DATA テーブル仕様
 
-- ファイル例：`output/lt_data_YYYYMM_<hotel>.csv`
-  - 例：`lt_data_202512_daikokucho.csv`
+- ファイル例：`output/<hotel_id>/lt_data_<YYYYMM>.csv`
+  - 例：`output/daikokucho/lt_data_202512.csv`
 - インデックス：`stay_date`（宿泊日）
   - 文字列 or 日付文字列だが、読み込み側では `pd.to_datetime` 前提。
 - 列：LT 値（整数）
@@ -289,13 +289,13 @@ LT_DATA の「欠損セル（NaN）」は、ルートごとに扱いが異なる
   1. `load_time_series_excel()` 相当の処理で DataFrame に読み込み。
   2. 対象宿泊月だけをフィルタ。
   3. `build_lt_data_from_timeseries_for_month(df, max_lt)` を実行。
-  4. `lt_data_YYYYMM_<hotel>.csv` として書き出し。
+  4. `lt_data_<YYYYMM>.csv` として書き出し。
 
 （CLI 実行は `run_build_lt_csv.py` の `source="timeseries"` が担当）
 
 #### (2) daily snapshots から（新・推奨）
 
-- 入力：`output/daily_snapshots_<hotel_id>.csv`
+- 入力：`output/<hotel_id>/daily_snapshots.csv`
 
 - フロー：
 
@@ -318,7 +318,7 @@ LT_DATA の「欠損セル（NaN）」は、ルートごとに扱いが異なる
        - なければ ACT(-1) は `NaN`（未着地）のまま残す。
 
   5. 列を `max_lt..-1` の降順（`lt_desc_columns`）に並べ替え、  
-     `lt_data_YYYYMM_<hotel>.csv` として出力。
+     `lt_data_<YYYYMM>.csv` として出力。
 
 → これにより「PMS 生データ → daily_snapshots → LT_DATA」が一貫パイプラインとして完成する。  
 　時系列 Excel がなくても、daily_snapshots さえ生成できれば LT_DATA を再作成できる。
@@ -330,7 +330,7 @@ LT_DATA の「欠損セル（NaN）」は、ルートごとに扱いが異なる
 LT_DATA と並ぶ、もう一つの重要な LT 系データが **月次ブッキングカーブ** です。  
 これは「宿泊月トータルの Rooms を LT ごとに集計したカーブ」です。
 
-- ファイル例：`output/monthly_curve_YYYYMM_<hotel>.csv`
+- ファイル例：`output/<hotel_id>/monthly_curve_<YYYYMM>.csv`
 - インデックス：`lt`（整数、`max_lt..-1` の降順）
 - 列：
   - `rooms_total`：当該 LT 時点での「宿泊月の累計 Rooms」
@@ -353,7 +353,7 @@ LT_DATA と並ぶ、もう一つの重要な LT 系データが **月次ブッ�
    - `lt` ごとに `rooms_total` を加算し、`max_lt..-1` の降順 DataFrame として出力。
 
 2. **daily snapshots から（新ルート）**
-   - `daily_snapshots_<hotel_id>.csv` から対象月レコードを読み込み。
+   - `daily_snapshots.csv（output/<hotel_id>/配下）` から対象月レコードを読み込み。
    - `as_of_date` ごとに、当該宿泊月の Rooms を合計（＝その ASOF における月累計）。
    - あとは時系列ルートと同じく、`LT = (month_end_date - as_of_date).days` で LT に割り付け、
      `lt` ごとに `rooms_total` を加算して出力。
@@ -361,8 +361,8 @@ LT_DATA と並ぶ、もう一つの重要な LT 系データが **月次ブッ�
 現状の実装では：
 
 - 時系列ルート・daily snapshots ルートともに、同じ ASOF 定義で集計しており、
-  `monthly_curve_YYYYMM_<hotel>.csv` の数値は両ルートで一致することを確認済み。
-- GUI の月次カーブタブは、この `monthly_curve_YYYYMM_<hotel>.csv` を読み込んで描画する。  
+  `monthly_curve_<YYYYMM>.csv` の数値は両ルートで一致することを確認済み。
+- GUI の月次カーブタブは、この `monthly_curve_<YYYYMM>.csv` を読み込んで描画する。  
   欠損セルが存在する場合でも、**monthly_curve レベルでは補間は行わない**（描画時に NOCB 適用予定）。
 ---
 
@@ -370,7 +370,7 @@ LT_DATA と並ぶ、もう一つの重要な LT 系データが **月次ブッ�
 
 セグメント補正（`segment_adjustment`）や一部の評価集計（休日/連休ポジション等）で使用する日付特徴量テーブル。
 
-- ファイル：`output/calendar_features_<hotel_tag>.csv`
+- ファイル：`output/calendar_features.csv`
 - 生成：`src/build_calendar_features.py`
 - 自動生成：`build_calendar_features.ensure_calendar_for_dates()` により、ファイルが無い／範囲不足の場合は必要範囲を自動生成して補完する
 
@@ -409,7 +409,7 @@ LT_DATA と並ぶ、もう一つの重要な LT 系データが **月次ブッ�
 
 ### 3-1. 月次合計ベースのモデル評価
 
-#### (1) 詳細テーブル：`evaluation_<hotel>_detail.csv`
+#### (1) 詳細テーブル：`evaluation_detail.csv`
 
 生成元：
 
@@ -418,7 +418,7 @@ LT_DATA と並ぶ、もう一つの重要な LT 系データが **月次ブッ�
 
 新仕様（`run_full_evaluation` ベース）を基準とします。
 
-- パス：`OUTPUT_DIR / f"evaluation_{hotel_tag}_detail.csv"`
+- パス：`get_hotel_output_dir(hotel_tag) / "evaluation_detail.csv"`
 - カラム（新仕様の例）：
 
 | カラム名               | 説明                                               |
@@ -436,11 +436,11 @@ LT_DATA と並ぶ、もう一つの重要な LT 系データが **月次ブッ�
 旧スクリプト（`run_evaluate_forecasts.py`）ではカラム名が若干異なりますが、  
 **意味としては同じもの**（ASOF ごとの月次トータル誤差）です。
 
-#### (2) サマリテーブル：`evaluation_<hotel>_multi.csv`
+#### (2) サマリテーブル：`evaluation_multi.csv`
 
 `build_evaluation_summary()` / `run_evaluate_forecasts.main()` で生成。
 
-- パス：`OUTPUT_DIR / f"evaluation_{hotel_tag}_multi.csv"`
+- パス：`get_hotel_output_dir(hotel_tag) / "evaluation_multi.csv"`
 - カラム：
 
 | カラム名        | 説明                                         |
@@ -459,20 +459,20 @@ GUI の「モデル評価」タブは、このサマリをベースに
 
 補足（GUI表示の派生列）：
 
-- GUI の「モデル評価」タブでは、`evaluation_*_detail.csv` から
+- GUI の「モデル評価」タブでは、`evaluation_detail.csv` から
   - `rmse_pct`（RMSE%）
   - `n_samples`（ASOF数）
   を算出して表示する。
-- `evaluation_*_multi.csv` 自体には、現状この2列は含めない（将来、出力列として追加する余地はある）。
+- `evaluation_multi.csv` 自体には、現状この2列は含めない（将来、出力列として追加する余地はある）。
 
 
 ---
 
-### 3-2. 日別誤差テーブル：`daily_errors_<hotel>.csv`
+### 3-2. 日別誤差テーブル：`daily_errors.csv`
 
 `run_segment_error_summary.py` の入力となる日別粒度の誤差テーブルです。
 
-- パス：`OUTPUT_DIR / f"daily_errors_{HOTEL_TAG}.csv"`
+ - パス：`get_hotel_output_dir(hotel_tag) / "daily_errors.csv"`
 - 想定カラム（コードから読み取れる範囲）：
 
 | カラム名                 | 説明                                                         |
@@ -500,12 +500,12 @@ GUI の「モデル評価」タブは、このサマリをベースに
 
 ### 3-3. セグメント別誤差サマリー
 
-`run_segment_error_summary.py` は、`daily_errors_<hotel>.csv` から  
+`run_segment_error_summary.py` は、`daily_errors.csv` から  
 以下の 3 種類のサマリを生成します。
 
-1. `error_summary_weekday_<hotel>.csv`
-2. `error_summary_holiday_position_<hotel>.csv`
-3. `error_summary_before_holiday_<hotel>.csv`
+1. `error_summary_weekday.csv`
+2. `error_summary_holiday_position.csv`
+3. `error_summary_before_holiday.csv`
 
 #### (1) weekday 別サマリー
 
@@ -562,9 +562,9 @@ GUI上で安全に検知できる必要がある。
 
 ### 4-1. 出力ファイル
 
-- `output/missing_report_<hotel_id>_ops.csv`
-- `output/missing_report_<hotel_id>_audit.csv`
-- `output/raw_parse_failures_<hotel_id>.csv`（欠損レポートに取り込まれる）
+- `output/<hotel_id>/missing_report_ops.csv`
+- `output/<hotel_id>/missing_report_audit.csv`
+- `output/<hotel_id>/raw_parse_failures.csv`（欠損レポートに取り込まれる）
 - ops（運用）のみ ACK（確認済み）を持つ：
   - 保存先：`acks/missing_ack_<hotel_id>_ops.csv`（端末ローカル）
   - ops の集計（ERROR/WARN件数）は ACK 済みを除外する（運用ノイズ除去のため）
@@ -597,7 +597,7 @@ missing_report および raw_parse_failures は、以下の列構造を共通で
 
 - 対象は「最新ASOF近辺」と「直近〜近未来の対象月」に絞る（全期間は見ない）
 - 例：ASOF窓（既定：180日）＋ forward_months（既定：3ヶ月）など
-- 出力は `missing_report_<hotel_id>_ops.csv`
+- 出力は `missing_report_ops.csv`
 
 GUIのマスタ設定タブでは、欠損検査（ops）の結果サマリを表示する。
 
@@ -606,13 +606,13 @@ GUIのマスタ設定タブでは、欠損検査（ops）の結果サマリを�
 目的：データの網羅性を監査する（運用者が「全体の欠損状態」を把握するため）。
 
 - 対象は「stay_month 全域」に広げ、歴史的なギャップも検知する
-- 出力は `missing_report_<hotel_id>_audit.csv`
+- 出力は `missing_report_audit.csv`
 
 ※監査は「運用上の除外（ACK）」を反映しない（全体像を保つため）。
 
 ### 4-5. raw_parse_failures（変換失敗ログ）
 
-`raw_parse_failures_<hotel_id>.csv` は、RAW→daily snapshots 変換での失敗（例：layout_unknown）を記録する。
+`raw_parse_failures.csv` は、RAW→daily snapshots 変換での失敗（例：layout_unknown）を記録する。
 欠損レポート生成時に読み込まれ、missing_report に統合される。
 
 - フルパス運用は許容する（ZIP共有時はダミーパス置換など運用側で対応）

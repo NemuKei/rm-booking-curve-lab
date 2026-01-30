@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from pathlib import Path
 import logging
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from booking_curve.config import OUTPUT_DIR
+from booking_curve.config import get_hotel_output_dir
 from build_calendar_features import ensure_calendar_for_dates
 
 logger = logging.getLogger(__name__)
@@ -31,12 +31,12 @@ def _load_calendar(
     dates: pd.DatetimeIndex | None = None,
 ) -> pd.DataFrame:
     """
-    calendar_features_{hotel_tag}.csv を読み込んで返す。
+    calendar_features.csv を読み込んで返す。
     date 列を DatetimeIndex にして返す。
     """
     if dates is not None:
         ensure_calendar_for_dates(hotel_tag, dates)
-    path = Path(OUTPUT_DIR) / f"calendar_features_{hotel_tag}.csv"
+    path = get_hotel_output_dir(hotel_tag) / "calendar_features.csv"
     try:
         cal = pd.read_csv(path)
     except FileNotFoundError:

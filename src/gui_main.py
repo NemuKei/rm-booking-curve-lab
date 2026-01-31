@@ -1517,6 +1517,7 @@ class BookingCurveApp(tk.Tk):
         # ------- RAW取込元（このPCのみ） -------
         raw_root_frame = ttk.LabelFrame(frame, text="RAW取込元（このPCのみ）")
         raw_root_frame.pack(side=tk.TOP, fill=tk.X, padx=UI_SECTION_PADX, pady=(0, UI_SECTION_PADY))
+        raw_root_frame.columnconfigure(1, weight=1)
 
         ttk.Label(
             raw_root_frame,
@@ -1540,22 +1541,23 @@ class BookingCurveApp(tk.Tk):
         self.master_raw_root_dir_label.grid(
             row=1,
             column=1,
-            columnspan=2,
             padx=UI_GRID_PADX,
             pady=UI_GRID_PADY,
-            sticky="w",
+            sticky="we",
         )
 
+        btn_frame = ttk.Frame(raw_root_frame)
+        btn_frame.grid(row=1, column=2, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="e")
         ttk.Button(
-            raw_root_frame,
+            btn_frame,
             text="変更...",
             command=self._on_change_master_raw_root_dir,
-        ).grid(row=2, column=1, padx=UI_GRID_PADX, pady=UI_GRID_PADY + 1, sticky="w")
+        ).pack(side=tk.LEFT, padx=(0, UI_GRID_PADX))
         ttk.Button(
-            raw_root_frame,
+            btn_frame,
             text="初期値に戻す",
             command=self._on_clear_master_raw_root_dir,
-        ).grid(row=2, column=2, padx=UI_GRID_PADX, pady=UI_GRID_PADY + 1, sticky="w")
+        ).pack(side=tk.LEFT)
 
         local_overrides_path = get_local_overrides_path()
         ttk.Label(

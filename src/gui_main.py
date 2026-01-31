@@ -1547,7 +1547,14 @@ class BookingCurveApp(tk.Tk):
         )
 
         btn_frame = ttk.Frame(raw_root_frame)
-        btn_frame.grid(row=1, column=2, padx=UI_GRID_PADX, pady=UI_GRID_PADY, sticky="e")
+        btn_frame.grid(
+            row=2,
+            column=1,
+            columnspan=2,
+            padx=UI_GRID_PADX,
+            pady=(0, UI_GRID_PADY),
+            sticky="w",
+        )
         ttk.Button(
             btn_frame,
             text="変更...",
